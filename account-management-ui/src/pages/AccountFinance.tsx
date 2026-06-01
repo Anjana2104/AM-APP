@@ -1,10 +1,9 @@
-import { Layout, Tabs, Typography } from 'antd';
+import { Tabs, Typography } from 'antd';
 import { ProjectList } from './ProjectList';
 import { Insights } from './Insights';
 import { FileExcelOutlined, BarChartOutlined } from '@ant-design/icons';
 import { useState } from 'react';
 
-const { Header, Content } = Layout;
 const { Title } = Typography;
 
 interface AccountFinanceProps {
@@ -17,7 +16,7 @@ export function AccountFinance({ onNavigate }: AccountFinanceProps) {
 
   const items = [
     {
-      key: 'projects',
+      key: 'milestones',
       label: (
         <span>
           <FileExcelOutlined />
@@ -33,7 +32,7 @@ export function AccountFinance({ onNavigate }: AccountFinanceProps) {
       label: (
         <span>
           <BarChartOutlined />
-          Revenue Insights
+          Insights
         </span>
       ),
       children: (
@@ -43,15 +42,12 @@ export function AccountFinance({ onNavigate }: AccountFinanceProps) {
   ];
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#001529', display: 'flex', alignItems: 'center' }}>
-        <Title level={4} style={{ color: '#fff', margin: 0 }}>
-          Account Finance Management
-        </Title>
-      </Header>
-      <Content style={{ padding: 24 }}>
-        <Tabs items={items} size="large" defaultActiveKey="projects" />
-      </Content>
-    </Layout>
+    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div style={{ padding: '12px 24px' }}>
+          <Tabs items={items} size="middle" defaultActiveKey="milestones" />
+        </div>
+      </div>
+    </div>
   );
 }

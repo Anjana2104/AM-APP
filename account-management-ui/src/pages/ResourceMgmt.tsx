@@ -45,25 +45,46 @@ export type ResourceRow = {
   doj: string;
   totalWorkex: string;
   skills: string;
+  engagement?: string;
+  allocationRequests?: Array<{
+    id: string;
+    clientName: string;
+    engagementName: string;
+    status: 'shortlisted' | 'offered' | 'selected' | 'rejected' | 'joined';
+    createdDate: string;
+    notes?: string;
+  }>;
 };
 
 type ExcelRow = Record<string, string | undefined>;
 
 type FilterState = {
+  sno: string;
+  raId: string;
   empName: string;
+  emailId: string;
   piwRole: string;
-  workexRange: [number, number];
+  roleOrDomain: string;
+  totalWorkex: string;
   skills: string;
+  engagement: string;
+  workexRange: [number, number];
 };
 
 const DEFAULT_FILTERS: FilterState = {
+  sno: '',
+  raId: '',
   empName: '',
+  emailId: '',
   piwRole: '',
-  workexRange: [0, 100],
+  roleOrDomain: '',
+  totalWorkex: '',
   skills: '',
+  engagement: '',
+  workexRange: [0, 100],
 };
 
-const COLUMN_KEYS = ['sno', 'raId', 'empName', 'emailId', 'piwRole', 'roleOrDomain', 'previousWorkex', 'doj', 'totalWorkex', 'skills', 'action'] as const;
+const COLUMN_KEYS = ['sno', 'raId', 'empName', 'emailId', 'piwRole', 'roleOrDomain', 'previousWorkex', 'doj', 'totalWorkex', 'engagement', 'skills', 'action'] as const;
 
 const COLUMN_LABELS: Record<string, string> = {
   sno: 'S.NO',
@@ -75,18 +96,26 @@ const COLUMN_LABELS: Record<string, string> = {
   previousWorkex: 'Previous Workex',
   doj: 'DOJ',
   totalWorkex: 'Total Workex',
+  engagement: 'Current Engagement',
   skills: 'Skills',
 };
 
-const ResourceMgmt: React.FC = () => {
+const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void }> = ({ onResourcesChange }) => {
   const [resources, setResources] = useState<ResourceRow[]>([]);
+  
+  // Notify parent when resources change
+  const handleResourcesChange = (newResources: ResourceRow[]) => {
+    setResources(newResources);
+    onResourcesChange?.(newResources);
+  };
   const [detailDrawer, setDetailDrawer] = useState(false);
   const [selectedResource, setSelectedResource] = useState<ResourceRow | null>(null);
-  const [viewMode, setViewMode] = useState<'table' | 'card'>('table');
+  const [viewMode, setViewMode] = useState<'table' | 'card'>('card');
   const [editDrawer, setEditDrawer] = useState(false);
   const [editingResource, setEditingResource] = useState<ResourceRow | null>(null);
   const [form] = Form.useForm();
   const [filterDrawer, setFilterDrawer] = useState(false);
+  const [columnDrawer, setColumnDrawer] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
     new Set(COLUMN_KEYS)
   );
@@ -137,10 +166,11 @@ const ResourceMgmt: React.FC = () => {
               doj: String(row['DOJ'] || row['Date of Joining'] || ''),
               totalWorkex: String(row['Total Workex'] || row['Total Experience'] || ''),
               skills: String(row['Skills'] || ''),
+              engagement: String(row['Current Engagement'] || row['Engagement'] || row['engagement'] || ''),
             };
           });
 
-          setResources((prev) => [...prev, ...newResources]);
+          handleResourcesChange([...resources, ...newResources]);
           message.success(`${newResources.length} resources imported successfully`);
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Error parsing file';
@@ -173,6 +203,7 @@ const ResourceMgmt: React.FC = () => {
           'Previous Workex': '2 years',
           'DOJ': '2024-01-15',
           'Total Workex': '5 years',
+          'Current Engagement': 'Full-time',
           'Skills': 'JavaScript, React, Node.js',
         },
       ];
@@ -188,6 +219,7 @@ const ResourceMgmt: React.FC = () => {
         { wch: 15 },
         { wch: 15 },
         { wch: 15 },
+        { wch: 18 },
         { wch: 40 },
       ];
 
@@ -222,6 +254,7 @@ const ResourceMgmt: React.FC = () => {
       doj: resource.doj || '',
       totalWorkex: resource.totalWorkex || '',
       skills: resource.skills || '',
+      engagement: resource.engagement || '',
     });
     setEditDrawer(true);
   }, [form]);
@@ -235,8 +268,8 @@ const ResourceMgmt: React.FC = () => {
         }
 
         if (editingResource && editingResource.key) {
-          setResources((prev) =>
-            prev.map((r) =>
+          handleResourcesChange(
+            resources.map((r) =>
               r.key === editingResource.key
                 ? {
                     ...r,
@@ -249,6 +282,7 @@ const ResourceMgmt: React.FC = () => {
                     doj: String(values.doj || ''),
                     totalWorkex: String(values.totalWorkex || ''),
                     skills: String(values.skills || ''),
+                    engagement: String(values.engagement || ''),
                   }
                 : r
             )
@@ -268,8 +302,9 @@ const ResourceMgmt: React.FC = () => {
             doj: String(values.doj || ''),
             totalWorkex: String(values.totalWorkex || ''),
             skills: String(values.skills || ''),
+            engagement: String(values.engagement || ''),
           };
-          setResources((prev) => [...prev, newResource]);
+          handleResourcesChange([...resources, newResource]);
           message.success('Resource added successfully');
         }
         setEditDrawer(false);
@@ -293,7 +328,7 @@ const ResourceMgmt: React.FC = () => {
       cancelText: 'No',
       okButtonProps: { danger: true },
       onOk() {
-        setResources((prev) => prev.filter((r) => r.key !== resource.key));
+        handleResourcesChange(resources.filter((r) => r.key !== resource.key));
         message.success('Resource deleted successfully');
         setDetailDrawer(false);
         setEditDrawer(false);
@@ -305,25 +340,72 @@ const ResourceMgmt: React.FC = () => {
     return resources.filter((r) => {
       if (!r) return false;
 
+      // Filter by S.NO
+      const sno = String(r.sno || '').toLowerCase();
+      const filterSno = String(filters.sno || '').toLowerCase();
+      if (filterSno && !sno.includes(filterSno)) {
+        return false;
+      }
+
+      // Filter by RA ID
+      const raId = String(r.raId || '').toLowerCase();
+      const filterRaId = String(filters.raId || '').toLowerCase();
+      if (filterRaId && !raId.includes(filterRaId)) {
+        return false;
+      }
+
+      // Filter by Employee Name
       const empName = String(r.empName || '').toLowerCase();
       const filterEmpName = String(filters.empName || '').toLowerCase();
       if (filterEmpName && !empName.includes(filterEmpName)) {
         return false;
       }
 
-      if (filters.piwRole && String(r.piwRole || '') !== filters.piwRole) {
+      // Filter by Email ID
+      const emailId = String(r.emailId || '').toLowerCase();
+      const filterEmailId = String(filters.emailId || '').toLowerCase();
+      if (filterEmailId && !emailId.includes(filterEmailId)) {
         return false;
       }
 
+      // Filter by PIW Role
+      if (filters.piwRole) {
+        const piwRole = String(r.piwRole || '').toLowerCase();
+        const filterPiwRole = String(filters.piwRole || '').toLowerCase();
+        if (!piwRole.includes(filterPiwRole)) {
+          return false;
+        }
+      }
+
+      // Filter by Role/Domain
+      if (filters.roleOrDomain) {
+        const roleOrDomain = String(r.roleOrDomain || '').toLowerCase();
+        const filterRoleOrDomain = String(filters.roleOrDomain || '').toLowerCase();
+        if (!roleOrDomain.includes(filterRoleOrDomain)) {
+          return false;
+        }
+      }
+
+      // Filter by Total Workex (range)
+      const totalWorkex = parseFloat(String(r.totalWorkex || '0').replace(/[^\d.-]/g, ''));
+      if (!isNaN(totalWorkex)) {
+        if (totalWorkex < filters.workexRange[0] || totalWorkex > filters.workexRange[1]) {
+          return false;
+        }
+      }
+
+      // Filter by Skills
       const skills = String(r.skills || '').toLowerCase();
       const filterSkills = String(filters.skills || '').toLowerCase();
       if (filterSkills && !skills.includes(filterSkills)) {
         return false;
       }
 
-      const totalWorkex = parseFloat(String(r.totalWorkex || '0').replace(/[^\d.-]/g, ''));
-      if (!isNaN(totalWorkex)) {
-        if (totalWorkex < filters.workexRange[0] || totalWorkex > filters.workexRange[1]) {
+      // Filter by Engagement
+      if (filters.engagement) {
+        const engagement = String(r.engagement || '').toLowerCase();
+        const filterEngagement = String(filters.engagement || '').toLowerCase();
+        if (!engagement.includes(filterEngagement)) {
           return false;
         }
       }
@@ -434,6 +516,13 @@ const ResourceMgmt: React.FC = () => {
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
+        title: 'Current Engagement',
+        dataIndex: 'engagement',
+        key: 'engagement',
+        width: 120,
+        render: (value) => <span>{String(value || '')}</span>,
+      },
+      {
         title: 'Skills',
         dataIndex: 'skills',
         key: 'skills',
@@ -498,21 +587,21 @@ const ResourceMgmt: React.FC = () => {
   const filteredCount = filteredResources.length;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: 24 }}>
+    <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '12px 24px' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
+        <Space direction="vertical" style={{ width: '100%' }} size={6}>
           <div>
-            <Title level={3} style={{ marginBottom: 8 }}>
+            <Title level={4} style={{ marginBottom: 2 }}>
               Resource Management
             </Title>
-            <Text type="secondary">
+            <Text type="secondary" style={{ fontSize: '12px' }}>
               Manage team resources, skills, and project allocations
             </Text>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-            <Space wrap style={{ gap: '8px' }}>
-              <Button icon={<PlusOutlined />} type="primary" onClick={handleAddNew}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Space wrap style={{ gap: '6px' }}>
+              <Button icon={<PlusOutlined />} type="primary" onClick={handleAddNew} size="small">
                 Add New
               </Button>
 
@@ -521,14 +610,14 @@ const ResourceMgmt: React.FC = () => {
                 beforeUpload={handleUpload}
                 showUploadList={false}
               >
-                <Button icon={<UploadOutlined />}>
-                  Upload
-                </Button>
+                <Tooltip title="Upload Resources from Excel">
+                  <Button icon={<UploadOutlined />} type="text" />
+                </Tooltip>
               </Upload>
 
-              <Button onClick={downloadTemplate} icon={<DownloadOutlined />}>
-                Template
-              </Button>
+              <Tooltip title="Download Excel Template">
+                <Button onClick={downloadTemplate} icon={<DownloadOutlined />} type="text" />
+              </Tooltip>
 
               {resources.length > 0 && (
                 <Text type="secondary" style={{ fontSize: '12px', display: 'flex', alignItems: 'center', padding: '4px 8px' }}>
@@ -542,13 +631,15 @@ const ResourceMgmt: React.FC = () => {
 
             {resources.length > 0 && (
               <Space wrap style={{ gap: '8px' }}>
-                <Button
-                  icon={<ColumnHeightOutlined />}
-                  title="Column Settings"
-                  onClick={() => setFilterDrawer(true)}
-                >
-                  Columns
-                </Button>
+                {viewMode === 'table' && (
+                  <Button
+                    icon={<ColumnHeightOutlined />}
+                    title="Column Settings"
+                    onClick={() => setColumnDrawer(true)}
+                  >
+                    Columns
+                  </Button>
+                )}
 
                 <Button
                   icon={<FilterOutlined />}
@@ -587,14 +678,14 @@ const ResourceMgmt: React.FC = () => {
             <Table<ResourceRow>
               dataSource={filteredResources}
               columns={displayColumns}
-              pagination={{ pageSize: 10 }}
+              pagination={{ pageSize: 15 }}
               scroll={{ x: 'max-content' }}
-              size="middle"
+              size="small"
               style={{ background: '#fff', borderRadius: '8px' }}
               locale={{ emptyText: 'No resources match your filters' }}
             />
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
               {filteredResources.length > 0 ? (
                 filteredResources.map((resource) => {
                   if (!resource) return null;
@@ -603,8 +694,8 @@ const ResourceMgmt: React.FC = () => {
                       key={resource.key || 'unknown'}
                       style={{
                         background: '#fff',
-                        borderRadius: '12px',
-                        padding: 20,
+                        borderRadius: '8px',
+                        padding: 12,
                         boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
                         border: '1px solid #f0f0f0',
                         transition: 'all 0.3s',
@@ -618,53 +709,62 @@ const ResourceMgmt: React.FC = () => {
                         e.currentTarget.style.transform = 'none';
                       }}
                     >
-                      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: '1px solid #f0f0f0' }}>
-                        <div style={{ fontSize: '18px', fontWeight: 700, color: '#001529' }}>
+                      <div style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #f0f0f0' }}>
+                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#001529' }}>
                           {String(resource.empName || 'N/A')}
                         </div>
-                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                        <Text type="secondary" style={{ fontSize: '11px' }}>
                           {String(resource.raId || '')}
                         </Text>
                       </div>
 
-                      <div style={{ marginBottom: 12 }}>
-                        <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 4 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
                           Role / Domain
                         </Text>
-                        <Tag color="cyan" style={{ fontSize: '12px' }}>
+                        <Tag color="cyan" style={{ fontSize: '11px' }}>
                           {String(resource.roleOrDomain || '')}
                         </Tag>
                       </div>
 
-                      <div style={{ marginBottom: 12 }}>
-                        <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 4 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
                           Experience
                         </Text>
-                        <div style={{ fontSize: '14px', fontWeight: 600, color: '#1890FF' }}>
+                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#1890FF' }}>
                           {String(resource.totalWorkex || '—')}
                         </div>
                       </div>
 
-                      <div style={{ marginBottom: 12 }}>
-                        <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 4 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
                           Email
                         </Text>
-                        <div style={{ fontSize: '12px', color: '#666', wordBreak: 'break-word' }}>
+                        <div style={{ fontSize: '11px', color: '#666', wordBreak: 'break-word' }}>
                           {String(resource.emailId || '—')}
                         </div>
                       </div>
 
-                      <div style={{ marginBottom: 16 }}>
-                        <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 4 }}>
+                      <div style={{ marginBottom: 8 }}>
+                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
+                          Current Engagement
+                        </Text>
+                        <Tag color="orange" style={{ fontSize: '11px' }}>
+                          {String(resource.engagement || '—')}
+                        </Tag>
+                      </div>
+
+                      <div style={{ marginBottom: 8 }}>
+                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
                           Skills
                         </Text>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
                           {String(resource.skills || '')
                             .split(',')
                             .filter((s) => s.trim())
                             .slice(0, 2)
                             .map((skill, idx) => (
-                              <Tag key={idx} color="blue" style={{ fontSize: '11px', margin: 0 }}>
+                              <Tag key={idx} color="blue" style={{ fontSize: '10px', margin: 0 }}>
                                 {skill.trim()}
                               </Tag>
                             ))}
@@ -678,11 +778,11 @@ const ResourceMgmt: React.FC = () => {
                         </div>
                       </div>
 
-                      <div style={{ marginBottom: 16, display: 'flex', gap: 8 }}>
+                      <div style={{ marginBottom: 0, display: 'flex', gap: 4 }}>
                         <Button
                           type="primary"
                           size="small"
-                          style={{ flex: 1 }}
+                          style={{ flex: 1, fontSize: '10px', height: '24px', padding: '0 8px' }}
                           onClick={() => {
                             setSelectedResource(resource);
                             setDetailDrawer(true);
@@ -810,6 +910,13 @@ const ResourceMgmt: React.FC = () => {
             rules={[{ required: true, message: 'Total experience is required' }]}
           >
             <Input placeholder="e.g., 5 years" />
+          </Form.Item>
+
+          <Form.Item
+            label="Current Engagement"
+            name="engagement"
+          >
+            <Input placeholder="e.g., Full-time, Contract, Part-time" />
           </Form.Item>
 
           <Form.Item
@@ -951,12 +1058,53 @@ const ResourceMgmt: React.FC = () => {
                   ))}
               </div>
             </div>
+
+            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>
+                Current Engagement
+              </Text>
+              <div style={{ fontSize: '14px' }}>
+                {String(selectedResource.engagement || '—')}
+              </div>
+            </div>
           </Space>
         )}
       </Drawer>
 
       <Drawer
-        title="Filters & Columns"
+        title="Column Visibility"
+        placement="right"
+        onClose={() => setColumnDrawer(false)}
+        open={columnDrawer}
+        width={300}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          {Object.entries(COLUMN_LABELS)
+            .filter(([key]) => key !== 'action')
+            .map(([key, label]) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Checkbox
+                  checked={visibleColumns.has(key)}
+                  onChange={(e) => {
+                    const newVisible = new Set(visibleColumns);
+                    if (e.target.checked) {
+                      newVisible.add(key);
+                    } else {
+                      newVisible.delete(key);
+                    }
+                    setVisibleColumns(newVisible);
+                  }}
+                />
+                <label style={{ marginBottom: 0, cursor: 'pointer' }}>
+                  {label}
+                </label>
+              </div>
+            ))}
+        </Space>
+      </Drawer>
+
+      <Drawer
+        title="Filters"
         placement="right"
         onClose={() => setFilterDrawer(false)}
         open={filterDrawer}
@@ -964,107 +1112,140 @@ const ResourceMgmt: React.FC = () => {
       >
         <Space direction="vertical" style={{ width: '100%' }} size="large">
           <div>
-            <Text style={{ fontSize: '14px', fontWeight: 600, display: 'block', marginBottom: 12 }}>
-              Column Visibility
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              S.NO
             </Text>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {Object.entries(COLUMN_LABELS)
-                .filter(([key]) => key !== 'action')
-                .map(([key, label]) => (
-                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Checkbox
-                      checked={visibleColumns.has(key)}
-                      onChange={(e) => {
-                        const newVisible = new Set(visibleColumns);
-                        if (e.target.checked) {
-                          newVisible.add(key);
-                        } else {
-                          newVisible.delete(key);
-                        }
-                        setVisibleColumns(newVisible);
-                      }}
-                    />
-                    <label style={{ marginBottom: 0, cursor: 'pointer' }}>
-                      {label}
-                    </label>
-                  </div>
-                ))}
-            </Space>
+            <Input
+              placeholder="Filter by S.NO..."
+              value={filters.sno}
+              onChange={(e) => setFilters({ ...filters, sno: e.target.value || '' })}
+              allowClear
+            />
           </div>
 
-          <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 16 }}>
-            <Text style={{ fontSize: '14px', fontWeight: 600, display: 'block', marginBottom: 12 }}>
-              Filter Options
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              RA ID
             </Text>
-
-            <Space direction="vertical" style={{ width: '100%' }} size="middle">
-              <div>
-                <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-                  Employee Name
-                </Text>
-                <Input
-                  placeholder="Filter by name..."
-                  value={filters.empName}
-                  onChange={(e) => setFilters({ ...filters, empName: e.target.value || '' })}
-                  allowClear
-                />
-              </div>
-
-              <div>
-                <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-                  PIW Role
-                </Text>
-                <Select
-                  placeholder="Select role..."
-                  value={filters.piwRole || undefined}
-                  onChange={(value) => setFilters({ ...filters, piwRole: value || '' })}
-                  allowClear
-                  style={{ width: '100%' }}
-                  options={getUniqueValues('piwRole').map((role) => ({
-                    label: role,
-                    value: role,
-                  }))}
-                />
-              </div>
-
-              <div>
-                <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-                  Experience Range (0-100)
-                </Text>
-                <Slider
-                  range
-                  min={0}
-                  max={100}
-                  value={filters.workexRange}
-                  onChange={(value) => {
-                    if (Array.isArray(value) && value.length === 2) {
-                      setFilters({ ...filters, workexRange: [value[0], value[1]] as [number, number] });
-                    }
-                  }}
-                  marks={{ 0: '0', 50: '50', 100: '100' }}
-                />
-                <div style={{ fontSize: '12px', color: '#999', marginTop: 8, textAlign: 'center' }}>
-                  {filters.workexRange[0]} - {filters.workexRange[1]} years
-                </div>
-              </div>
-
-              <div>
-                <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-                  Skills
-                </Text>
-                <Input
-                  placeholder="Filter by skill..."
-                  value={filters.skills}
-                  onChange={(e) => setFilters({ ...filters, skills: e.target.value || '' })}
-                  allowClear
-                />
-              </div>
-
-              <Button block onClick={handleClearFilters} style={{ marginTop: 12 }}>
-                Clear All Filters
-              </Button>
-            </Space>
+            <Input
+              placeholder="Filter by RA ID..."
+              value={filters.raId}
+              onChange={(e) => setFilters({ ...filters, raId: e.target.value || '' })}
+              allowClear
+            />
           </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Employee Name
+            </Text>
+            <Input
+              placeholder="Filter by name..."
+              value={filters.empName}
+              onChange={(e) => setFilters({ ...filters, empName: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Email ID
+            </Text>
+            <Input
+              placeholder="Filter by email..."
+              value={filters.emailId}
+              onChange={(e) => setFilters({ ...filters, emailId: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              PIW Role
+            </Text>
+            <Select
+              placeholder="Select PIW Role..."
+              value={filters.piwRole || undefined}
+              onChange={(value) => setFilters({ ...filters, piwRole: value || '' })}
+              allowClear
+              style={{ width: '100%' }}
+              options={getUniqueValues('piwRole').map((role) => ({
+                label: role,
+                value: role,
+              }))}
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Role/Domain
+            </Text>
+            <Select
+              placeholder="Select Role/Domain..."
+              value={filters.roleOrDomain || undefined}
+              onChange={(value) => setFilters({ ...filters, roleOrDomain: value || '' })}
+              allowClear
+              style={{ width: '100%' }}
+              options={getUniqueValues('roleOrDomain').map((domain) => ({
+                label: domain,
+                value: domain,
+              }))}
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Total Experience Range (0-100)
+            </Text>
+            <Slider
+              range
+              min={0}
+              max={100}
+              value={filters.workexRange}
+              onChange={(value) => {
+                if (Array.isArray(value) && value.length === 2) {
+                  setFilters({ ...filters, workexRange: [value[0], value[1]] as [number, number] });
+                }
+              }}
+              marks={{ 0: '0', 50: '50', 100: '100' }}
+            />
+            <div style={{ fontSize: '12px', color: '#999', marginTop: 8, textAlign: 'center' }}>
+              {filters.workexRange[0]} - {filters.workexRange[1]} years
+            </div>
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Skills
+            </Text>
+            <Input
+              placeholder="Filter by skill..."
+              value={filters.skills}
+              onChange={(e) => setFilters({ ...filters, skills: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Current Engagement
+            </Text>
+            <Select
+              placeholder="Select Engagement..."
+              value={filters.engagement || undefined}
+              onChange={(value) => setFilters({ ...filters, engagement: value || '' })}
+              allowClear
+              style={{ width: '100%' }}
+              options={getUniqueValues('engagement').map((eng) => ({
+                label: eng,
+                value: eng,
+              }))}
+            />
+          </div>
+
+          <Button block onClick={handleClearFilters} style={{ marginTop: 12 }}>
+            Clear All Filters
+          </Button>
         </Space>
       </Drawer>
     </div>

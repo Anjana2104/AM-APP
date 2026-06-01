@@ -144,27 +144,28 @@ export function Insights({ data, monthHeaders }: InsightsProps) {
         borderRadius: '8px',
         overflow: 'hidden',
         transition: 'transform 0.3s ease',
+        padding: '12px',
       }}
       hoverable
       onMouseEnter={e => (e.currentTarget.style.transform = 'translateY(-4px)')}
       onMouseLeave={e => (e.currentTarget.style.transform = 'translateY(0)')}
     >
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: '16px', fontWeight: 600, color: '#001529', marginBottom: 4 }}>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: '14px', fontWeight: 600, color: '#001529', marginBottom: 2 }}>
           {quarter}
         </div>
-        <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
+        <div style={{ fontSize: '11px', color: '#8c8c8c' }}>
           {months}
         </div>
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: '28px', fontWeight: 700, color: quarterlyColor(data.percentage), marginBottom: 8 }}>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: '20px', fontWeight: 700, color: quarterlyColor(data.percentage), marginBottom: 4 }}>
           {formatCurrency(data.total)}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <div style={{ fontSize: '14px', fontWeight: 600, color: '#001529' }}>
-            {data.percentage}% of Annual Revenue
+          <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529' }}>
+            {data.percentage}% Annual
           </div>
         </div>
       </div>
@@ -180,36 +181,38 @@ export function Insights({ data, monthHeaders }: InsightsProps) {
 
   return (
     <Space direction="vertical" style={{ width: '100%' }} size="large">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#001529', marginBottom: 8 }}>
-            Revenue Insights – {fiscalYear}
+          <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#001529', marginBottom: 4 }}>
+            Insights – {fiscalYear}
           </h2>
-          <p style={{ fontSize: '14px', color: '#8c8c8c', margin: 0 }}>
-            {fiscalYear === 'FY25' ? 'Oct\'25 - Sep\'26' : 'Oct\'26 - Sep\'27'} | Quarterly performance breakdown
+          <p style={{ fontSize: '12px', color: '#8c8c8c', margin: 0 }}>
+            Quarterly performance breakdown
           </p>
         </div>
-        <Card style={{ border: 'none', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)', borderRadius: '8px' }}>
-          <Space direction="vertical" size="small">
-            <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529' }}>Fiscal Year</div>
+        <Space wrap style={{ gap: '12px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#f5f5f5', padding: '8px 12px', borderRadius: '4px' }}>
+            Fiscal Year
             <Segmented
               value={fiscalYear}
               onChange={(value) => setFiscalYear(value as string)}
               options={availableFiscalYears}
-              style={{ width: '100%' }}
+              style={{ width: '100%', marginTop: 6 }}
             />
-            <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', marginTop: 8 }}>Currency</div>
+          </div>
+          <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#f5f5f5', padding: '8px 12px', borderRadius: '4px' }}>
+            Currency
             <Segmented
               value={currency}
               onChange={(value) => setCurrency(value as 'INR' | 'USD')}
               options={['INR', 'USD']}
-              style={{ width: '100%' }}
+              style={{ width: '100%', marginTop: 6 }}
             />
-            {currency === 'USD' && (
-              <Tooltip title="Exchange rate for INR to USD conversion">
-                <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', marginTop: 8 }}>
-                  Exchange Rate
-                </div>
+          </div>
+          {currency === 'USD' && (
+            <Tooltip title="Exchange rate for INR to USD conversion">
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#f5f5f5', padding: '8px 12px', borderRadius: '4px' }}>
+                Exchange Rate
                 <InputNumber
                   value={exchangeRate}
                   onChange={(value) => setExchangeRate(value || 0.013)}
@@ -218,71 +221,62 @@ export function Insights({ data, monthHeaders }: InsightsProps) {
                   style={{ width: '100%', marginTop: 4 }}
                   prefix="1 INR = $"
                 />
-              </Tooltip>
-            )}
-          </Space>
-        </Card>
+              </div>
+            </Tooltip>
+          )}
+        </Space>
       </div>
 
-      <Card
-        style={{
-          background: 'linear-gradient(135deg, #001529 0%, #002A4D 100%)',
-          border: 'none',
-          borderRadius: '8px',
-          color: '#fff',
-        }}
-      >
-        <Row gutter={[24, 24]}>
-          <Col xs={24} sm={12}>
-            <Statistic
-              title={<span style={{ color: 'rgba(255,255,255,0.85)' }}>Annual Revenue ({currency})</span>}
-              value={quarterlyData.grand}
-              formatter={(value) => {
-                const num = value as number;
-                return currency === 'USD'
-                  ? `$ ${(num * exchangeRate).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
-                  : `₹ ${num.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
-              }}
-              valueStyle={{ color: '#FFA940', fontSize: '32px', fontWeight: 700 }}
-            />
-          </Col>
-          <Col xs={24} sm={12}>
-            <Statistic
-              title={<span style={{ color: 'rgba(255,255,255,0.85)' }}>Total Projects</span>}
-              value={data.length}
-              suffix="Projects"
-              valueStyle={{ color: '#fff', fontSize: '32px', fontWeight: 700 }}
-            />
-          </Col>
-        </Row>
-      </Card>
+      <div style={{
+        background: 'linear-gradient(135deg, #001529 0%, #002A4D 100%)',
+        borderRadius: '8px',
+        padding: '12px 16px',
+        color: '#fff',
+      }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16 }}>
+          <div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)' }}>Annual Revenue ({currency})</div>
+            <div style={{ fontSize: '22px', fontWeight: 700, color: '#FFA940', marginTop: 4 }}>
+              {currency === 'USD'
+                ? `$ ${(quarterlyData.grand * exchangeRate).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                : `₹ ${quarterlyData.grand.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)' }}>Total Projects</div>
+            <div style={{ fontSize: '22px', fontWeight: 700, color: '#fff', marginTop: 4 }}>
+              {data.length}
+            </div>
+          </div>
+        </div>
+      </div>
 
-      <Row gutter={[16, 16]}>
+      <Row gutter={[12, 12]}>
         <Col xs={24} sm={12} md={6}>
           <QuarterCard
             quarter="Q1"
-            months="Oct'25 – Dec'25"
+            months="Oct – Dec"
             data={quarterlyData.q1}
           />
         </Col>
         <Col xs={24} sm={12} md={6}>
           <QuarterCard
             quarter="Q2"
-            months="Jan'26 – Mar'26"
+            months="Jan – Mar"
             data={quarterlyData.q2}
           />
         </Col>
         <Col xs={24} sm={12} md={6}>
           <QuarterCard
             quarter="Q3"
-            months="Apr'26 – Jun'26"
+            months="Apr – Jun"
             data={quarterlyData.q3}
           />
         </Col>
         <Col xs={24} sm={12} md={6}>
           <QuarterCard
             quarter="Q4"
-            months="Jul'26 – Sep'26"
+            months="Jul – Sep"
             data={quarterlyData.q4}
           />
         </Col>
@@ -300,17 +294,17 @@ export function Insights({ data, monthHeaders }: InsightsProps) {
         </h3>
         <Row gutter={[24, 24]}>
           {[
-            { label: 'Q1', subLabel: 'Oct\'25–Dec\'25', value: quarterlyData.q1, color: '#1890FF' },
-            { label: 'Q2', subLabel: 'Jan\'26–Mar\'26', value: quarterlyData.q2, color: '#52C41A' },
-            { label: 'Q3', subLabel: 'Apr\'26–Jun\'26', value: quarterlyData.q3, color: '#FFA940' },
-            { label: 'Q4', subLabel: 'Jul\'26–Sep\'26', value: quarterlyData.q4, color: '#FF7875' },
+            { label: 'Q1', subLabel: 'Oct–Dec', value: quarterlyData.q1, color: '#1890FF' },
+            { label: 'Q2', subLabel: 'Jan–Mar', value: quarterlyData.q2, color: '#52C41A' },
+            { label: 'Q3', subLabel: 'Apr–Jun', value: quarterlyData.q3, color: '#FFA940' },
+            { label: 'Q4', subLabel: 'Jul–Sep', value: quarterlyData.q4, color: '#FF7875' },
           ].map(({ label, subLabel, value, color }) => (
             <Col key={label} xs={24} sm={12} md={6}>
               <div style={{ textAlign: 'center' }}>
                 <div
                   style={{
-                    width: '120px',
-                    height: '120px',
+                    width: '100px',
+                    height: '100px',
                     borderRadius: '50%',
                     background: color,
                     margin: '0 auto 12px',
@@ -318,7 +312,7 @@ export function Insights({ data, monthHeaders }: InsightsProps) {
                     alignItems: 'center',
                     justifyContent: 'center',
                     color: '#fff',
-                    fontSize: '18px',
+                    fontSize: '16px',
                     fontWeight: 700,
                   }}
                 >
@@ -347,44 +341,44 @@ export function Insights({ data, monthHeaders }: InsightsProps) {
           background: 'linear-gradient(135deg, rgba(24,144,255,0.05) 0%, rgba(52,211,153,0.05) 100%)',
         }}
       >
-        <h3 style={{ fontSize: '18px', fontWeight: 700, marginBottom: 20, color: '#001529' }}>
+        <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: 16, color: '#001529' }}>
           Year-over-Year Comparison
         </h3>
-        <Row gutter={[24, 24]}>
+        <Row gutter={[16, 16]}>
           <Col xs={24} sm={12}>
-            <div style={{ padding: 16, background: '#fff', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
-              <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#F0F2F5', padding: '6px 8px', borderRadius: '4px', marginBottom: 12 }}>
+            <div style={{ padding: 12, background: '#fff', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#F0F2F5', padding: '6px 8px', borderRadius: '4px', marginBottom: 8 }}>
                 {yearWiseComparison.fy1.label}
               </div>
-              <div style={{ fontSize: '28px', fontWeight: 700, color: '#1890FF', marginBottom: 8 }}>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: '#1890FF', marginBottom: 4 }}>
                 {formatCurrency(yearWiseComparison.fy1.total)}
               </div>
-              <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
+              <div style={{ fontSize: '11px', color: '#8c8c8c' }}>
                 Total Revenue
               </div>
             </div>
           </Col>
           <Col xs={24} sm={12}>
-            <div style={{ padding: 16, background: '#fff', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
-              <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#F0F2F5', padding: '6px 8px', borderRadius: '4px', marginBottom: 12 }}>
+            <div style={{ padding: 12, background: '#fff', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: '#001529', background: '#F0F2F5', padding: '6px 8px', borderRadius: '4px', marginBottom: 8 }}>
                 {yearWiseComparison.fy2.label}
               </div>
-              <div style={{ fontSize: '28px', fontWeight: 700, color: '#52C41A', marginBottom: 8 }}>
+              <div style={{ fontSize: '20px', fontWeight: 700, color: '#52C41A', marginBottom: 4 }}>
                 {formatCurrency(yearWiseComparison.fy2.total)}
               </div>
-              <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
+              <div style={{ fontSize: '11px', color: '#8c8c8c' }}>
                 Total Revenue
               </div>
             </div>
           </Col>
           <Col xs={24}>
-            <div style={{ padding: 16, background: '#fff', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
-              <div style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: 8 }}>Year-over-Year Growth</div>
+            <div style={{ padding: 12, background: '#fff', borderRadius: '8px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
+              <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>Year-over-Year Growth</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ fontSize: '32px', fontWeight: 700, color: yearWiseComparison.comparison >= 0 ? '#52C41A' : '#FF7875' }}>
+                <div style={{ fontSize: '24px', fontWeight: 700, color: yearWiseComparison.comparison >= 0 ? '#52C41A' : '#FF7875' }}>
                   {yearWiseComparison.comparison >= 0 ? '+' : ''}{yearWiseComparison.comparison}%
                 </div>
-                <div style={{ fontSize: '14px', color: '#8c8c8c' }}>
+                <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
                   {yearWiseComparison.comparison >= 0 
                     ? 'Growth from FY25 to FY26' 
                     : 'Decline from FY25 to FY26'}

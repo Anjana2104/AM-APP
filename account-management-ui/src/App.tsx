@@ -2,53 +2,184 @@ import { Layout, Typography } from 'antd';
 import { useState } from 'react';
 import { AccountFinance } from './pages/AccountFinance';
 import ResourceManagement from './pages/ResourceMgmt';
-import { DollarOutlined, TeamOutlined } from '@ant-design/icons';
+import { ResourceUtilization } from './pages/ResourceUtilization';
+import { DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import type { ResourceRow } from './pages/ResourceMgmt';
 
 const { Header, Content } = Layout;
 const { Title } = Typography;
 
 export default function App() {
   const [activeModule, setActiveModule] = useState<'home' | 'finance' | 'resources'>('home');
+  const [activeResourceTab, setActiveResourceTab] = useState<'details' | 'utilization' | 'upskilling'>('details');
+  const [resources, setResources] = useState<ResourceRow[]>([]);
 
   if (activeModule === 'finance') {
     return (
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ background: '#001529', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Title level={4} style={{ color: '#fff', margin: 0 }}>
-            Account Management System
-          </Title>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
+        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <DollarOutlined style={{ fontSize: '24px', color: '#52c41a' }} />
+              <Title level={4} style={{ color: '#fff', margin: 0, fontSize: '16px', fontWeight: 700, letterSpacing: '0.5px' }}>
+                Revenue Hub
+              </Title>
+            </div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginLeft: '38px', fontWeight: 500 }}>
+              Track.Plan.Grow
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, flex: 1 }}>
+            <button
+              style={{
+                background: '#1890FF',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              <FileTextOutlined style={{ fontSize: '16px' }} /> Planned Revenue
+            </button>
+          </div>
+          
           <button 
             onClick={() => setActiveModule('home')}
-            style={{ background: '#fff', border: 'none', padding: '8px 16px', cursor: 'pointer', borderRadius: '4px', fontWeight: 600 }}
+            style={{ 
+              width: '100%', 
+              background: '#fff', 
+              border: 'none', 
+              padding: '10px 12px', 
+              cursor: 'pointer', 
+              borderRadius: '6px', 
+              fontWeight: 600, 
+              fontSize: '13px',
+              color: '#001529',
+              marginTop: 'auto'
+            }}
           >
             ← Back to Dashboard
           </button>
-        </Header>
-        <Content style={{ padding: 0 }}>
-          <AccountFinance />
-        </Content>
-      </Layout>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+            <AccountFinance />
+          </div>
+        </div>
+      </div>
     );
   }
 
   if (activeModule === 'resources') {
     return (
-      <Layout style={{ minHeight: '100vh' }}>
-        <Header style={{ background: '#001529', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Title level={4} style={{ color: '#fff', margin: 0 }}>
-            Account Management System
-          </Title>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
+        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <ThunderboltOutlined style={{ fontSize: '24px', color: '#faad14' }} />
+              <Title level={4} style={{ color: '#fff', margin: 0, fontSize: '16px', fontWeight: 700, letterSpacing: '0.5px' }}>
+                ResourcePulse
+              </Title>
+            </div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginLeft: '38px', fontWeight: 500 }}>
+              Engagement Tracker
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, flex: 1 }}>
+            <button
+              onClick={() => setActiveResourceTab('details')}
+              style={{
+                background: activeResourceTab === 'details' ? '#1890FF' : 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                transition: 'background 0.3s',
+              }}
+            >
+              <FileTextOutlined style={{ fontSize: '16px' }} /> Details
+            </button>
+            <button
+              onClick={() => setActiveResourceTab('utilization')}
+              style={{
+                background: activeResourceTab === 'utilization' ? '#1890FF' : 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                transition: 'background 0.3s',
+              }}
+            >
+              <BarChartOutlined style={{ fontSize: '16px' }} /> Utilization
+            </button>
+            <button
+              disabled
+              style={{
+                background: 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                textAlign: 'left',
+                cursor: 'not-allowed',
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                opacity: 0.5,
+              }}
+            >
+              <RocketOutlined style={{ fontSize: '16px' }} /> Upskilling
+            </button>
+          </div>
+          
           <button 
             onClick={() => setActiveModule('home')}
-            style={{ background: '#fff', border: 'none', padding: '8px 16px', cursor: 'pointer', borderRadius: '4px', fontWeight: 600 }}
+            style={{ 
+              width: '100%', 
+              background: '#fff', 
+              border: 'none', 
+              padding: '10px 12px', 
+              cursor: 'pointer', 
+              borderRadius: '6px', 
+              fontWeight: 600, 
+              fontSize: '13px',
+              color: '#001529',
+              marginTop: 'auto'
+            }}
           >
             ← Back to Dashboard
           </button>
-        </Header>
-        <Content style={{ padding: 0 }}>
-          <ResourceManagement />
-        </Content>
-      </Layout>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+            {activeResourceTab === 'details' && <ResourceManagement onResourcesChange={setResources} />}
+            {activeResourceTab === 'utilization' && <ResourceUtilization resources={resources} onUpdateResources={setResources} />}
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -57,14 +188,14 @@ export default function App() {
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ background: '#001529', display: 'flex', alignItems: 'center' }}>
         <Title level={4} style={{ color: '#fff', margin: 0 }}>
-          Account Management System
+          Enterprise Account Management
         </Title>
       </Header>
       <Content style={{ padding: 24, background: '#f5f5f5' }}>
         <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
           <div style={{ marginBottom: 40 }}>
             <h1 style={{ fontSize: '32px', fontWeight: 700, marginBottom: 8 }}>
-              Welcome to Account Management Dashboard
+              Welcome to Enterprise Account Management
             </h1>
             <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>
               Manage projects, finances, and resources from one unified platform
@@ -72,7 +203,7 @@ export default function App() {
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 24 }}>
-            {/* ACCOUNT FINANCE CARD */}
+            {/* FINANCE MANAGEMENT CARD */}
             <div 
               onClick={() => setActiveModule('finance')}
               style={{
@@ -108,7 +239,7 @@ export default function App() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <h2 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#001529' }}>
-                    Account Finance Management
+                    Finance Management
                   </h2>
                   <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0 0' }}>
                     Project Milestones & Revenue Insights
@@ -153,7 +284,7 @@ export default function App() {
                   (e.target as HTMLButtonElement).style.background = '#1890FF';
                 }}
               >
-                Open Account Finance →
+                View Finance Details →
               </button>
             </div>
 
