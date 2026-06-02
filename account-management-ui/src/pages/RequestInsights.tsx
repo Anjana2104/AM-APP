@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { Card, Row, Col, Statistic, Space, Empty, Progress, Tag, Tabs } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, PauseCircleOutlined, FileTextOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
+import type { Dayjs } from 'dayjs';
 import type { ClientRequest } from './ClientM';
 
 interface RequestInsightsProps {
@@ -73,7 +74,7 @@ export function RequestInsights({ requests }: RequestInsightsProps) {
     const monthMap = new Map<string, MonthlyData>();
 
     requests.forEach((req) => {
-      const reqDate = parseDateString(req.requestRaised);
+      const reqDate = parseDateString(req.dateRaised);
       if (!reqDate) return;
 
       const monthKey = reqDate.format('YYYY-MM');
@@ -163,6 +164,7 @@ export function RequestInsights({ requests }: RequestInsightsProps) {
       <Space direction="vertical" style={{ width: '100%' }} size="large">
         {/* Tabs for Overall vs Monthly View */}
         <Tabs
+          defaultActiveKey="overall"
           items={[
             {
               key: 'overall',
@@ -274,8 +276,11 @@ export function RequestInsights({ requests }: RequestInsightsProps) {
               label: 'Monthly Breakdown',
               children: (
                 <Space direction="vertical" style={{ width: '100%' }} size="large">
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>
+                    Grouped by <strong>Date Raised</strong>
+                  </div>
                   {monthlyData.length === 0 ? (
-                    <Empty description="No monthly data available" />
+                    <Empty description="No monthly data available. Ensure requests have a Date Raised value." />
                   ) : (
                     monthlyData.map((month, idx) => (
                       <Card

@@ -1,10 +1,10 @@
-import { Layout, Typography } from 'antd';
+import { Layout, Typography, Tooltip } from 'antd';
 import { useState } from 'react';
 import { AccountFinance } from './pages/AccountFinance';
 import ResourceManagement from './pages/ResourceMgmt';
 import { ResourceUtilization } from './pages/ResourceUtilization';
 import ClientM from './pages/ClientM';
-import { DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined, RocketOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons';
+import { DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined, RocketOutlined, ThunderboltOutlined, UserOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
 import type { ResourceRow } from './pages/ResourceMgmt';
 
 const { Header, Content } = Layout;
@@ -15,11 +15,12 @@ export default function App() {
   const [activeResourceTab, setActiveResourceTab] = useState<'details' | 'utilization' | 'upskilling'>('details');
   const [activeClientMTab, setActiveClientMTab] = useState<'requests' | 'connects'>('requests');
   const [resources, setResources] = useState<ResourceRow[]>([]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   if (activeModule === 'finance') {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
-        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', height: '100vh', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <DollarOutlined style={{ fontSize: '24px', color: '#52c41a' }} />
@@ -32,7 +33,7 @@ export default function App() {
             </div>
           </div>
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
             <button
               style={{
                 background: '#1890FF',
@@ -65,14 +66,15 @@ export default function App() {
               fontWeight: 600, 
               fontSize: '13px',
               color: '#001529',
-              marginTop: 'auto'
+              marginTop: '16px',
+              flexShrink: 0,
             }}
           >
             ← Back to Dashboard
           </button>
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+          <div style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
             <AccountFinance />
           </div>
         </div>
@@ -81,83 +83,74 @@ export default function App() {
   }
 
   if (activeModule === 'clientm') {
+    const collapsed = sidebarCollapsed;
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
-        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-              <UserOutlined style={{ fontSize: '24px', color: '#FFA940' }} />
-              <Title level={4} style={{ color: '#fff', margin: 0, fontSize: '16px', fontWeight: 700, letterSpacing: '0.5px' }}>
-                ClientM
-              </Title>
-            </div>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginLeft: '38px', fontWeight: 500 }}>
-              Client Management Hub
-            </div>
-          </div>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, flex: 1 }}>
-            <button
-              onClick={() => setActiveClientMTab('requests')}
-              style={{
-                background: activeClientMTab === 'requests' ? '#1890FF' : 'rgba(255,255,255,0.08)',
-                color: '#fff',
-                border: 'none',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                textAlign: 'left',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                transition: 'background 0.3s',
-              }}
-            >
-              <FileTextOutlined style={{ fontSize: '16px' }} /> Requests
-            </button>
-            <button
-              onClick={() => setActiveClientMTab('connects')}
-              style={{
-                background: activeClientMTab === 'connects' ? '#1890FF' : 'rgba(255,255,255,0.08)',
-                color: '#fff',
-                border: 'none',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                textAlign: 'left',
-                cursor: 'pointer',
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                transition: 'background 0.3s',
-              }}
-            >
-              <TeamOutlined style={{ fontSize: '16px' }} /> Connects
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+        <div style={{ background: '#001529', color: '#fff', width: collapsed ? '56px' : '220px', padding: collapsed ? '20px 10px' : '20px 16px', height: '100vh', display: 'flex', flexDirection: 'column', flexShrink: 0, transition: 'width 0.2s, padding 0.2s', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+            {!collapsed && (
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                  <UserOutlined style={{ fontSize: '20px', color: '#FFA940' }} />
+                  <Title level={4} style={{ color: '#fff', margin: 0, fontSize: '15px', fontWeight: 700 }}>ClientM</Title>
+                </div>
+                <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginLeft: '30px' }}>Client Management Hub</div>
+              </div>
+            )}
+            <button onClick={() => setSidebarCollapsed(!collapsed)} style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+              {collapsed ? <MenuUnfoldOutlined style={{ fontSize: '16px' }} /> : <MenuFoldOutlined style={{ fontSize: '16px' }} />}
             </button>
           </div>
-          
-          <button 
-            onClick={() => setActiveModule('home')}
-            style={{ 
-              width: '100%', 
-              background: '#fff', 
-              border: 'none', 
-              padding: '10px 12px', 
-              cursor: 'pointer', 
-              borderRadius: '6px', 
-              fontWeight: 600, 
-              fontSize: '13px',
-              color: '#001529',
-              marginTop: 'auto'
-            }}
-          >
-            ← Back to Dashboard
-          </button>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
+            <Tooltip title={collapsed ? 'Requests' : ''} placement="right">
+              <button
+                onClick={() => setActiveClientMTab('requests')}
+                style={{
+                  background: activeClientMTab === 'requests' ? '#1890FF' : 'rgba(255,255,255,0.08)',
+                  color: '#fff', border: 'none', padding: '10px 12px', borderRadius: '6px',
+                  textAlign: collapsed ? 'center' : 'left', cursor: 'pointer', fontWeight: 600,
+                  fontSize: '13px', display: 'flex', alignItems: 'center',
+                  gap: collapsed ? 0 : '10px', transition: 'background 0.3s', justifyContent: collapsed ? 'center' : 'flex-start',
+                }}
+              >
+                <FileTextOutlined style={{ fontSize: '16px', flexShrink: 0 }} />
+                {!collapsed && ' Requests'}
+              </button>
+            </Tooltip>
+            <Tooltip title={collapsed ? 'Connects' : ''} placement="right">
+              <button
+                onClick={() => setActiveClientMTab('connects')}
+                style={{
+                  background: activeClientMTab === 'connects' ? '#1890FF' : 'rgba(255,255,255,0.08)',
+                  color: '#fff', border: 'none', padding: '10px 12px', borderRadius: '6px',
+                  textAlign: collapsed ? 'center' : 'left', cursor: 'pointer', fontSize: '13px',
+                  display: 'flex', alignItems: 'center', gap: collapsed ? 0 : '10px',
+                  transition: 'background 0.3s', justifyContent: collapsed ? 'center' : 'flex-start',
+                }}
+              >
+                <TeamOutlined style={{ fontSize: '16px', flexShrink: 0 }} />
+                {!collapsed && ' Connects'}
+              </button>
+            </Tooltip>
+          </div>
+
+          <Tooltip title={collapsed ? 'Back to Dashboard' : ''} placement="right">
+            <button
+              onClick={() => setActiveModule('home')}
+              style={{
+                width: '100%', background: '#fff', border: 'none', padding: '10px 12px',
+                cursor: 'pointer', borderRadius: '6px', fontWeight: 600, fontSize: '13px',
+                color: '#001529', marginTop: '16px', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', gap: collapsed ? 0 : '8px',
+              }}
+            >
+              {collapsed ? '←' : '← Back to Dashboard'}
+            </button>
+          </Tooltip>
         </div>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#f5f5f5', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflowY: 'auto', background: '#f5f5f5' }}>
             <ClientM activeTab={activeClientMTab} />
           </div>
         </div>
@@ -167,8 +160,8 @@ export default function App() {
 
   if (activeModule === 'resources') {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
-        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
+        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', height: '100vh', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
           <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
               <ThunderboltOutlined style={{ fontSize: '24px', color: '#faad14' }} />
@@ -181,7 +174,7 @@ export default function App() {
             </div>
           </div>
           
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
             <button
               onClick={() => setActiveResourceTab('details')}
               style={{
@@ -254,14 +247,15 @@ export default function App() {
               fontWeight: 600, 
               fontSize: '13px',
               color: '#001529',
-              marginTop: 'auto'
+              marginTop: '16px',
+              flexShrink: 0,
             }}
           >
             ← Back to Dashboard
           </button>
         </div>
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
-          <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+          <div style={{ flex: 1, overflowY: 'auto', background: '#fff' }}>
             {activeResourceTab === 'details' && <ResourceManagement onResourcesChange={setResources} />}
             {activeResourceTab === 'utilization' && <ResourceUtilization resources={resources} onUpdateResources={setResources} />}
           </div>

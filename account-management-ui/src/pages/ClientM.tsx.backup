@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useRef, useEffect } from 'react';
+﻿import React, { useState, useMemo } from 'react';
 import {
   Table,
   Button,
@@ -159,6 +159,18 @@ const getOverallStatusBackgroundColor = (status: OverallStatusType): string => {
   return colors[status] || '#f5f5f5';
 };
 
+// Column name mapping
+const COLUMN_DISPLAY_NAMES: Record<string, string> = {
+  sno: 'S.No',
+  beelineId: 'Beeline ID',
+  description: 'Description',
+  raisedBy: 'Raised By',
+  processingStatus: 'Processing Status',
+  overallStatus: 'Overall Status',
+  accountAnchor: 'Account Anchor',
+  dateRaised: 'Date Raised',
+};
+
 // Main Component
 export default function ClientM() {
   const [requests, setRequests] = useState<ClientRequest[]>([]);
@@ -181,14 +193,22 @@ export default function ClientM() {
     dateRaised: true,
   });
 
+  // Check if any filter is applied (excluding sno and beelineId)
+  const isFilterApplied = Object.entries(filters).some(([key, value]) => {
+    if (!value) return false;
+    if (key === 'sno' || key === 'beelineId') return false;
+    return true;
+  });
+
   // Filtered requests
   const filteredRequests = useMemo(() => {
     return requests.filter(req => {
       for (const [key, value] of Object.entries(filters)) {
         if (!value) continue;
         
-        if (key === 'sno' && !req.sno.toString().includes(value)) return false;
-        if (key === 'beelineId' && !req.beelineId.toLowerCase().includes(value.toLowerCase())) return false;
+        // Skip filtering on sno and beelineId (user requested)
+        if (key === 'sno' || key === 'beelineId') continue;
+        
         if (key === 'description' && !req.description.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'raisedBy' && !req.raisedBy.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'accountAnchor' && !req.accountAnchor.toLowerCase().includes(value.toLowerCase())) return false;
@@ -200,7 +220,7 @@ export default function ClientM() {
   }, [requests, filters]);
 
   // Handlers
-  const handleUpload = (file: File) => {
+  const handleUpload = (file: any) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -209,14 +229,10 @@ export default function ClientM() {
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-        if (!jsonData || jsonData.length === 0) {
-          message.warning('No data found in the Excel file');
-          return;
-        }
-
         const newRequests: ClientRequest[] = jsonData.map((row: any, idx: number) => {
           const sno = requests.length + idx + 1;
           
+          // Convert display name to internal code for processing status
           let processingStatus: ProcessingStatusType = 'accepted_staffing';
           const processingValue = row['Processing Status'] || '';
           for (const [code, display] of Object.entries(PROCESSING_STATUS_DISPLAY_MAP)) {
@@ -226,6 +242,7 @@ export default function ClientM() {
             }
           }
           
+          // Convert display name to internal code for overall status
           let overallStatus: OverallStatusType = 'not_started';
           const overallValue = row['Overall Status'] || '';
           for (const [code, display] of Object.entries(OVERALL_STATUS_DISPLAY_MAP)) {
@@ -251,15 +268,9 @@ export default function ClientM() {
         setRequests([...requests, ...newRequests]);
         message.success(`${newRequests.length} records uploaded successfully`);
       } catch (error) {
-        console.error('Upload error:', error);
         message.error('Failed to upload file');
       }
     };
-    
-    reader.onerror = () => {
-      message.error('Failed to read file');
-    };
-
     reader.readAsArrayBuffer(file);
     return false;
   };
@@ -349,14 +360,14 @@ export default function ClientM() {
       title: 'S.No',
       dataIndex: 'sno',
       key: 'sno',
-      width: 80,
+      width: 60,
       hidden: !visibleColumns.sno,
     },
     {
       title: 'Beeline ID',
       dataIndex: 'beelineId',
       key: 'beelineId',
-      width: 130,
+      width: 110,
       hidden: !visibleColumns.beelineId,
     },
     {
@@ -365,83 +376,101 @@ export default function ClientM() {
       key: 'description',
       hidden: !visibleColumns.description,
       render: (text: string) => (
-        <Tooltip title={<span style={{ fontSize: '11px' }}>{text}</span>}>
-          <span style={{ maxWidth: '200px', display: 'inline-block', fontSize: '11px' }}>
-            {text ? (text.substring(0, 50) + (text.length > 50 ? '...' : '')) : '-'}
-          </span>
-        </Tooltip>
+        <Popover
+          content={<div style={{ maxWidth: '300px', whiteSpace: 'normal' }}>{text || '-'}</div>}
+          trigger="click"
+          placement="left"
+        >
+          <Button type="text" size="small" style={{ height: 'auto', padding: '2px 0', textAlign: 'left' }}>
+            {text ? (text.substring(0, 30) + (text.length > 30 ? '...' : '')) : '-'}
+          </Button>
+        </Popover>
       ),
     },
     {
       title: 'Raised By',
       dataIndex: 'raisedBy',
       key: 'raisedBy',
-      width: 120,
+      width: 100,
       hidden: !visibleColumns.raisedBy,
     },
     {
       title: 'Processing Status',
       dataIndex: 'processingStatus',
       key: 'processingStatus',
-      width: 150,
+      width: 140,
       hidden: !visibleColumns.processingStatus,
-      render: (status: ProcessingStatusType) => PROCESSING_STATUS_DISPLAY_MAP[status] || status,
+      render: (status: ProcessingStatusType) => (
+        <Text style={{ fontSize: '11px' }}>
+          {PROCESSING_STATUS_DISPLAY_MAP[status] || status}
+        </Text>
+      ),
     },
     {
       title: 'Overall Status',
       dataIndex: 'overallStatus',
       key: 'overallStatus',
-      width: 130,
+      width: 120,
       hidden: !visibleColumns.overallStatus,
       render: (status: OverallStatusType) => (
-        <span style={{
-          backgroundColor: getOverallStatusBackgroundColor(status),
-          color: getOverallStatusColor(status),
-          padding: '2px 8px',
-          borderRadius: '4px',
-          fontSize: '11px',
-          fontWeight: '500',
-          display: 'inline-block',
-        }}>
-          {OVERALL_STATUS_DISPLAY_MAP[status] || status}
-        </span>
+        <Badge
+          color={getOverallStatusColor(status)}
+          text={OVERALL_STATUS_DISPLAY_MAP[status] || status}
+        />
       ),
     },
     {
       title: 'Account Anchor',
       dataIndex: 'accountAnchor',
       key: 'accountAnchor',
-      width: 120,
+      width: 110,
       hidden: !visibleColumns.accountAnchor,
     },
     {
       title: 'Date Raised',
       dataIndex: 'dateRaised',
       key: 'dateRaised',
-      width: 120,
+      width: 100,
       hidden: !visibleColumns.dateRaised,
     },
     {
       title: 'Actions',
       key: 'actions',
       width: 80,
+      hidden: viewMode !== 'table',
       render: (_: any, record: ClientRequest) => (
-        <Space size="small">
-          <Button
-            type="text"
-            size="small"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-            style={{ fontSize: '12px' }}
-          />
-          <Button
-            type="text"
-            size="small"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={() => handleDelete(record)}
-            style={{ fontSize: '12px' }}
-          />
+        <Space size={2}>
+          <Tooltip title="Edit">
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => {
+                setEditingRequest(record);
+                form.setFieldsValue(record);
+                setEditDrawer(true);
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="Delete">
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={() => {
+                Modal.confirm({
+                  title: 'Delete Request',
+                  content: 'Are you sure?',
+                  okText: 'Yes',
+                  cancelText: 'No',
+                  onOk() {
+                    setRequests(requests.filter(r => r.sno !== record.sno));
+                  },
+                });
+              }}
+            />
+          </Tooltip>
         </Space>
       ),
     },
@@ -457,30 +486,11 @@ export default function ClientM() {
     return col;
   });
 
-  // Click outside to deselect cards and close filter panel
+  // Click outside to deselect
   const handleContainerClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       setSelectedRowKeys([]);
-      setShowFilterPanel(false);
     }
-  };
-
-  const isFilterApplied = Object.values(filters).some(v => v);
-
-  const filterPanelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showFilterPanel) return;
-    const handleMouseDown = (e: MouseEvent) => {
-      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
-        setShowFilterPanel(false);
-      }
-    };
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => document.removeEventListener('mousedown', handleMouseDown);
-  }, [showFilterPanel]);
-
-  const closeFilterOnEnter = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') setShowFilterPanel(false);
   };
 
   return (
@@ -489,36 +499,17 @@ export default function ClientM() {
         {requests.length > 0 ? (
           <div style={{ background: '#fff', borderRadius: '8px', padding: '24px' }}>
             <Tabs
-              destroyInactiveTabPane
               items={[
                 {
                   key: 'views',
                   label: 'Requests',
                   children: (
-                    <div onClick={handleContainerClick} style={{ minHeight: '500px' }}>
-                      <Space style={{ marginBottom: '16px', width: '100%', justifyContent: 'space-between', display: 'flex' }} direction="horizontal">
+                    <div style={{ display: 'flex', gap: '16px', minHeight: '500px' }} onClick={handleContainerClick}>
+                      <div style={{ flex: 1 }}>
+                      <Space style={{ marginBottom: '12px', width: '100%', justifyContent: 'space-between', display: 'flex' }} direction="horizontal">
                         <Text type="secondary">Showing: <strong>{filteredRequests.length}</strong> {filteredRequests.length !== requests.length ? `/ ${requests.length}` : ''}</Text>
                         <Space wrap size={8}>
-                          {isFilterApplied && (
-                            <Button
-                              size="small"
-                              type="link"
-                              style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }}
-                              onClick={() => setFilters({})}
-                            >
-                              ✕ Clear Filters
-                            </Button>
-                          )}
-                          <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Button
-                              icon={<FilterOutlined />}
-                              type={showFilterPanel || isFilterApplied ? 'primary' : 'default'}
-                              size="small"
-                              onClick={() => setShowFilterPanel(!showFilterPanel)}
-                              style={{ borderRadius: '6px' }}
-                            />
-                          </Tooltip>
-                          <Tooltip title="Card View" overlayInnerStyle={{ fontSize: '11px' }}>
+                          <Tooltip title="Card View">
                             <Button
                               icon={<AppstoreOutlined />}
                               type={viewMode === 'card' ? 'primary' : 'default'}
@@ -527,7 +518,7 @@ export default function ClientM() {
                               style={{ borderRadius: '6px' }}
                             />
                           </Tooltip>
-                          <Tooltip title="Table View" overlayInnerStyle={{ fontSize: '11px' }}>
+                          <Tooltip title="Table View">
                             <Button
                               icon={<TableOutlined />}
                               type={viewMode === 'table' ? 'primary' : 'default'}
@@ -536,7 +527,7 @@ export default function ClientM() {
                               style={{ borderRadius: '6px' }}
                             />
                           </Tooltip>
-                          <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
+                          <Tooltip title="Upload">
                             <Upload
                               accept=".xlsx,.xls"
                               beforeUpload={handleUpload}
@@ -545,9 +536,70 @@ export default function ClientM() {
                               <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
                             </Upload>
                           </Tooltip>
-                          <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
+                          <Tooltip title="Download Template">
                             <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
-                          </Tooltip>
+                          {viewMode === "table" && (
+                          </Tooltip>                          {viewMode === "table" && (<Popover content={<Space direction="vertical" size={2} style={{ width: "150px" }}>
+                                {Object.keys(visibleColumns).map(col => (
+                                  <Button
+                                    key={col}
+                                    type="text"
+                                    size="small"
+                                    onClick={() => setVisibleColumns({...visibleColumns, [col]: !visibleColumns[col as keyof typeof visibleColumns]})}
+                                    style={{ width: '100%', textAlign: 'left', fontSize: '11px', color: visibleColumns[col as keyof typeof visibleColumns] ? '#1890ff' : '#8c8c8c' }}
+                                  >
+                                    {visibleColumns[col as keyof typeof visibleColumns] && "✓ "}{COLUMN_DISPLAY_NAMES[col] || col}
+                                  </Button>
+                                ))}
+                              </Space>
+                            }
+                            trigger={['click']}
+                            placement="bottom"
+                          >
+                            <Tooltip title="Column Visibility">
+                              <Button icon={<SettingOutlined />} size="small" style={{ borderRadius: '6px' }} />
+                            </Tooltip></Popover>)}<Popover
+                          )}
+                            content={
+                              <Space direction="vertical" style={{ width: '200px' }} size={2}>
+                                <Input
+                                  placeholder="Beeline ID"
+                                  size="small"
+                                  value={filters.beelineId || ''}
+                                  onChange={(e) => setFilters({...filters, beelineId: e.target.value})}
+                                />
+                                <Input
+                                  placeholder="Raised By"
+                                  size="small"
+                                  value={filters.raisedBy || ''}
+                                  onChange={(e) => setFilters({...filters, raisedBy: e.target.value})}
+                                />
+                                <Select
+                                  placeholder="Overall Status"
+                                  size="small"
+                                  allowClear
+                                  value={filters.overallStatus || undefined}
+                                  onChange={(val) => setFilters({...filters, overallStatus: val})}
+                                  options={OVERALL_STATUS_OPTIONS}
+                                />
+                                <Select
+                                  placeholder="Processing Status"
+                                  size="small"
+                                  allowClear
+                                  value={filters.processingStatus || undefined}
+                                  onChange={(val) => setFilters({...filters, processingStatus: val})}
+                                  options={PROCESSING_STATUS_OPTIONS}
+                                />
+                                <Button size="small" danger onClick={() => setFilters({})}>Clear All</Button>
+                              </Space>
+                            }
+                            trigger={['click']}
+                            placement="bottom"
+                          >
+                            <Tooltip title="Filter">
+                              <Button icon={<FilterOutlined />} size="small" style={{ borderRadius: '6px' }} />
+                            </Tooltip>
+                          </Popover>
                           <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>
                         </Space>
                       </Space>
@@ -558,7 +610,7 @@ export default function ClientM() {
                           <Space>
                             <Popover
                               content={
-                                <Space direction="vertical" size={4} style={{ width: '150px' }}>
+                                <Space direction="vertical" size={3} style={{ width: '150px' }}>
                                   {OVERALL_STATUS_OPTIONS.map(status => (
                                     <Button
                                       key={status.value}
@@ -572,7 +624,7 @@ export default function ClientM() {
                                         ));
                                         setSelectedRowKeys([]);
                                       }}
-                                      style={{ width: '100%', textAlign: 'left' }}
+                                      style={{ width: '100%', textAlign: 'left', fontSize: '11px' }}
                                     >
                                       {status.label}
                                     </Button>
@@ -582,11 +634,11 @@ export default function ClientM() {
                               trigger={['click']}
                               placement="top"
                             >
-                              <Button size="small" style={{ fontSize: '11px', color: '#262626' }}>Update Status</Button>
+                              <Button size="small" style={{ fontSize: '11px', color: '#262626' }}>Overall Status</Button>
                             </Popover>
                             <Popover
                               content={
-                                <Space direction="vertical" size={4} style={{ width: '180px' }}>
+                                <Space direction="vertical" size={3} style={{ width: '150px' }}>
                                   {PROCESSING_STATUS_OPTIONS.map(status => (
                                     <Button
                                       key={status.value}
@@ -600,7 +652,7 @@ export default function ClientM() {
                                         ));
                                         setSelectedRowKeys([]);
                                       }}
-                                      style={{ width: '100%', textAlign: 'left' }}
+                                      style={{ width: '100%', textAlign: 'left', fontSize: '11px' }}
                                     >
                                       {status.label}
                                     </Button>
@@ -610,106 +662,33 @@ export default function ClientM() {
                               trigger={['click']}
                               placement="top"
                             >
-                              <Button size="small" style={{ fontSize: '11px', color: '#262626' }}>Update Processing Status</Button>
+                              <Button size="small" style={{ fontSize: '11px', color: '#262626' }}>Processing Status</Button>
                             </Popover>
-                            <Button size="small" style={{ fontSize: '11px', color: '#262626' }} onClick={handleBulkDelete} icon={<DeleteOutlined />}>Delete</Button>
+                            <Button size="small" danger onClick={handleBulkDelete} style={{ fontSize: '11px' }}>Delete</Button>
                             <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setSelectedRowKeys([])} />
                           </Space>
                         </div>
                       )}
 
                       {viewMode === 'table' ? (
-                        <div style={{ display: 'flex', gap: '12px' }}>
-                          {showFilterPanel && (
-                            <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                                <Text strong style={{ fontSize: '12px' }}>Filters</Text>
-                                <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setFilters({})}>Clear all</Button>
-                              </div>
-                              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline ID</div>
-                                  <Input size="small" placeholder="Search..." value={filters.beelineId || ''} onChange={e => setFilters({ ...filters, beelineId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Resource Name</div>
-                                  <Input size="small" placeholder="Search..." value={filters.raisedBy || ''} onChange={e => setFilters({ ...filters, raisedBy: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Account Anchor</div>
-                                  <Input size="small" placeholder="Search..." value={filters.accountAnchor || ''} onChange={e => setFilters({ ...filters, accountAnchor: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Description</div>
-                                  <Input size="small" placeholder="Search..." value={filters.description || ''} onChange={e => setFilters({ ...filters, description: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Overall Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.overallStatus || undefined} onChange={val => setFilters({ ...filters, overallStatus: val })} options={OVERALL_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Processing Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.processingStatus || undefined} onChange={val => setFilters({ ...filters, processingStatus: val })} options={PROCESSING_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                              </Space>
-                            </div>
-                          )}
-                          <div style={{ flex: 1, overflow: 'hidden' }}>
-                            <div className="compact-table">
-                              <Table<ClientRequest>
-                                dataSource={filteredRequests}
-                                columns={displayColumns}
-                                pagination={{ pageSize: 15, showSizeChanger: false }}
-                                scroll={{ x: 'max-content', y: 420 }}
-                                size="small"
-                                rowSelection={{
-                                  selectedRowKeys,
-                                  onChange: (keys) => setSelectedRowKeys(keys as string[]),
-                                  type: 'checkbox',
-                                }}
-                                rowKey="sno"
-                              />
-                            </div>
-                          </div>
+                        <div>
+                          <Table<ClientRequest>
+                            dataSource={filteredRequests}
+                            columns={displayColumns}
+                            pagination={{ pageSize: 25, showSizeChanger: true, pageSizeOptions: ['15', '25', '50'] }}
+                            scroll={{ x: 'max-content' }}
+                            size="small"
+                            rowSelection={{
+                              selectedRowKeys,
+                              onChange: (keys) => setSelectedRowKeys(keys as string[]),
+                              type: 'checkbox',
+                            }}
+                            rowKey="sno"
+                            style={{ fontSize: '12px' }}
+                          />
                         </div>
                       ) : (
-                        <div style={{ display: 'flex', gap: '12px' }}>
-                          {showFilterPanel && (
-                            <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                                <Text strong style={{ fontSize: '12px' }}>Filters</Text>
-                                <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setFilters({})}>Clear all</Button>
-                              </div>
-                              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline ID</div>
-                                  <Input size="small" placeholder="Search..." value={filters.beelineId || ''} onChange={e => setFilters({ ...filters, beelineId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Resource Name</div>
-                                  <Input size="small" placeholder="Search..." value={filters.raisedBy || ''} onChange={e => setFilters({ ...filters, raisedBy: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Account Anchor</div>
-                                  <Input size="small" placeholder="Search..." value={filters.accountAnchor || ''} onChange={e => setFilters({ ...filters, accountAnchor: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Description</div>
-                                  <Input size="small" placeholder="Search..." value={filters.description || ''} onChange={e => setFilters({ ...filters, description: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Overall Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.overallStatus || undefined} onChange={val => setFilters({ ...filters, overallStatus: val })} options={OVERALL_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Processing Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.processingStatus || undefined} onChange={val => setFilters({ ...filters, processingStatus: val })} options={PROCESSING_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                              </Space>
-                            </div>
-                          )}
-                          <div style={{ flex: 1 }}>
-                            <Row gutter={[16, 16]}>
+                        <Row gutter={[16, 16]}>
                           {filteredRequests.map(request => (
                             <Col key={request.sno} xs={24} sm={24} md={12} lg={8}>
                               <Card
@@ -727,63 +706,63 @@ export default function ClientM() {
                                   border: selectedRowKeys.includes(request.sno) ? '2px solid #1a1a1a' : '1px solid #d9d9d9',
                                   cursor: 'pointer',
                                   backgroundColor: selectedRowKeys.includes(request.sno) ? '#f5f5f5' : '#ffffff',
-                                  padding: '12px',
+                                  padding: '8px',
                                 }}
                               >
-                                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "8px" }}>
-                                   <div>
-                                     <Text strong style={{ fontSize: "13px" }}>{request.beelineId}</Text>
-                                     <div style={{ fontSize: "12px", color: "#8c8c8c" }}>{request.raisedBy}</div>
-                                   </div>
-                                   <div style={{ textAlign: "right" }}>
-                                     <Dropdown
-                                        menu={{
-                                          items: [
-                                            {
-                                              key: "edit",
-                                              label: <span style={{ fontSize: '11px' }}>Edit</span>,
-                                              icon: <EditOutlined style={{ fontSize: '11px' }} />,
-                                              onClick: () => handleEdit(request),
-                                            },
-                                            {
-                                              key: "delete",
-                                              label: <span style={{ fontSize: '11px' }}>Delete</span>,
-                                              icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
-                                              danger: true,
-                                              onClick: () => handleDelete(request),
-                                            },
-                                          ],
-                                        }}
-                                       trigger={["click"]}
-                                     >
-                                       <Button type="text" size="small" icon={<MoreOutlined />} style={{ padding: 0 }} />
-                                     </Dropdown>
-                                     <div style={{ fontSize: "11px", color: "#262626", fontWeight: "500", marginTop: "4px" }}>{request.accountAnchor}</div>
-                                   </div>
-                                 </div>
-                                <Divider style={{ margin: '8px 0' }} />
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '8px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                  <div style={{ flex: 1 }}>
+                                    <Text strong>{request.beelineId}</Text>
+                                    <div style={{ fontSize: '12px', color: '#8c8c8c' }}>{request.raisedBy}</div>
+                                  </div>
+                                  <Dropdown
+                                    menu={{
+                                      items: [
+                                        {
+                                          key: 'edit',
+                                          label: 'Edit',
+                                          icon: <EditOutlined />,
+                                          onClick: () => handleEdit(request),
+                                        },
+                                        {
+                                          key: 'delete',
+                                          label: 'Delete',
+                                          icon: <DeleteOutlined />,
+                                          danger: true,
+                                          onClick: () => handleDelete(request),
+                                        },
+                                      ],
+                                    }}
+                                    trigger={['click']}
+                                  >
+                                    <Button type="text" size="small" icon={<MoreOutlined />} style={{ padding: 0 }} />
+                                  </Dropdown>
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#595959', marginBottom: '8px', marginLeft: '0px' }}>
+                                  {request.accountAnchor}
+                                </div>
+                                <Divider style={{ margin: '6px 0' }} />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', gap: '8px' }}>
                                   <div style={{ flex: 1 }}>
                                     <Text style={{
                                       backgroundColor: getOverallStatusBackgroundColor(request.overallStatus),
                                       color: getOverallStatusColor(request.overallStatus),
-                                      padding: '4px 10px',
-                                      fontSize: '12px',
+                                      padding: '3px 8px',
+                                      fontSize: '11px',
                                       fontWeight: '500',
-                                      borderRadius: '4px',
+                                      borderRadius: '3px',
                                       display: 'inline-block'
                                     }}>
                                       {OVERALL_STATUS_DISPLAY_MAP[request.overallStatus]}
                                     </Text>
                                   </div>
-                                  <Text style={{ fontSize: '12px', color: '#262626', fontStyle: 'italic', flex: 1, textAlign: 'right' }}>
+                                  <Text style={{ fontSize: '11px', color: '#262626', fontStyle: 'italic', flex: 1, textAlign: 'right' }}>
                                     {PROCESSING_STATUS_DISPLAY_MAP[request.processingStatus]}
                                   </Text>
                                 </div>
                                 <Text style={{ fontSize: '12px', color: '#262626', display: 'block', marginBottom: '8px' }}>
                                   {request.description ? (request.description.substring(0, 80) + (request.description.length > 80 ? '...' : '')) : '-'}
                                 </Text>
-                                <div style={{ textAlign: 'right' }}>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                   <Text style={{ fontSize: '10px', color: '#bfbfbf' }}>
                                     Updated: {request.updatedOn || '-'}
                                   </Text>
@@ -792,10 +771,40 @@ export default function ClientM() {
                             </Col>
                           ))}
                         </Row>
-                          </div>
-                        </div>
                       )}
                     </div>
+                    {showFilterPanel && (
+                      <div style={{ width: '280px', background: '#f9f9f9', padding: '16px', borderRadius: '8px', border: '1px solid #e8e8e8', maxHeight: '500px', overflowY: 'auto' }}>
+                        <div style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text strong style={{ fontSize: '14px' }}>Filters</Text>
+                          <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setShowFilterPanel(false)} />
+                        </div>
+                        <Divider style={{ margin: '8px 0 16px' }} />
+                        <div style={{ marginBottom: '12px' }}>
+                          <Text style={{ fontSize: '12px', color: '#666' }}>Description</Text>
+                          <Input placeholder="Search description" size="small" style={{ marginTop: '4px' }} value={filters.description || ''} onChange={(e) => setFilters({...filters, description: e.target.value})} />
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <Text style={{ fontSize: '12px', color: '#666' }}>Raised By</Text>
+                          <Input placeholder="Search Raised By" size="small" style={{ marginTop: '4px' }} value={filters.raisedBy || ''} onChange={(e) => setFilters({...filters, raisedBy: e.target.value})} />
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <Text style={{ fontSize: '12px', color: '#666' }}>Account Anchor</Text>
+                          <Input placeholder="Search Account Anchor" size="small" style={{ marginTop: '4px' }} value={filters.accountAnchor || ''} onChange={(e) => setFilters({...filters, accountAnchor: e.target.value})} />
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <Text style={{ fontSize: '12px', color: '#666' }}>Overall Status</Text>
+                          <Select placeholder="Select status" size="small" style={{ marginTop: '4px', width: '100%' }} allowClear value={filters.overallStatus || undefined} onChange={(val) => setFilters({...filters, overallStatus: val})} options={OVERALL_STATUS_OPTIONS} />
+                        </div>
+                        <div style={{ marginBottom: '12px' }}>
+                          <Text style={{ fontSize: '12px', color: '#666' }}>Processing Status</Text>
+                          <Select placeholder="Select status" size="small" style={{ marginTop: '4px', width: '100%' }} allowClear value={filters.processingStatus || undefined} onChange={(val) => setFilters({...filters, processingStatus: val})} options={PROCESSING_STATUS_OPTIONS} />
+                        </div>
+                        <Divider style={{ margin: '12px 0' }} />
+                        <Button danger block size="small" onClick={() => setFilters({})}>Clear All Filters</Button>
+                      </div>
+                    )}
+                  </div>
                   ),
                 },
                 {
@@ -862,3 +871,5 @@ export default function ClientM() {
     </div>
   );
 }
+
+
