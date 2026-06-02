@@ -5,6 +5,7 @@ import ResourceManagement from './pages/ResourceMgmt';
 import { ResourceUtilization } from './pages/ResourceUtilization';
 import ClientM from './pages/ClientM';
 import { ClientRateCard } from './pages/ClientRateCard';
+import { ClientTeamHierarchy } from './pages/ClientTeamHierarchy';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
@@ -151,7 +152,7 @@ export default function App() {
         case 'clientmgmt_requests':   return <ClientM activeTab="requests" />;
         case 'clientmgmt_connects':   return <ClientM activeTab="connects" />;
         case 'information_ratecard':      return <ClientRateCard />;
-        case 'information_teamhierarchy': return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Team Hierarchy — Coming Soon</div>;
+        case 'information_teamhierarchy': return <ClientTeamHierarchy />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
         default: return null;
       }
