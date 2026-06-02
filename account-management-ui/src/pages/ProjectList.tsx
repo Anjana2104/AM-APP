@@ -1,10 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { Upload, Table, Typography, Space, Button, message, Input, Segmented, Tooltip, Drawer, Checkbox, Select } from 'antd';
+import React, { useMemo, useState, useRef, useEffect } from 'react';
+import { Upload, Table, Typography, Space, Button, message, Input, Tooltip, Drawer, Checkbox, Select } from 'antd';
 import type { ColumnsType, ColumnType } from 'antd/es/table';
 import { UploadOutlined, DownloadOutlined, ColumnHeightOutlined, FilterOutlined } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 type ExcelRow = Record<string, any>;
 
@@ -77,7 +77,7 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
   const [rows, setRows] = useState<Row[]>([]);
   const [monthHeaders, setMonthHeaders] = useState<string[]>([]);
   const [columnDrawer, setColumnDrawer] = useState(false);
-  const [filterDrawer, setFilterDrawer] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(new Set(['sno', 'project', 'code', 'space', 'owner', 'total']));
   const [filters, setFilters] = useState<{ project: string; space: string; owner: string; fy: string | null }>({
     project: '',
@@ -85,6 +85,28 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
     owner: '',
     fy: null,
   });
+
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const isFilterApplied = !!(filters.project || filters.space || filters.owner || filters.fy);
+
+  useEffect(() => {
+    if (!showFilterPanel) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (filterPanelRef.current && !filterPanelRef.current.contains(target)) {
+        const isInsidePopup = !!target.closest('.ant-select-dropdown, .ant-picker-dropdown, .ant-dropdown');
+        if (!isInsidePopup) {
+          setShowFilterPanel(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [showFilterPanel]);
+
+  const closeFilterOnEnter = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') setShowFilterPanel(false);
+  };
 
   const availableFYs = useMemo(() => {
     const fys = [];
@@ -113,26 +135,19 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
 
   const handleUpload = async (file: File) => {
     try {
-      console.log('=== Upload started ===', file.name, file.size);
       const buffer = await file.arrayBuffer();
-      console.log('✓ Buffer read successfully:', buffer.byteLength, 'bytes');
       
       const wb = XLSX.read(buffer, { type: 'array' });
-      console.log('✓ Workbook parsed, sheets:', wb.SheetNames);
       
       const ws = wb.Sheets[wb.SheetNames[0]];
       if (!ws) {
-        console.error('✗ No sheet found');
         message.error('No sheet found in Excel file');
         return false;
       }
-      console.log('✓ Sheet selected:', wb.SheetNames[0]);
       
       const json = XLSX.utils.sheet_to_json<ExcelRow>(ws, { defval: '' });
-      console.log('✓ Sheet converted to JSON:', json.length, 'rows', 'Headers:', Object.keys(json[0] || {}));
 
       if (!json.length) {
-        console.warn('⚠ Sheet is empty');
         message.error('Excel sheet is empty');
         return false;
       }
@@ -141,10 +156,8 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
       const fixedCols = ['S.No.', 'Project', 'Code', 'Space', 'Owners'];
 
       const monthCols = headers.filter(h => !fixedCols.includes(h));
-      console.log('✓ Month columns found:', monthCols.length, monthCols);
 
       if (monthCols.length === 0) {
-        console.warn('⚠ No month columns found');
         message.warning('No month columns found. Expected columns like Oct\'25, Nov\'25, etc.');
       }
 
@@ -162,18 +175,12 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
         };
       });
 
-      console.log('✓ Mapped rows:', mapped.length);
-      console.log('✓ Sample row:', mapped[0]);
-      
       setRows(mapped);
       setMonthHeaders(monthCols);
       onDataChange?.(mapped);
       onMonthsChange?.(monthCols);
-      console.log('✓ State updated successfully');
       message.success(`Loaded ${mapped.length} projects`);
     } catch (e: any) {
-      console.error('✗ Upload error:', e);
-      console.error('Stack:', e.stack);
       message.error(e.message || 'Failed to read Excel');
     }
     return false;
@@ -186,10 +193,9 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
   }, [monthHeaders, filters.fy]);
 
   const columns: ColumnsType<Row> = useMemo(() => {
-    const fixedHeaderStyle = { backgroundColor: '#E6F7FF', fontWeight: 600 };
-    const monthHeaderStyle = { backgroundColor: '#F6F8FB', fontWeight: 600 };
-    const totalHeaderStyle = { backgroundColor: '#FFA940', fontWeight: 600, color: '#fff' };
-    const cellStyle = { whiteSpace: 'pre-wrap' as const, wordWrap: 'break-word' as const };
+    const headerStyle = { fontWeight: 600, fontSize: '11px' };
+    const totalHeaderStyle = { fontWeight: 600, fontSize: '11px', backgroundColor: '#FFA940', color: '#fff' };
+    const cellStyle = { whiteSpace: 'pre-wrap' as const, wordWrap: 'break-word' as const, fontSize: '11px' };
 
     const handleRevenueChange = (key: string, monthIdx: number, value: string) => {
       const numValue = parseINR(value);
@@ -213,7 +219,7 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
         dataIndex: 'sno',
         key: 'sno',
         width: 60,
-        onHeaderCell: () => ({ style: fixedHeaderStyle }),
+        onHeaderCell: () => ({ style: headerStyle }),
         onCell: () => ({ style: cellStyle }),
       },
       {
@@ -226,8 +232,8 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
             {value}
           </div>
         ),
-        onHeaderCell: () => ({ style: fixedHeaderStyle }),
-        onCell: () => ({ style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }),
+        onHeaderCell: () => ({ style: headerStyle }),
+        onCell: () => ({ style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px' } }),
       },
       {
         title: 'Code',
@@ -238,11 +244,11 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
           <Input
             value={deriveCodeFromProject(record.project) || value}
             disabled
-            style={{ border: 'none', background: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            style={{ border: 'none', background: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px' }}
             title="Code is auto-derived from Project Name"
           />
         ),
-        onHeaderCell: () => ({ style: fixedHeaderStyle }),
+        onHeaderCell: () => ({ style: headerStyle }),
         onCell: () => ({ style: cellStyle }),
       },
       {
@@ -254,10 +260,10 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
           <Input
             value={value}
             onChange={e => handleFieldChange(record.key, 'space', e.target.value)}
-            style={{ border: 'none', background: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            style={{ border: 'none', background: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px' }}
           />
         ),
-        onHeaderCell: () => ({ style: fixedHeaderStyle }),
+        onHeaderCell: () => ({ style: headerStyle }),
         onCell: () => ({ style: cellStyle }),
       },
       {
@@ -269,10 +275,10 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
           <Input
             value={value}
             onChange={e => handleFieldChange(record.key, 'owner', e.target.value)}
-            style={{ border: 'none', background: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+            style={{ border: 'none', background: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: '11px' }}
           />
         ),
-        onHeaderCell: () => ({ style: fixedHeaderStyle }),
+        onHeaderCell: () => ({ style: headerStyle }),
         onCell: () => ({ style: cellStyle }),
       },
     ];
@@ -289,7 +295,7 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
             type="number"
             value={value || 0}
             onChange={e => handleRevenueChange(record.key, actualIdx, e.target.value)}
-            style={{ textAlign: 'right', border: 'none', background: 'transparent', whiteSpace: 'nowrap' }}
+            style={{ textAlign: 'right', border: 'none', background: 'transparent', whiteSpace: 'nowrap', fontSize: '11px' }}
             onBlur={e => {
               if (!e.target.value) {
                 handleRevenueChange(record.key, actualIdx, '0');
@@ -297,7 +303,7 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
             }}
           />
         ),
-        onHeaderCell: () => ({ style: monthHeaderStyle }),
+        onHeaderCell: () => ({ style: headerStyle }),
         onCell: () => ({ style: { whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }),
       };
     });
@@ -316,7 +322,7 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
           const clampedIndices = [Math.max(0, indices[0]), Math.min(record.revenue.length - 1, indices[1])];
           const total = record.revenue.slice(clampedIndices[0], clampedIndices[1] + 1).reduce((a, b) => a + b, 0);
           return (
-            <div style={{ padding: '4px 8px', backgroundColor: '#FFA940', color: '#fff', borderRadius: '4px', fontWeight: 600, textAlign: 'right', whiteSpace: 'pre-wrap', wordWrap: 'break-word' }}>
+            <div style={{ padding: '4px 8px', backgroundColor: '#FFA940', color: '#fff', borderRadius: '4px', fontWeight: 600, textAlign: 'right', whiteSpace: 'pre-wrap', wordWrap: 'break-word', fontSize: '11px' }}>
               ₹ {total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </div>
           );
@@ -351,60 +357,81 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
   }, [rows, filters]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
-      <div style={{ padding: '12px 24px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
-        <Space wrap style={{ gap: '4px' }}>
-          <Upload
-            accept=".xlsx,.xls"
-            beforeUpload={handleUpload}
-            showUploadList={false}
-          >
-            <Tooltip title="Upload Project Details from Excel">
-              <Button icon={<UploadOutlined />} type="text" size="small" />
+    <div style={{ background: '#f5f5f5', padding: '0' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '12px' }}>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            Showing: <strong>{displayRows.length}</strong>{displayRows.length !== rows.length ? ` / ${rows.length}` : ''}
+          </Text>
+          <Space wrap size={8}>
+            {isFilterApplied && (
+              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={() => setFilters({ project: '', space: '', owner: '', fy: null })}>✕ Clear Filters</Button>
+            )}
+            <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
             </Tooltip>
-          </Upload>
+            <Tooltip title="Column Settings" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: '6px' }} />
+            </Tooltip>
+            <Tooltip title="Upload Project Details from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
+                <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
+              </Upload>
+            </Tooltip>
+            <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
+            </Tooltip>
+          </Space>
+        </div>
 
-          <Tooltip title="Download Excel Template">
-            <Button onClick={downloadTemplate} icon={<DownloadOutlined />} type="text" size="small" />
-          </Tooltip>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          {showFilterPanel && (
+            <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <Text strong style={{ fontSize: '12px' }}>Filters</Text>
+                <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setFilters({ project: '', space: '', owner: '', fy: null })}>Clear all</Button>
+              </div>
+              <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Fiscal Year</div>
+                  <Select size="small" placeholder="All Years" allowClear value={filters.fy || undefined} onChange={(value) => setFilters({ ...filters, fy: value || null })} style={{ width: '100%', fontSize: '11px' }} options={availableFYs.map(fy => ({ label: fy.label, value: fy.value.toString() }))} onKeyDown={closeFilterOnEnter} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Project</div>
+                  <Select size="small" placeholder="Select Project..." allowClear value={filters.project || undefined} onChange={(value) => setFilters({ ...filters, project: value || '' })} style={{ width: '100%', fontSize: '11px' }} options={Array.from(new Set(rows.map(r => r.project).filter(Boolean))).map(p => ({ label: p, value: p }))} onKeyDown={closeFilterOnEnter} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Space</div>
+                  <Select size="small" placeholder="Select Space..." allowClear value={filters.space || undefined} onChange={(value) => setFilters({ ...filters, space: value || '' })} style={{ width: '100%', fontSize: '11px' }} options={Array.from(new Set(rows.map(r => r.space).filter(Boolean))).map(s => ({ label: s, value: s }))} onKeyDown={closeFilterOnEnter} />
+                </div>
+                <div>
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Owner</div>
+                  <Select size="small" placeholder="Select Owner..." allowClear value={filters.owner || undefined} onChange={(value) => setFilters({ ...filters, owner: value || '' })} style={{ width: '100%', fontSize: '11px' }} options={Array.from(new Set(rows.map(r => r.owner).filter(Boolean))).map(o => ({ label: o, value: o }))} onKeyDown={closeFilterOnEnter} />
+                </div>
+              </Space>
+            </div>
+          )}
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+            {rows.length === 0 ? (
+              <div style={{ background: '#fafafa', borderRadius: '8px', padding: 60, textAlign: 'center', border: '1px dashed #d9d9d9' }}>
+                <Text type="secondary" style={{ fontSize: '12px' }}>No data yet. Upload an Excel file to get started.</Text>
+              </div>
+            ) : (
+              <div className="compact-table">
+                <Table
+                  size="small"
+                  dataSource={displayRows}
+                  columns={columns?.length > 0 ? columns : []}
+                  pagination={{ pageSize: 15, showSizeChanger: false }}
+                  scroll={{ x: 'max-content', y: 420 }}
+                  locale={{ emptyText: 'No projects match your filters.' }}
+                  style={{ background: '#fff', borderRadius: '8px' }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
 
-          <Button
-            icon={<ColumnHeightOutlined />}
-            type="text"
-            size="small"
-            title="Column Settings"
-            onClick={() => setColumnDrawer(true)}
-          />
-
-          <Button
-            icon={<FilterOutlined />}
-            type="text"
-            size="small"
-            title="Filter Data"
-            onClick={() => setFilterDrawer(true)}
-          />
-        </Space>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 24px' }}>
-        <Table
-          bordered
-          size="small"
-          dataSource={displayRows}
-          columns={columns?.length > 0 ? columns : []}
-          pagination={{ pageSize: 15 }}
-          scroll={{ x: 'max-content' }}
-          locale={{ emptyText: 'No data. Upload project details to get started.' }}
-        />
-      </div>
-
-      <Drawer
-        title="Column Visibility"
-        placement="right"
-        onClose={() => setColumnDrawer(false)}
-        open={columnDrawer}
-        width={300}
-      >
+      <Drawer title="Column Visibility" placement="right" onClose={() => setColumnDrawer(false)} open={columnDrawer} width={300}>
         <Space direction="vertical" style={{ width: '100%' }}>
           {[
             { key: 'sno', label: 'S.No.' },
@@ -415,109 +442,10 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
             { key: 'total', label: 'Total (INR)' },
           ].map(({ key, label }) => (
             <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Checkbox
-                checked={visibleColumns.has(key)}
-                onChange={(e) => {
-                  const newVisible = new Set(visibleColumns);
-                  if (e.target.checked) {
-                    newVisible.add(key);
-                  } else {
-                    newVisible.delete(key);
-                  }
-                  setVisibleColumns(newVisible);
-                }}
-              />
-              <label style={{ marginBottom: 0, cursor: 'pointer' }}>
-                {label}
-              </label>
+              <Checkbox checked={visibleColumns.has(key)} onChange={(e) => { const s = new Set(visibleColumns); e.target.checked ? s.add(key) : s.delete(key); setVisibleColumns(s); }} />
+              <label style={{ marginBottom: 0, cursor: 'pointer' }}>{label}</label>
             </div>
           ))}
-        </Space>
-      </Drawer>
-
-      <Drawer
-        title="Filters"
-        placement="right"
-        onClose={() => setFilterDrawer(false)}
-        open={filterDrawer}
-        width={400}
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Fiscal Year
-            </Typography.Text>
-            <Select
-              placeholder="All Years"
-              value={filters.fy || undefined}
-              onChange={(value) => setFilters({ ...filters, fy: value || null })}
-              allowClear
-              style={{ width: '100%' }}
-              options={availableFYs.map(fy => ({
-                label: fy.label,
-                value: fy.value.toString(),
-              }))}
-            />
-          </div>
-
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Project
-            </Typography.Text>
-            <Select
-              placeholder="Select Project..."
-              value={filters.project || undefined}
-              onChange={(value) => setFilters({ ...filters, project: value || '' })}
-              allowClear
-              style={{ width: '100%' }}
-              options={Array.from(new Set(rows.map(r => r.project).filter(Boolean))).map(p => ({
-                label: p,
-                value: p,
-              }))}
-            />
-          </div>
-
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Space
-            </Typography.Text>
-            <Select
-              placeholder="Select Space..."
-              value={filters.space || undefined}
-              onChange={(value) => setFilters({ ...filters, space: value || '' })}
-              allowClear
-              style={{ width: '100%' }}
-              options={Array.from(new Set(rows.map(r => r.space).filter(Boolean))).map(s => ({
-                label: s,
-                value: s,
-              }))}
-            />
-          </div>
-
-          <div>
-            <Typography.Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Owner
-            </Typography.Text>
-            <Select
-              placeholder="Select Owner..."
-              value={filters.owner || undefined}
-              onChange={(value) => setFilters({ ...filters, owner: value || '' })}
-              allowClear
-              style={{ width: '100%' }}
-              options={Array.from(new Set(rows.map(r => r.owner).filter(Boolean))).map(o => ({
-                label: o,
-                value: o,
-              }))}
-            />
-          </div>
-
-          <Button
-            block
-            onClick={() => setFilters({ project: '', space: '', owner: '', fy: null })}
-            style={{ marginTop: 12 }}
-          >
-            Clear All Filters
-          </Button>
         </Space>
       </Drawer>
     </div>

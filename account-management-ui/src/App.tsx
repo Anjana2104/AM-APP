@@ -4,11 +4,13 @@ import { AccountFinance } from './pages/AccountFinance';
 import ResourceManagement from './pages/ResourceMgmt';
 import { ResourceUtilization } from './pages/ResourceUtilization';
 import ClientM from './pages/ClientM';
+import { ClientRateCard } from './pages/ClientRateCard';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DownOutlined, RightOutlined,
-  EyeOutlined, BankOutlined, HomeOutlined,
+  EyeOutlined, BankOutlined, HomeOutlined, InfoCircleOutlined,
+  CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined,
 } from '@ant-design/icons';
 import type { ResourceRow } from './pages/ResourceMgmt';
 
@@ -19,9 +21,12 @@ type EAMPage =
   | 'resources_utilization'
   | 'resources_upskilling'
   | 'clientmgmt_requests'
-  | 'clientmgmt_connects';
+  | 'clientmgmt_connects'
+  | 'information_ratecard'
+  | 'information_teamhierarchy'
+  | 'information_process';
 
-type EAMSection = 'executive' | 'resources' | 'clientmgmt';
+type EAMSection = 'executive' | 'resources' | 'clientmgmt' | 'information';
 
 const { Header, Content } = Layout;
 const { Title } = Typography;
@@ -34,6 +39,9 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   resources_upskilling: 'resources',
   clientmgmt_requests: 'clientmgmt',
   clientmgmt_connects: 'clientmgmt',
+  information_ratecard: 'information',
+  information_teamhierarchy: 'information',
+  information_process: 'information',
 };
 
 const ALL_PAGES = Object.keys(PAGE_SECTION_MAP) as EAMPage[];
@@ -142,6 +150,9 @@ export default function App() {
         case 'resources_upskilling':  return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Upskilling — Coming Soon</div>;
         case 'clientmgmt_requests':   return <ClientM activeTab="requests" />;
         case 'clientmgmt_connects':   return <ClientM activeTab="connects" />;
+        case 'information_ratecard':      return <ClientRateCard />;
+        case 'information_teamhierarchy': return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Team Hierarchy — Coming Soon</div>;
+        case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
         default: return null;
       }
     };
@@ -177,6 +188,7 @@ export default function App() {
                   { s: 'executive' as EAMSection, icon: <DollarOutlined />, label: 'Executive View', page: 'executive_revenue' as EAMPage },
                   { s: 'resources' as EAMSection, icon: <ThunderboltOutlined />, label: 'Resource Details', page: 'resources_info' as EAMPage },
                   { s: 'clientmgmt' as EAMSection, icon: <UserOutlined />, label: 'Client Management', page: 'clientmgmt_requests' as EAMPage },
+                  { s: 'information' as EAMSection, icon: <InfoCircleOutlined />, label: 'Information', page: 'information_ratecard' as EAMPage },
                 ].map(({ s, icon, label, page }) => (
                   <Tooltip key={label} title={label} placement="right">
                     <a
@@ -226,7 +238,7 @@ export default function App() {
                       <FileTextOutlined style={{ fontSize: '11px' }} /> Information
                     </a>
                     <a href={toHash('eam', 'resources_utilization')} onClick={e => { e.preventDefault(); setActivePage('resources_utilization'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'resources_utilization'), textDecoration: 'none' }}>
-                      <BarChartOutlined style={{ fontSize: '11px' }} /> Utilization
+                      <BarChartOutlined style={{ fontSize: '11px' }} /> Engagement Mapping
                     </a>
                     <a href={toHash('eam', 'resources_upskilling')} onClick={e => { e.preventDefault(); setActivePage('resources_upskilling'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'resources_upskilling'), textDecoration: 'none' }}>
                       <RocketOutlined style={{ fontSize: '11px' }} /> Upskilling
@@ -247,6 +259,26 @@ export default function App() {
                     </a>
                     <a href={toHash('eam', 'clientmgmt_connects')} onClick={e => { e.preventDefault(); setActivePage('clientmgmt_connects'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'clientmgmt_connects'), textDecoration: 'none' }}>
                       <TeamOutlined style={{ fontSize: '11px' }} /> Connects
+                    </a>
+                  </div>
+                )}
+
+                {/* Information */}
+                <button onClick={() => toggleSection('information')} style={groupBtnStyle(activePage.startsWith('information'))}>
+                  <InfoCircleOutlined style={{ fontSize: '13px', flexShrink: 0 }} />
+                  <span style={{ flex: 1 }}>Information</span>
+                  {isExp('information') ? <DownOutlined style={{ fontSize: '9px' }} /> : <RightOutlined style={{ fontSize: '9px' }} />}
+                </button>
+                {isExp('information') && (
+                  <div style={{ marginBottom: 2 }}>
+                    <a href={toHash('eam', 'information_ratecard')} onClick={e => { e.preventDefault(); setActivePage('information_ratecard'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'information_ratecard'), textDecoration: 'none' }}>
+                      <CreditCardOutlined style={{ fontSize: '11px' }} /> Client Rate Card
+                    </a>
+                    <a href={toHash('eam', 'information_teamhierarchy')} onClick={e => { e.preventDefault(); setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'information_teamhierarchy'), textDecoration: 'none' }}>
+                      <ApartmentOutlined style={{ fontSize: '11px' }} /> Client Team Hierarchy
+                    </a>
+                    <a href={toHash('eam', 'information_process')} onClick={e => { e.preventDefault(); setActivePage('information_process'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'information_process'), textDecoration: 'none' }}>
+                      <NodeIndexOutlined style={{ fontSize: '11px' }} /> Client Process
                     </a>
                   </div>
                 )}

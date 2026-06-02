@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   Upload,
   Table,
@@ -8,7 +8,7 @@ import {
   message,
   Drawer,
   Tag,
-  Segmented,
+  Dropdown,
   Modal,
   Form,
   Input,
@@ -16,6 +16,11 @@ import {
   Slider,
   Checkbox,
   Select,
+  Tabs,
+  Row,
+  Col,
+  Statistic,
+  Progress,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
@@ -24,14 +29,33 @@ import {
   EditOutlined,
   DeleteOutlined,
   AppstoreOutlined,
-  UnorderedListOutlined,
+  TableOutlined,
+  MoreOutlined,
+  EyeOutlined,
   PlusOutlined,
   ColumnHeightOutlined,
   FilterOutlined,
+  BarChartOutlined,
+  PieChartOutlined,
+  UnorderedListOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Legend,
+} from 'recharts';
 
 const { Title, Text } = Typography;
+
+const CHART_COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#13c2c2', '#eb2f96', '#fa8c16', '#a0d911', '#096dd9'];
+
+const EXP_BUCKETS = [
+  { label: '0–3 Yrs', min: 0, max: 3 },
+  { label: '3–5 Yrs', min: 3, max: 5 },
+  { label: '5–8 Yrs', min: 5, max: 8 },
+  { label: '8–10 Yrs', min: 8, max: 10 },
+  { label: '10+ Yrs', min: 10, max: Infinity },
+];
 
 export type ResourceRow = {
   key: string;
@@ -114,12 +138,30 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   const [editDrawer, setEditDrawer] = useState(false);
   const [editingResource, setEditingResource] = useState<ResourceRow | null>(null);
   const [form] = Form.useForm();
-  const [filterDrawer, setFilterDrawer] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [columnDrawer, setColumnDrawer] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
     new Set(COLUMN_KEYS)
   );
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+  const isFilterApplied = filters.empName !== '' || filters.raId !== '' || filters.piwRole !== '' || filters.roleOrDomain !== '' || filters.skills !== '' || filters.engagement !== '' || filters.workexRange[0] !== 0 || filters.workexRange[1] !== 100;
+
+  useEffect(() => {
+    if (!showFilterPanel) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
+        setShowFilterPanel(false);
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [showFilterPanel]);
+
+  const closeFilterOnEnter = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') setShowFilterPanel(false);
+  };
 
   const handleUpload = useCallback((file: File) => {
     try {
@@ -586,6 +628,260 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   const filteredResources = getFilteredResources();
   const filteredCount = filteredResources.length;
 
+  // ── Insights computations ──────────────────────────────────────
+  const [insightView, setInsightView] = useState<'charts' | 'bars'>('charts');
+  const [activeTab, setActiveTab] = useState<string>('resources');
+
+  const handleInsightClick = (type: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket', name: string) => {
+    if (type === 'expBucket') {
+      const bucket = EXP_BUCKETS.find(b => b.label === name);
+      if (bucket) {
+        setFilters(prev => ({ ...prev, workexRange: [bucket.min, bucket.max === Infinity ? 100 : bucket.max] }));
+      }
+    } else {
+      setFilters(prev => ({ ...prev, [type]: name }));
+    }
+    setActiveTab('resources');
+  };
+
+  const parseExpYears = (workex: string): number => {
+    const n = parseFloat((workex || '0').replace(/[^0-9.]/g, ''));
+    return isFinite(n) ? n : 0;
+  };
+
+  const roleData = useMemo(() => {
+    const map: Record<string, number> = {};
+    resources.forEach(r => { const role = r.piwRole || 'Unknown'; map[role] = (map[role] || 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+  }, [resources]);
+
+  const expData = useMemo(() => {
+    return EXP_BUCKETS.map(bucket => {
+      const count = resources.filter(r => {
+        const yrs = parseExpYears(r.totalWorkex || '');
+        return yrs >= bucket.min && yrs < bucket.max;
+      }).length;
+      return { name: bucket.label, value: count };
+    });
+  }, [resources]);
+
+  const skillData = useMemo(() => {
+    const map: Record<string, number> = {};
+    resources.forEach(r => {
+      (r.skills || '').split(',').forEach(s => {
+        const skill = s.trim();
+        if (skill) map[skill] = (map[skill] || 0) + 1;
+      });
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([name, value]) => ({ name, value }));
+  }, [resources]);
+
+  const domainData = useMemo(() => {
+    const map: Record<string, number> = {};
+    resources.forEach(r => { const d = r.roleOrDomain || 'Unknown'; map[d] = (map[d] || 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+  }, [resources]);
+
+  const engagementData = useMemo(() => {
+    const map: Record<string, number> = {};
+    resources.forEach(r => { const e = r.engagement || 'Unassigned'; map[e] = (map[e] || 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+  }, [resources]);
+
+  const avgExp = useMemo(() => {
+    if (!resources.length) return 0;
+    const sum = resources.reduce((acc, r) => acc + parseExpYears(r.totalWorkex || ''), 0);
+    return Math.round((sum / resources.length) * 10) / 10;
+  }, [resources]);
+
+  const benchCount = useMemo(() => resources.filter(r => r.engagement === 'Bench').length, [resources]);
+
+  const renderMiniPie = (
+    data: { name: string; value: number }[],
+    title: string,
+    clickType: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket'
+  ) => (
+    <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0' }}>
+      <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 4 }}>{title}</Text>
+      <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 8 }}>Click a segment to filter</Text>
+      {data.length === 0 ? (
+        <Text type="secondary" style={{ fontSize: '11px' }}>No data</Text>
+      ) : (
+        <ResponsiveContainer width="100%" height={180}>
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={40}
+              outerRadius={70}
+              dataKey="value"
+              paddingAngle={2}
+              cursor="pointer"
+              onClick={(entry) => handleInsightClick(clickType, entry.name)}
+            >
+              {data.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+            </Pie>
+            <Legend iconSize={8} wrapperStyle={{ fontSize: '10px' }} />
+            <RechartTooltip
+              formatter={(v: number, name: string) => [`${v} (${resources.length ? Math.round(v / resources.length * 100) : 0}%)`, name]}
+              contentStyle={{ fontSize: '11px' }}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+
+  const renderHBar = (
+    data: { name: string; value: number }[],
+    title: string,
+    clickType: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket',
+    max?: number
+  ) => {
+    const maxVal = max || Math.max(...data.map(d => d.value), 1);
+    return (
+      <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0' }}>
+        <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 4 }}>{title}</Text>
+        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 8 }}>Click a row to filter</Text>
+        {data.length === 0 ? <Text type="secondary" style={{ fontSize: '11px' }}>No data</Text> : (
+          <Space direction="vertical" style={{ width: '100%' }} size={6}>
+            {data.map((item, i) => (
+              <div
+                key={item.name}
+                style={{ cursor: 'pointer', borderRadius: 4, padding: '2px 4px', transition: 'background 0.15s' }}
+                onClick={() => handleInsightClick(clickType, item.name)}
+                onMouseEnter={e => (e.currentTarget.style.background = '#e6f4ff')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                  <Text style={{ fontSize: '11px', maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</Text>
+                  <Text style={{ fontSize: '11px', color: '#666' }}>{item.value} ({resources.length ? Math.round(item.value / resources.length * 100) : 0}%)</Text>
+                </div>
+                <div style={{ height: 8, background: '#f0f0f0', borderRadius: 4, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${(item.value / maxVal) * 100}%`, background: CHART_COLORS[i % CHART_COLORS.length], borderRadius: 4, transition: 'width 0.5s' }} />
+                </div>
+              </div>
+            ))}
+          </Space>
+        )}
+      </div>
+    );
+  };
+
+  const insightsContent = (
+    <div>
+      {resources.length === 0 ? (
+        <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 60, textAlign: 'center' }}>
+          <Text type="secondary">No resource data. Upload or add resources first.</Text>
+        </div>
+      ) : (
+        <>
+          {/* KPIs */}
+          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+            {[
+              { title: 'Total Resources', value: resources.length, color: '#1890ff', bg: '#e6f7ff' },
+              { title: 'Avg Experience', value: `${avgExp} yrs`, color: '#52c41a', bg: '#f6ffed' },
+              { title: 'On Bench', value: benchCount, color: '#faad14', bg: '#fffbe6', clickType: 'engagement' as const, clickVal: 'Bench' },
+              { title: 'Unique Roles', value: roleData.length, color: '#722ed1', bg: '#f9f0ff' },
+              { title: 'Unique Skills', value: skillData.length > 0 ? skillData.length + '+' : 0, color: '#13c2c2', bg: '#e6fffb' },
+              { title: 'Domains', value: domainData.length, color: '#eb2f96', bg: '#fff0f6' },
+            ].map(kpi => (
+              <Col key={kpi.title} xs={12} sm={8} md={4}>
+                <div
+                  style={{ background: kpi.bg, border: `1px solid ${'clickType' in kpi ? kpi.color : kpi.color}22`, borderRadius: 8, padding: '10px 12px', textAlign: 'center', cursor: 'clickType' in kpi ? 'pointer' : 'default' }}
+                  onClick={() => { if ('clickType' in kpi && kpi.clickType && kpi.clickVal) handleInsightClick(kpi.clickType, kpi.clickVal); }}
+                >
+                  <div style={{ fontSize: '20px', fontWeight: 700, color: kpi.color }}>{kpi.value}</div>
+                  <div style={{ fontSize: '10px', color: '#666', marginTop: 2 }}>{kpi.title}</div>
+                </div>
+              </Col>
+            ))}
+          </Row>
+
+          {/* View toggle */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12, gap: 6 }}>
+            <Tooltip title="Chart View" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button icon={<PieChartOutlined />} size="small" type={insightView === 'charts' ? 'primary' : 'default'} onClick={() => setInsightView('charts')} style={{ borderRadius: 6 }} />
+            </Tooltip>
+            <Tooltip title="Bar View" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button icon={<BarChartOutlined />} size="small" type={insightView === 'bars' ? 'primary' : 'default'} onClick={() => setInsightView('bars')} style={{ borderRadius: 6 }} />
+            </Tooltip>
+          </div>
+
+          {insightView === 'charts' ? (
+            <>
+              {/* Row 1: Role + Exp donut side by side */}
+              <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                <Col xs={24} md={12}>
+                  {renderMiniPie(roleData.slice(0, 8), 'Resources by PIW Role', 'piwRole')}
+                </Col>
+                <Col xs={24} md={12}>
+                  {renderMiniPie(expData, 'Resources by Experience Range', 'expBucket')}
+                </Col>
+              </Row>
+              {/* Row 2: Domain + Engagement */}
+              <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+                <Col xs={24} md={12}>
+                  {renderMiniPie(domainData.slice(0, 8), 'Resources by Role/Domain', 'roleOrDomain')}
+                </Col>
+                <Col xs={24} md={12}>
+                  {renderMiniPie(engagementData, 'Resources by Engagement', 'engagement')}
+                </Col>
+              </Row>
+              {/* Row 3: Skills bar chart full width */}
+              <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0' }}>
+                <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 4 }}>Top Skills (count across resources)</Text>
+                <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 8 }}>Click a bar to filter</Text>
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart
+                    data={skillData}
+                    layout="vertical"
+                    margin={{ left: 10, right: 20, top: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 10 }} />
+                    <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 10 }} />
+                    <RechartTooltip contentStyle={{ fontSize: '11px' }} formatter={(v) => [v, 'Count — click to filter']} />
+                    <Bar
+                      dataKey="value"
+                      fill="#1890ff"
+                      radius={[0, 4, 4, 0]}
+                      cursor="pointer"
+                      onClick={(data: { name: string }) => handleInsightClick('skills', data.name)}
+                    >
+                      {skillData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          ) : (
+            <>
+              <Row gutter={[12, 12]}>
+                <Col xs={24} md={12}>
+                  {renderHBar(roleData, 'By PIW Role', 'piwRole')}
+                </Col>
+                <Col xs={24} md={12}>
+                  {renderHBar(expData, 'By Experience Range', 'expBucket')}
+                </Col>
+                <Col xs={24} md={12}>
+                  {renderHBar(domainData, 'By Role/Domain', 'roleOrDomain')}
+                </Col>
+                <Col xs={24} md={12}>
+                  {renderHBar(engagementData, 'By Engagement', 'engagement')}
+                </Col>
+                <Col xs={24}>
+                  {renderHBar(skillData, 'Top Skills', 'skills')}
+                </Col>
+              </Row>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '12px 24px' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
@@ -599,226 +895,209 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             </Text>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <Space wrap style={{ gap: '6px' }}>
-              <Button icon={<PlusOutlined />} type="primary" onClick={handleAddNew} size="small">
-                Add New
-              </Button>
-
-              <Upload
-                accept=".xlsx,.xls"
-                beforeUpload={handleUpload}
-                showUploadList={false}
-              >
-                <Tooltip title="Upload Resources from Excel">
-                  <Button icon={<UploadOutlined />} type="text" />
-                </Tooltip>
-              </Upload>
-
-              <Tooltip title="Download Excel Template">
-                <Button onClick={downloadTemplate} icon={<DownloadOutlined />} type="text" />
-              </Tooltip>
-
-              {resources.length > 0 && (
-                <Text type="secondary" style={{ fontSize: '12px', display: 'flex', alignItems: 'center', padding: '4px 8px' }}>
-                  Showing: <strong style={{ marginLeft: 4 }}>{filteredCount}</strong>
-                  {filteredCount !== resources.length && (
-                    <span style={{ marginLeft: 4 }}>/ {resources.length}</span>
-                  )}
-                </Text>
-              )}
-            </Space>
-
-            {resources.length > 0 && (
-              <Space wrap style={{ gap: '8px' }}>
-                {viewMode === 'table' && (
-                  <Button
-                    icon={<ColumnHeightOutlined />}
-                    title="Column Settings"
-                    onClick={() => setColumnDrawer(true)}
-                  >
-                    Columns
-                  </Button>
-                )}
-
-                <Button
-                  icon={<FilterOutlined />}
-                  title="Advanced Filters"
-                  onClick={() => setFilterDrawer(true)}
-                >
-                  Filter
-                </Button>
-
-                <Segmented
-                  value={viewMode}
-                  onChange={(value) => setViewMode(value as 'table' | 'card')}
-                  options={[
-                    { label: 'Table', value: 'table', icon: <UnorderedListOutlined /> },
-                    { label: 'Cards', value: 'card', icon: <AppstoreOutlined /> },
-                  ]}
-                />
-              </Space>
-            )}
-          </div>
-
-          {resources.length === 0 ? (
-            <div
-              style={{
-                background: '#fff',
-                borderRadius: '8px',
-                padding: 60,
-                textAlign: 'center',
-              }}
-            >
-              <Text type="secondary">
-                No resources yet. Upload a file or add a new employee to get started.
-              </Text>
-            </div>
-          ) : viewMode === 'table' ? (
-            <Table<ResourceRow>
-              dataSource={filteredResources}
-              columns={displayColumns}
-              pagination={{ pageSize: 15 }}
-              scroll={{ x: 'max-content' }}
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '0' }}>
+            <Tabs
+              activeKey={activeTab}
+              onChange={setActiveTab}
               size="small"
-              style={{ background: '#fff', borderRadius: '8px' }}
-              locale={{ emptyText: 'No resources match your filters' }}
-            />
-          ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 8 }}>
-              {filteredResources.length > 0 ? (
-                filteredResources.map((resource) => {
-                  if (!resource) return null;
-                  return (
-                    <div
-                      key={resource.key || 'unknown'}
-                      style={{
-                        background: '#fff',
-                        borderRadius: '8px',
-                        padding: 12,
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
-                        border: '1px solid #f0f0f0',
-                        transition: 'all 0.3s',
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.boxShadow = '0 8px 16px rgba(0,0,0,0.12)';
-                        e.currentTarget.style.transform = 'translateY(-4px)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
-                        e.currentTarget.style.transform = 'none';
-                      }}
-                    >
-                      <div style={{ marginBottom: 8, paddingBottom: 8, borderBottom: '1px solid #f0f0f0' }}>
-                        <div style={{ fontSize: '16px', fontWeight: 700, color: '#001529' }}>
-                          {String(resource.empName || 'N/A')}
-                        </div>
-                        <Text type="secondary" style={{ fontSize: '11px' }}>
-                          {String(resource.raId || '')}
+              style={{ padding: '0 16px' }}
+              tabBarStyle={{ marginBottom: 0, fontSize: '12px' }}
+              items={[
+                {
+                  key: 'resources',
+                  label: <span style={{ fontSize: '12px' }}>Resources</span>,
+                  children: (
+                    <div style={{ padding: '16px 0 16px 0' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '16px' }}>
+                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                          Showing: <strong>{filteredCount}</strong>{filteredCount !== resources.length ? ` / ${resources.length}` : ''}
                         </Text>
-                      </div>
-
-                      <div style={{ marginBottom: 8 }}>
-                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
-                          Role / Domain
-                        </Text>
-                        <Tag color="cyan" style={{ fontSize: '11px' }}>
-                          {String(resource.roleOrDomain || '')}
-                        </Tag>
-                      </div>
-
-                      <div style={{ marginBottom: 8 }}>
-                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
-                          Experience
-                        </Text>
-                        <div style={{ fontSize: '13px', fontWeight: 600, color: '#1890FF' }}>
-                          {String(resource.totalWorkex || '—')}
-                        </div>
-                      </div>
-
-                      <div style={{ marginBottom: 8 }}>
-                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
-                          Email
-                        </Text>
-                        <div style={{ fontSize: '11px', color: '#666', wordBreak: 'break-word' }}>
-                          {String(resource.emailId || '—')}
-                        </div>
-                      </div>
-
-                      <div style={{ marginBottom: 8 }}>
-                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
-                          Current Engagement
-                        </Text>
-                        <Tag color="orange" style={{ fontSize: '11px' }}>
-                          {String(resource.engagement || '—')}
-                        </Tag>
-                      </div>
-
-                      <div style={{ marginBottom: 8 }}>
-                        <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 2 }}>
-                          Skills
-                        </Text>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
-                          {String(resource.skills || '')
-                            .split(',')
-                            .filter((s) => s.trim())
-                            .slice(0, 2)
-                            .map((skill, idx) => (
-                              <Tag key={idx} color="blue" style={{ fontSize: '10px', margin: 0 }}>
-                                {skill.trim()}
-                              </Tag>
-                            ))}
-                          {String(resource.skills || '')
-                            .split(',')
-                            .filter((s) => s.trim()).length > 2 && (
-                            <Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>
-                              +{String(resource.skills || '').split(',').filter((s) => s.trim()).length - 2} more
-                            </Tag>
-                          )}
-                        </div>
-                      </div>
-
-                      <div style={{ marginBottom: 0, display: 'flex', gap: 4 }}>
-                        <Button
-                          type="primary"
-                          size="small"
-                          style={{ flex: 1, fontSize: '10px', height: '24px', padding: '0 8px' }}
-                          onClick={() => {
-                            setSelectedResource(resource);
-                            setDetailDrawer(true);
-                          }}
-                        >
-                          View
-                        </Button>
-                        <Button
-                          type="primary"
-                          size="small"
-                          icon={<EditOutlined />}
-                          onClick={() => {
-                            handleEdit(resource);
-                            setDetailDrawer(false);
-                          }}
-                          title="Edit"
-                        />
-                        <Button
-                          type="primary"
-                          danger
-                          size="small"
-                          icon={<DeleteOutlined />}
-                          onClick={() => handleDelete(resource)}
-                          title="Delete"
-                        />
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 40 }}>
-                  <Text type="secondary">No resources match your filters</Text>
-                </div>
-              )}
+              <Space wrap size={8}>
+                {isFilterApplied && (
+                  <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={handleClearFilters}>✕ Clear Filters</Button>
+                )}
+                <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
+                  <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
+                </Tooltip>
+                <Tooltip title="Card View" overlayInnerStyle={{ fontSize: '11px' }}>
+                  <Button icon={<AppstoreOutlined />} type={viewMode === 'card' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('card')} style={{ borderRadius: '6px' }} />
+                </Tooltip>
+                <Tooltip title="Table View" overlayInnerStyle={{ fontSize: '11px' }}>
+                  <Button icon={<TableOutlined />} type={viewMode === 'table' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('table')} style={{ borderRadius: '6px' }} />
+                </Tooltip>
+                {viewMode === 'table' && (
+                  <Tooltip title="Column Settings" overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: '6px' }} />
+                  </Tooltip>
+                )}
+                <Tooltip title="Upload Resources from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+                  <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
+                    <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
+                  </Upload>
+                </Tooltip>
+                <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
+                  <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
+                </Tooltip>
+                <Button type="primary" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add New</Button>
+              </Space>
             </div>
-          )}
+
+            {resources.length === 0 ? (
+              <div style={{ background: '#f5f5f5', borderRadius: '8px', padding: 60, textAlign: 'center' }}>
+                <Text type="secondary">No resources yet. Upload a file or add a new employee to get started.</Text>
+              </div>
+            ) : viewMode === 'table' ? (
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {showFilterPanel && (
+                  <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <Text strong style={{ fontSize: '12px' }}>Filters</Text>
+                      <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={handleClearFilters}>Clear all</Button>
+                    </div>
+                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Employee Name</div>
+                        <Input size="small" placeholder="Search..." value={filters.empName} onChange={e => setFilters({ ...filters, empName: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>RA ID</div>
+                        <Input size="small" placeholder="Search..." value={filters.raId} onChange={e => setFilters({ ...filters, raId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>PIW Role</div>
+                        <Input size="small" placeholder="Search..." value={filters.piwRole} onChange={e => setFilters({ ...filters, piwRole: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Role/Domain</div>
+                        <Input size="small" placeholder="Search..." value={filters.roleOrDomain} onChange={e => setFilters({ ...filters, roleOrDomain: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Skills</div>
+                        <Input size="small" placeholder="Search..." value={filters.skills} onChange={e => setFilters({ ...filters, skills: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Engagement</div>
+                        <Input size="small" placeholder="Search..." value={filters.engagement} onChange={e => setFilters({ ...filters, engagement: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                    </Space>
+                  </div>
+                )}
+                <div style={{ flex: 1, overflow: 'hidden' }}>
+                  <div className="compact-table">
+                    <Table<ResourceRow>
+                      dataSource={filteredResources}
+                      columns={displayColumns}
+                      pagination={{ pageSize: 15, showSizeChanger: false }}
+                      scroll={{ x: 'max-content', y: 420 }}
+                      size="small"
+                      style={{ background: '#fff', borderRadius: '8px' }}
+                      locale={{ emptyText: 'No resources match your filters' }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', gap: '12px' }}>
+                {showFilterPanel && (
+                  <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <Text strong style={{ fontSize: '12px' }}>Filters</Text>
+                      <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={handleClearFilters}>Clear all</Button>
+                    </div>
+                    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Employee Name</div>
+                        <Input size="small" placeholder="Search..." value={filters.empName} onChange={e => setFilters({ ...filters, empName: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>RA ID</div>
+                        <Input size="small" placeholder="Search..." value={filters.raId} onChange={e => setFilters({ ...filters, raId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>PIW Role</div>
+                        <Input size="small" placeholder="Search..." value={filters.piwRole} onChange={e => setFilters({ ...filters, piwRole: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Role/Domain</div>
+                        <Input size="small" placeholder="Search..." value={filters.roleOrDomain} onChange={e => setFilters({ ...filters, roleOrDomain: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Skills</div>
+                        <Input size="small" placeholder="Search..." value={filters.skills} onChange={e => setFilters({ ...filters, skills: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Engagement</div>
+                        <Input size="small" placeholder="Search..." value={filters.engagement} onChange={e => setFilters({ ...filters, engagement: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                    </Space>
+                  </div>
+                )}
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 8 }}>
+                    {filteredResources.map((resource) => {
+                      if (!resource) return null;
+                      const skillsArr = String(resource.skills || '').split(',').filter(s => s.trim());
+                      const isBench = resource.engagement === 'Bench';
+                      return (
+                        <div key={resource.key || 'unknown'} style={{
+                          background: '#fff',
+                          borderRadius: '8px',
+                          padding: '10px',
+                          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+                          border: isBench ? '1px solid #ffe58f' : '1px solid #f0f0f0',
+                          borderLeft: isBench ? '4px solid #faad14' : '1px solid #f0f0f0',
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                            <Text strong style={{ fontSize: '13px' }}>{String(resource.empName || 'N/A')}</Text>
+                            <Dropdown menu={{ items: [
+                              { key: 'edit', label: <span style={{ fontSize: '11px' }}>Edit</span>, icon: <EditOutlined style={{ fontSize: '11px' }} />, onClick: () => handleEdit(resource) },
+                              { key: 'delete', label: <span style={{ fontSize: '11px' }}>Delete</span>, icon: <DeleteOutlined style={{ fontSize: '11px' }} />, danger: true, onClick: () => handleDelete(resource) },
+                            ]}} trigger={['click']}>
+                              <Button type="text" size="small" icon={<MoreOutlined />} style={{ padding: 0 }} />
+                            </Dropdown>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '6px' }}>{String(resource.raId || '')}</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: '4px' }}>
+                            {resource.roleOrDomain && <Tag color="cyan" style={{ fontSize: '10px', margin: 0 }}>{String(resource.roleOrDomain)}</Tag>}
+                            {isBench ? <Tag color="warning" style={{ fontSize: '10px', margin: 0 }}>Bench</Tag> : resource.engagement && <Tag color="orange" style={{ fontSize: '10px', margin: 0 }}>{String(resource.engagement)}</Tag>}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#595959', marginBottom: '4px' }}>{String(resource.totalWorkex || '—')} exp</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginBottom: '6px' }}>
+                            {skillsArr.slice(0, 2).map((skill, idx) => <Tag key={idx} color="blue" style={{ fontSize: '10px', margin: 0 }}>{skill.trim()}</Tag>)}
+                            {skillsArr.length > 2 && <Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>+{skillsArr.length - 2} more</Tag>}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                            <Tooltip title="View Details" overlayInnerStyle={{ fontSize: '11px' }}>
+                              <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => { setSelectedResource(resource); setDetailDrawer(true); }} />
+                            </Tooltip>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {filteredResources.length === 0 && (
+                      <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 40 }}>
+                        <Text type="secondary">No resources match your filters</Text>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'insights',
+                  label: <span style={{ fontSize: '12px' }}><BarChartOutlined /> Insights</span>,
+                  children: (
+                    <div style={{ padding: '16px 0' }}>
+                      {insightsContent}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </div>
         </Space>
       </div>
 
@@ -1103,151 +1382,6 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         </Space>
       </Drawer>
 
-      <Drawer
-        title="Filters"
-        placement="right"
-        onClose={() => setFilterDrawer(false)}
-        open={filterDrawer}
-        width={400}
-      >
-        <Space direction="vertical" style={{ width: '100%' }} size="large">
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              S.NO
-            </Text>
-            <Input
-              placeholder="Filter by S.NO..."
-              value={filters.sno}
-              onChange={(e) => setFilters({ ...filters, sno: e.target.value || '' })}
-              allowClear
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              RA ID
-            </Text>
-            <Input
-              placeholder="Filter by RA ID..."
-              value={filters.raId}
-              onChange={(e) => setFilters({ ...filters, raId: e.target.value || '' })}
-              allowClear
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Employee Name
-            </Text>
-            <Input
-              placeholder="Filter by name..."
-              value={filters.empName}
-              onChange={(e) => setFilters({ ...filters, empName: e.target.value || '' })}
-              allowClear
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Email ID
-            </Text>
-            <Input
-              placeholder="Filter by email..."
-              value={filters.emailId}
-              onChange={(e) => setFilters({ ...filters, emailId: e.target.value || '' })}
-              allowClear
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              PIW Role
-            </Text>
-            <Select
-              placeholder="Select PIW Role..."
-              value={filters.piwRole || undefined}
-              onChange={(value) => setFilters({ ...filters, piwRole: value || '' })}
-              allowClear
-              style={{ width: '100%' }}
-              options={getUniqueValues('piwRole').map((role) => ({
-                label: role,
-                value: role,
-              }))}
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Role/Domain
-            </Text>
-            <Select
-              placeholder="Select Role/Domain..."
-              value={filters.roleOrDomain || undefined}
-              onChange={(value) => setFilters({ ...filters, roleOrDomain: value || '' })}
-              allowClear
-              style={{ width: '100%' }}
-              options={getUniqueValues('roleOrDomain').map((domain) => ({
-                label: domain,
-                value: domain,
-              }))}
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Total Experience Range (0-100)
-            </Text>
-            <Slider
-              range
-              min={0}
-              max={100}
-              value={filters.workexRange}
-              onChange={(value) => {
-                if (Array.isArray(value) && value.length === 2) {
-                  setFilters({ ...filters, workexRange: [value[0], value[1]] as [number, number] });
-                }
-              }}
-              marks={{ 0: '0', 50: '50', 100: '100' }}
-            />
-            <div style={{ fontSize: '12px', color: '#999', marginTop: 8, textAlign: 'center' }}>
-              {filters.workexRange[0]} - {filters.workexRange[1]} years
-            </div>
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Skills
-            </Text>
-            <Input
-              placeholder="Filter by skill..."
-              value={filters.skills}
-              onChange={(e) => setFilters({ ...filters, skills: e.target.value || '' })}
-              allowClear
-            />
-          </div>
-
-          <div>
-            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
-              Current Engagement
-            </Text>
-            <Select
-              placeholder="Select Engagement..."
-              value={filters.engagement || undefined}
-              onChange={(value) => setFilters({ ...filters, engagement: value || '' })}
-              allowClear
-              style={{ width: '100%' }}
-              options={getUniqueValues('engagement').map((eng) => ({
-                label: eng,
-                value: eng,
-              }))}
-            />
-          </div>
-
-          <Button block onClick={handleClearFilters} style={{ marginTop: 12 }}>
-            Clear All Filters
-          </Button>
-        </Space>
-      </Drawer>
     </div>
   );
 };

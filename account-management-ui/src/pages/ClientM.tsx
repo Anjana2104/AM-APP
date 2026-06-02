@@ -24,6 +24,7 @@ import {
   Typography,
   Filter,
   Pagination,
+  Checkbox,
 } from 'antd';
 const { Text } = Typography;
 import {
@@ -41,6 +42,7 @@ import {
   TableOutlined,
   UnorderedListOutlined,
   CloseOutlined,
+  ColumnHeightOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
@@ -167,6 +169,7 @@ export default function ClientM() {
   const [editingRequest, setEditingRequest] = useState<ClientRequest | null>(null);
   const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
+  const [columnDrawer, setColumnDrawer] = useState(false);
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [showFilterPanel, setShowFilterPanel] = useState(false);
@@ -471,8 +474,12 @@ export default function ClientM() {
   useEffect(() => {
     if (!showFilterPanel) return;
     const handleMouseDown = (e: MouseEvent) => {
-      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
-        setShowFilterPanel(false);
+      const target = e.target as HTMLElement;
+      if (filterPanelRef.current && !filterPanelRef.current.contains(target)) {
+        const isInsidePopup = !!target.closest('.ant-select-dropdown, .ant-picker-dropdown, .ant-dropdown');
+        if (!isInsidePopup) {
+          setShowFilterPanel(false);
+        }
       }
     };
     document.addEventListener('mousedown', handleMouseDown);
@@ -484,16 +491,21 @@ export default function ClientM() {
   };
 
   return (
-    <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '24px' }}>
+    <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '12px 24px' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+        <Space direction="vertical" style={{ width: '100%' }} size={6}>
+          <div>
+            <Typography.Title level={4} style={{ marginBottom: 2 }}>Client Requests</Typography.Title>
+            <Text type="secondary" style={{ fontSize: '12px' }}>Manage client requests, staffing status, and processing</Text>
+          </div>
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '16px' }}>
         {requests.length > 0 ? (
-          <div style={{ background: '#fff', borderRadius: '8px', padding: '24px' }}>
-            <Tabs
-              destroyInactiveTabPane
-              items={[
-                {
-                  key: 'views',
-                  label: 'Requests',
+          <Tabs
+            destroyInactiveTabPane
+            items={[
+              {
+                key: 'views',
+                label: 'Requests',
                   children: (
                     <div onClick={handleContainerClick} style={{ minHeight: '500px' }}>
                       <Space style={{ marginBottom: '16px', width: '100%', justifyContent: 'space-between', display: 'flex' }} direction="horizontal">
@@ -536,6 +548,11 @@ export default function ClientM() {
                               style={{ borderRadius: '6px' }}
                             />
                           </Tooltip>
+                          {viewMode === 'table' && (
+                            <Tooltip title="Column Settings" overlayInnerStyle={{ fontSize: '11px' }}>
+                              <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: '6px' }} />
+                            </Tooltip>
+                          )}
                           <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Upload
                               accept=".xlsx,.xls"
@@ -805,22 +822,57 @@ export default function ClientM() {
                 },
               ]}
             />
+          ) : (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
+                <Space wrap size={8}>
+                  <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
+                      <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
+                    </Upload>
+                  </Tooltip>
+                  <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
+                  </Tooltip>
+                  <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>
+                </Space>
+              </div>
+              <div style={{ background: '#f5f5f5', borderRadius: '8px', padding: '60px 24px', textAlign: 'center' }}>
+                <Text type="secondary">No requests yet. Upload a file or add a new request to get started.</Text>
+              </div>
+            </>
+          )}
           </div>
-        ) : (
-          <div style={{ background: '#fff', borderRadius: '8px', padding: '60px 24px', textAlign: 'center' }}>
-            <Text type="secondary">No requests yet. Upload a file or add a new request to get started.</Text>
-            <div style={{ marginTop: '16px' }}>
-              <Upload
-                accept=".xlsx,.xls"
-                beforeUpload={handleUpload}
-                showUploadList={false}
-              >
-                <Button icon={<UploadOutlined />} type="primary">Upload File</Button>
-              </Upload>
-              <Button onClick={handleAddNew} style={{ marginLeft: '8px' }}>+ Add Request</Button>
-            </div>
-          </div>
-        )}
+        </Space>
+
+        <Drawer
+          title="Column Visibility"
+          placement="right"
+          onClose={() => setColumnDrawer(false)}
+          open={columnDrawer}
+          width={280}
+        >
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {[
+              { key: 'sno', label: 'S.No.' },
+              { key: 'beelineId', label: 'Beeline ID' },
+              { key: 'description', label: 'Description' },
+              { key: 'raisedBy', label: 'Raised By' },
+              { key: 'processingStatus', label: 'Processing Status' },
+              { key: 'overallStatus', label: 'Overall Status' },
+              { key: 'accountAnchor', label: 'Account Anchor' },
+              { key: 'dateRaised', label: 'Date Raised' },
+            ].map(({ key, label }) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Checkbox
+                  checked={visibleColumns[key]}
+                  onChange={(e) => setVisibleColumns(prev => ({ ...prev, [key]: e.target.checked }))}
+                />
+                <label style={{ fontSize: '12px', marginBottom: 0, cursor: 'pointer' }}>{label}</label>
+              </div>
+            ))}
+          </Space>
+        </Drawer>
 
         <Drawer
           title={editingRequest ? 'Edit Request' : 'Add New Request'}

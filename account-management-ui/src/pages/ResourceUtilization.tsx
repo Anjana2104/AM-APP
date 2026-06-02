@@ -1,41 +1,77 @@
-import { useState, useMemo, useEffect } from 'react';
-import { Button, Space, Card, Row, Col, Tag, Upload, Tooltip, message, Segmented, Drawer, Input, Select, Collapse, Empty, Slider } from 'antd';
-import { UploadOutlined, FilterOutlined, EyeOutlined } from '@ant-design/icons';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Button, Space, Card, Row, Col, Tag, Upload, Tooltip, message, Typography, Drawer, Input, Select, Collapse, Empty, Slider, Table, Tabs, Statistic, Progress } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import { UploadOutlined, FilterOutlined, EyeOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ProjectOutlined } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import type { ResourceRow } from './ResourceMgmt';
+
+const { Text } = Typography;
 
 interface ResourceUtilizationProps {
   resources: ResourceRow[];
   onUpdateResources: (updated: ResourceRow[]) => void;
 }
 
-interface BenchFilterState {
+interface UnifiedFilterState {
   resourceName: string;
   raid: string;
   skills: string;
+  engagement: string;
   workexRange: [number, number];
 }
 
+const DEFAULT_UNIFIED_FILTERS: UnifiedFilterState = {
+  resourceName: '',
+  raid: '',
+  skills: '',
+  engagement: '',
+  workexRange: [0, 100],
+};
+
 export function ResourceUtilization({ resources = [], onUpdateResources }: ResourceUtilizationProps) {
-  const [viewMode, setViewMode] = useState<'grouped' | 'bench'>('grouped');
+  const [viewMode, setViewMode] = useState<'list' | 'card'>('list');
   const [allocationDrawer, setAllocationDrawer] = useState(false);
-  const [filterDrawer, setFilterDrawer] = useState(false);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [selectedResource, setSelectedResource] = useState<ResourceRow | null>(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [selectedDetailResource, setSelectedDetailResource] = useState<ResourceRow | null>(null);
-  const [engagementFilter, setEngagementFilter] = useState('');
   const [cachedResources, setCachedResources] = useState<ResourceRow[]>(resources || []);
-  const [benchFilters, setBenchFilters] = useState<BenchFilterState>({
-    resourceName: '',
-    raid: '',
-    skills: '',
-    workexRange: [0, 100],
-  });
+  const [unifiedFilters, setUnifiedFilters] = useState<UnifiedFilterState>(DEFAULT_UNIFIED_FILTERS);
   const [allocationForm, setAllocationForm] = useState({
     clientName: '',
     engagementName: '',
     notes: '',
   });
+
+  const filterPanelRef = useRef<HTMLDivElement>(null);
+
+  const isFilterApplied = !!(
+    unifiedFilters.resourceName ||
+    unifiedFilters.raid ||
+    unifiedFilters.skills ||
+    unifiedFilters.engagement ||
+    unifiedFilters.workexRange[0] !== 0 ||
+    unifiedFilters.workexRange[1] !== 100
+  );
+
+  useEffect(() => {
+    if (!showFilterPanel) return;
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (filterPanelRef.current && !filterPanelRef.current.contains(target)) {
+        const isInsidePopup = !!target.closest('.ant-select-dropdown, .ant-picker-dropdown, .ant-dropdown');
+        if (!isInsidePopup) {
+          setShowFilterPanel(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    return () => document.removeEventListener('mousedown', handleMouseDown);
+  }, [showFilterPanel]);
+
+  const closeFilterOnEnter = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') setShowFilterPanel(false);
+  };
 
   useEffect(() => {
     if (resources && Array.isArray(resources)) {
@@ -47,78 +83,67 @@ export function ResourceUtilization({ resources = [], onUpdateResources }: Resou
     return (cachedResources || []).filter(r => r?.engagement === 'Bench');
   }, [cachedResources]);
 
-  const filteredBenchResources = useMemo(() => {
-    let filtered = (cachedResources || []).filter(r => r?.engagement === 'Bench');
-    if (benchFilters.resourceName) {
-      filtered = filtered.filter(r => r?.empName?.toLowerCase().includes(benchFilters.resourceName.toLowerCase()));
-    }
-    if (benchFilters.raid) {
-      filtered = filtered.filter(r => r?.raId?.toLowerCase().includes(benchFilters.raid.toLowerCase()));
-    }
-    if (benchFilters.skills) {
-      filtered = filtered.filter(r => r?.skills?.toLowerCase().includes(benchFilters.skills.toLowerCase()));
-    }
+  const allFilteredResources = useMemo(() => {
+    let filtered = cachedResources || [];
+    if (unifiedFilters.resourceName) filtered = filtered.filter(r => r?.empName?.toLowerCase().includes(unifiedFilters.resourceName.toLowerCase()));
+    if (unifiedFilters.raid) filtered = filtered.filter(r => r?.raId?.toLowerCase().includes(unifiedFilters.raid.toLowerCase()));
+    if (unifiedFilters.skills) filtered = filtered.filter(r => r?.skills?.toLowerCase().includes(unifiedFilters.skills.toLowerCase()));
+    if (unifiedFilters.engagement) filtered = filtered.filter(r => (r?.engagement || '') === unifiedFilters.engagement);
     filtered = filtered.filter(r => {
       const workex = parseInt(r?.totalWorkex || '0', 10);
-      return workex >= benchFilters.workexRange[0] && workex <= benchFilters.workexRange[1];
+      return workex >= unifiedFilters.workexRange[0] && workex <= unifiedFilters.workexRange[1];
     });
     return filtered;
-  }, [cachedResources, benchFilters]);
-
-  const engagementGroups = useMemo(() => {
-    const groups: Record<string, ResourceRow[]> = {};
-    const nonBench = (cachedResources || []).filter(r => r?.engagement !== 'Bench');
-    nonBench.forEach(resource => {
-      if (!resource) return;
-      const eng = resource.engagement || 'Unassigned';
-      if (!groups[eng]) groups[eng] = [];
-      groups[eng].push(resource);
-    });
-    if (engagementFilter) {
-      const filtered: Record<string, ResourceRow[]> = {};
-      Object.entries(groups).forEach(([eng, res]) => {
-        if (eng.toLowerCase().includes(engagementFilter.toLowerCase())) {
-          filtered[eng] = res;
-        }
-      });
-      return filtered;
-    }
-    return groups;
-  }, [cachedResources, engagementFilter]);
+  }, [cachedResources, unifiedFilters]);
 
   const engagementOptions = useMemo(() => {
     const set = new Set((cachedResources || [])
-      .filter(r => r?.engagement && r.engagement !== 'Bench')
+      .filter(r => r?.engagement)
       .map(r => r.engagement as string));
     return Array.from(set).sort();
   }, [cachedResources]);
 
-  const collapsibleItems = useMemo(() => {
-    return Object.entries(engagementGroups || {}).map(([engagement, groupResources]) => ({
-      key: engagement,
-      label: `${engagement} (${groupResources?.length || 0})`,
-      children: (
-        <Space direction="vertical" style={{ width: '100%' }}>
-          {(groupResources || []).map(resource => {
-            if (!resource) return null;
-            return (
-              <Card key={resource.sno} style={{ marginBottom: 12, borderLeft: '4px solid #1890ff' }} size="small">
-                <Row gutter={[16, 8]}>
-                  <Col xs={24} sm={16}>
-                    <div style={{ marginBottom: 8 }}>
-                      <div style={{ fontSize: '14px', fontWeight: 600 }}>{resource.empName}</div>
-                      <div style={{ fontSize: '12px', color: '#666' }}>{resource.raId} • {resource.piwRole}</div>
-                    </div>
-                    <Tag color="blue">{resource.engagement || 'Unassigned'}</Tag>
-                  </Col>
-                </Row>
-              </Card>
-            );
-          })}
-        </Space>
+
+  const listColumns: ColumnsType<ResourceRow> = [
+    { title: 'Name', dataIndex: 'empName', key: 'empName', width: 150, render: (v: string) => <Text strong style={{ fontSize: '12px' }}>{v}</Text> },
+    { title: 'RA ID', dataIndex: 'raId', key: 'raId', width: 100, render: (v: string) => <span style={{ fontSize: '11px' }}>{v}</span> },
+    { title: 'PIW Role', dataIndex: 'piwRole', key: 'piwRole', width: 120, render: (v: string) => <span style={{ fontSize: '11px' }}>{v || '—'}</span> },
+    {
+      title: 'Engagement',
+      dataIndex: 'engagement',
+      key: 'engagement',
+      width: 120,
+      render: (v: string) => v === 'Bench'
+        ? <Tag color="warning" style={{ fontSize: '10px' }}>Bench</Tag>
+        : <span style={{ fontSize: '11px' }}>{v || '—'}</span>,
+    },
+    { title: 'Experience', dataIndex: 'totalWorkex', key: 'totalWorkex', width: 100, render: (v: string) => <span style={{ fontSize: '11px' }}>{v || '—'} yrs</span> },
+    {
+      title: 'Skills',
+      dataIndex: 'skills',
+      key: 'skills',
+      render: (v: string) => {
+        if (!v) return null;
+        const arr = v.split(',').map(s => s.trim());
+        return (
+          <span style={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+            {arr.slice(0, 2).map((s, i) => <Tag key={i} color="blue" style={{ fontSize: '10px', margin: 0 }}>{s}</Tag>)}
+            {arr.length > 2 && <Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>+{arr.length - 2}</Tag>}
+          </span>
+        );
+      },
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 60,
+      render: (_: any, record: ResourceRow) => (
+        <Tooltip title="View Details" overlayInnerStyle={{ fontSize: '11px' }}>
+          <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => { setSelectedDetailResource(record); setDetailsModalOpen(true); }} />
+        </Tooltip>
       ),
-    }));
-  }, [engagementGroups]);
+    },
+  ];
 
   const handleBenchUpload = (file: File) => {
     const reader = new FileReader();
@@ -198,179 +223,355 @@ export function ResourceUtilization({ resources = [], onUpdateResources }: Resou
     message.success('Allocation request created');
   };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%' }}>
-      <div style={{ padding: '12px 24px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
-        <Space direction="vertical" style={{ width: '100%' }}>
-          <Space wrap style={{ gap: '12px' }}>
-            <Upload accept=".xlsx,.xls" beforeUpload={handleBenchUpload} showUploadList={false}>
-              <Button icon={<UploadOutlined />} size="small">Upload Bench RAID</Button>
-            </Upload>
+  // ─── Insights data ────────────────────────────────────────────
+  const total = cachedResources?.length || 0;
+  const benchCount = benchResources?.length || 0;
+  const activeCount = total - benchCount;
+  const utilizationPct = total > 0 ? Math.round((activeCount / total) * 100) : 0;
 
-            <Segmented
-              value={viewMode}
-              onChange={(value) => setViewMode(value as 'grouped' | 'bench')}
-              options={[
-                { label: '🔗 Engagement Mapping', value: 'grouped' },
-                { label: '🏢 Bench View', value: 'bench' },
+  const engagementBreakdown = useMemo(() => {
+    const map: Record<string, number> = {};
+    (cachedResources || []).forEach(r => {
+      const eng = r?.engagement || 'Unassigned';
+      map[eng] = (map[eng] || 0) + 1;
+    });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [cachedResources]);
+
+
+  // ─── Reusable card/list renderer ─────────────────────────────
+  const renderCardGroups = (data: ResourceRow[]) => {
+    const groups: Record<string, ResourceRow[]> = {};
+    const benchGroup: ResourceRow[] = [];
+    data.forEach(resource => {
+      if (!resource) return;
+      if (resource.engagement === 'Bench') benchGroup.push(resource);
+      else { const eng = resource.engagement || 'Unassigned'; if (!groups[eng]) groups[eng] = []; groups[eng].push(resource); }
+    });
+    const items = [
+      ...Object.entries(groups).map(([eng, res]) => ({ key: eng, isBench: false, resources: res })),
+      ...(benchGroup.length > 0 ? [{ key: 'Bench', isBench: true, resources: benchGroup }] : []),
+    ].map(group => ({
+      key: group.key,
+      label: (
+        <span>
+          {group.isBench ? <Tag color="warning" style={{ fontSize: '10px', marginRight: 6 }}>Bench</Tag> : null}
+          {group.key}
+          <span style={{ marginLeft: 8, color: '#888', fontSize: '12px' }}>({group.resources.length})</span>
+        </span>
+      ),
+      children: (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+          {group.resources.map(resource => {
+            if (!resource) return null;
+            const skillsArr = resource.skills ? resource.skills.split(',').map(s => s.trim()).slice(0, 2) : [];
+            return (
+              <div key={resource.sno} style={{ background: '#fff', borderRadius: '8px', padding: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: group.isBench ? '1px solid #ffe58f' : '1px solid #f0f0f0', borderLeft: group.isBench ? '4px solid #faad14' : '1px solid #f0f0f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                  <Text strong style={{ fontSize: '13px' }}>{resource.empName}</Text>
+                  <Tooltip title="View Details" overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => { setSelectedDetailResource(resource); setDetailsModalOpen(true); }} style={{ padding: 0 }} />
+                  </Tooltip>
+                </div>
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>{resource.raId}</div>
+                <div style={{ fontSize: '11px', color: '#595959', marginBottom: '4px' }}>{resource.piwRole} • {resource.totalWorkex || '—'} yrs</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginBottom: '6px' }}>
+                  {skillsArr.map((skill, idx) => <Tag key={idx} color="blue" style={{ fontSize: '10px', margin: 0 }}>{skill}</Tag>)}
+                  {resource.skills && resource.skills.split(',').length > 2 && (
+                    <Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>+{resource.skills.split(',').length - 2} more</Tag>
+                  )}
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }}>Allocate</Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ),
+    }));
+    return items.length > 0 ? <Collapse items={items} defaultActiveKey={items.filter(i => !i.key.includes('Bench')).map(i => i.key)} /> : <Empty description="No resources found" style={{ marginTop: 48 }} />;
+  };
+
+  const renderListTable = (data: ResourceRow[]) => (
+    <div className="compact-table">
+      <Table<ResourceRow>
+        dataSource={data}
+        columns={listColumns}
+        rowKey="sno"
+        size="small"
+        pagination={{ pageSize: 15, showSizeChanger: false }}
+        scroll={{ x: 'max-content', y: 420 }}
+        locale={{ emptyText: 'No resources match your filters' }}
+        rowClassName={(record) => record.engagement === 'Bench' ? 'bench-row' : ''}
+      />
+    </div>
+  );
+
+  // ─── Tab data sets ─────────────────────────────────────────────
+  const projectResources = useMemo(() => allFilteredResources.filter(r => r?.engagement && r.engagement !== 'Bench'), [allFilteredResources]);
+  const filteredBenchResources = useMemo(() => allFilteredResources.filter(r => r?.engagement === 'Bench'), [allFilteredResources]);
+
+  return (
+    <div style={{ background: '#f5f5f5', padding: '12px 24px' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+        <Space direction="vertical" style={{ width: '100%' }} size={6}>
+          <div>
+            <Typography.Title level={4} style={{ marginBottom: 2 }}>Engagement Mapping</Typography.Title>
+            <Text type="secondary" style={{ fontSize: '12px' }}>Resource allocation across projects, bench status, and utilization insights</Text>
+          </div>
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '16px' }}>
+            <Tabs
+              defaultActiveKey="projects"
+              size="small"
+              tabBarStyle={{ fontSize: '11px' }}
+              items={[
+                {
+                  key: 'projects',
+                  label: <span style={{ fontSize: '11px' }}><ProjectOutlined /> Projects</span>,
+                  children: (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '12px' }}>
+                        <Text style={{ fontSize: '12px', color: '#666' }}>
+                          Showing: <strong>{projectResources.length}</strong> resources on projects
+                        </Text>
+                        <Space wrap size={8}>
+                          {isFilterApplied && (
+                            <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={() => setUnifiedFilters(DEFAULT_UNIFIED_FILTERS)}>✕ Clear Filters</Button>
+                          )}
+                          <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                          <Tooltip title="List View" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<UnorderedListOutlined />} type={viewMode === 'list' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('list')} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                          <Tooltip title="Card View" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<AppstoreOutlined />} type={viewMode === 'card' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('card')} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                        </Space>
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        {showFilterPanel && (
+                          <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 600 }}>Filters</span>
+                              <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setUnifiedFilters(DEFAULT_UNIFIED_FILTERS)}>Clear all</Button>
+                            </div>
+                            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Resource Name</div>
+                                <Input size="small" placeholder="Search..." value={unifiedFilters.resourceName} onChange={e => setUnifiedFilters({ ...unifiedFilters, resourceName: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>RA ID</div>
+                                <Input size="small" placeholder="Search..." value={unifiedFilters.raid} onChange={e => setUnifiedFilters({ ...unifiedFilters, raid: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Skills</div>
+                                <Input size="small" placeholder="Search..." value={unifiedFilters.skills} onChange={e => setUnifiedFilters({ ...unifiedFilters, skills: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Project / Engagement</div>
+                                <Select size="small" placeholder="All" allowClear value={unifiedFilters.engagement || undefined} onChange={(value) => setUnifiedFilters({ ...unifiedFilters, engagement: value || '' })} options={engagementOptions.filter(e => e !== 'Bench').map(eng => ({ label: eng, value: eng }))} style={{ width: '100%', fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Experience: {unifiedFilters.workexRange[0]}-{unifiedFilters.workexRange[1]} yrs</div>
+                                <Slider range min={0} max={50} value={unifiedFilters.workexRange} onChange={(value) => setUnifiedFilters({ ...unifiedFilters, workexRange: value as [number, number] })} />
+                              </div>
+                            </Space>
+                          </div>
+                        )}
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                          {viewMode === 'list' ? renderListTable(projectResources) : renderCardGroups(projectResources)}
+                        </div>
+                      </div>
+                    </>
+                  ),
+                },
+                {
+                  key: 'bench',
+                  label: (
+                    <span style={{ fontSize: '11px' }}>
+                      <TeamOutlined /> Bench
+                      {benchCount > 0 && <Tag color="warning" style={{ marginLeft: 6, fontSize: '10px' }}>{benchCount}</Tag>}
+                    </span>
+                  ),
+                  children: (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '12px' }}>
+                        <Text style={{ fontSize: '12px', color: '#666' }}>
+                          Showing: <strong>{filteredBenchResources.length}</strong> bench resources
+                        </Text>
+                        <Space wrap size={8}>
+                          {isFilterApplied && (
+                            <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={() => setUnifiedFilters(DEFAULT_UNIFIED_FILTERS)}>✕ Clear Filters</Button>
+                          )}
+                          <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                          <Tooltip title="List View" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<UnorderedListOutlined />} type={viewMode === 'list' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('list')} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                          <Tooltip title="Card View" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<AppstoreOutlined />} type={viewMode === 'card' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('card')} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                          <Tooltip title="Upload Bench RAID (Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Upload accept=".xlsx,.xls" beforeUpload={handleBenchUpload} showUploadList={false}>
+                              <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
+                            </Upload>
+                          </Tooltip>
+                        </Space>
+                      </div>
+                      <div style={{ display: 'flex', gap: '12px' }}>
+                        {showFilterPanel && (
+                          <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 600 }}>Filters</span>
+                              <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setUnifiedFilters(DEFAULT_UNIFIED_FILTERS)}>Clear all</Button>
+                            </div>
+                            <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Resource Name</div>
+                                <Input size="small" placeholder="Search..." value={unifiedFilters.resourceName} onChange={e => setUnifiedFilters({ ...unifiedFilters, resourceName: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>RA ID</div>
+                                <Input size="small" placeholder="Search..." value={unifiedFilters.raid} onChange={e => setUnifiedFilters({ ...unifiedFilters, raid: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Skills</div>
+                                <Input size="small" placeholder="Search..." value={unifiedFilters.skills} onChange={e => setUnifiedFilters({ ...unifiedFilters, skills: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Experience: {unifiedFilters.workexRange[0]}-{unifiedFilters.workexRange[1]} yrs</div>
+                                <Slider range min={0} max={50} value={unifiedFilters.workexRange} onChange={(value) => setUnifiedFilters({ ...unifiedFilters, workexRange: value as [number, number] })} />
+                              </div>
+                            </Space>
+                          </div>
+                        )}
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                          {filteredBenchResources.length === 0
+                            ? <Empty description={benchCount === 0 ? 'No bench resources. Upload a RAID file to mark resources as bench.' : 'No bench resources match filters.'} style={{ marginTop: 48 }} />
+                            : viewMode === 'list'
+                              ? renderListTable(filteredBenchResources)
+                              : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+                                  {filteredBenchResources.map(resource => {
+                                    if (!resource) return null;
+                                    const skillsArr = resource.skills ? resource.skills.split(',').map(s => s.trim()).slice(0, 2) : [];
+                                    return (
+                                      <div key={resource.sno} style={{ background: '#fff', borderRadius: '8px', padding: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: '1px solid #ffe58f', borderLeft: '4px solid #faad14' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
+                                          <Text strong style={{ fontSize: '13px' }}>{resource.empName}</Text>
+                                          <Tooltip title="View Details" overlayInnerStyle={{ fontSize: '11px' }}>
+                                            <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => { setSelectedDetailResource(resource); setDetailsModalOpen(true); }} style={{ padding: 0 }} />
+                                          </Tooltip>
+                                        </div>
+                                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>{resource.raId}</div>
+                                        <div style={{ fontSize: '11px', color: '#595959', marginBottom: '4px' }}>{resource.piwRole} • {resource.totalWorkex || '—'} yrs</div>
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginBottom: '6px' }}>
+                                          {skillsArr.map((skill, idx) => <Tag key={idx} color="blue" style={{ fontSize: '10px', margin: 0 }}>{skill}</Tag>)}
+                                          {resource.skills && resource.skills.split(',').length > 2 && (
+                                            <Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>+{resource.skills.split(',').length - 2} more</Tag>
+                                          )}
+                                        </div>
+                                        <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }}>Allocate</Button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )
+                          }
+                        </div>
+                      </div>
+                    </>
+                  ),
+                },
+                {
+                  key: 'insights',
+                  label: <span style={{ fontSize: '11px' }}><BarChartOutlined /> Utilization Insights</span>,
+                  children: (
+                    <div>
+                      {total === 0 ? (
+                        <Empty description="No resource data. Upload resources in the Information tab first." style={{ marginTop: 48 }} />
+                      ) : (
+                        <>
+                          {/* Summary KPIs */}
+                          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+                            <Col xs={24} sm={12} md={6}>
+                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #e6f7ff' }}>
+                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>Total Resources</span>} value={total} valueStyle={{ color: '#1890ff', fontSize: '28px', fontWeight: 700 }} />
+                              </Card>
+                            </Col>
+                            <Col xs={24} sm={12} md={6}>
+                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #f6ffed' }}>
+                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>On Projects</span>} value={activeCount} valueStyle={{ color: '#52c41a', fontSize: '28px', fontWeight: 700 }} />
+                              </Card>
+                            </Col>
+                            <Col xs={24} sm={12} md={6}>
+                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #fffbe6' }}>
+                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>On Bench</span>} value={benchCount} valueStyle={{ color: '#faad14', fontSize: '28px', fontWeight: 700 }} />
+                              </Card>
+                            </Col>
+                            <Col xs={24} sm={12} md={6}>
+                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #f9f0ff' }}>
+                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>Utilization %</span>} value={utilizationPct} suffix="%" valueStyle={{ color: utilizationPct >= 80 ? '#52c41a' : utilizationPct >= 60 ? '#faad14' : '#f5222d', fontSize: '28px', fontWeight: 700 }} />
+                              </Card>
+                            </Col>
+                          </Row>
+
+                          {/* Utilization bar */}
+                          <Card style={{ borderRadius: 8, marginBottom: 16 }} bodyStyle={{ padding: '16px 20px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                              <Text strong style={{ fontSize: '13px' }}>Overall Utilization</Text>
+                              <Text style={{ fontSize: '12px', color: '#666' }}>{activeCount} of {total} resources active</Text>
+                            </div>
+                            <Progress
+                              percent={utilizationPct}
+                              strokeColor={utilizationPct >= 80 ? '#52c41a' : utilizationPct >= 60 ? '#faad14' : '#f5222d'}
+                              trailColor="#fff1f0"
+                              strokeWidth={12}
+                              format={pct => <span style={{ fontSize: '12px' }}>{pct}%</span>}
+                            />
+                          </Card>
+
+                          {/* Breakdown by engagement */}
+                          <Card style={{ borderRadius: 8 }} bodyStyle={{ padding: '16px 20px' }}>
+                            <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 16 }}>Breakdown by Engagement</Text>
+                            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                              {engagementBreakdown.map(([eng, count]) => {
+                                const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                                const isBench = eng === 'Bench';
+                                return (
+                                  <div key={eng}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                      <Space size={6}>
+                                        {isBench && <Tag color="warning" style={{ fontSize: '10px', margin: 0 }}>Bench</Tag>}
+                                        <Text style={{ fontSize: '12px' }}>{eng}</Text>
+                                      </Space>
+                                      <Text style={{ fontSize: '12px', color: '#666' }}>{count} ({pct}%)</Text>
+                                    </div>
+                                    <Progress
+                                      percent={pct}
+                                      size="small"
+                                      strokeColor={isBench ? '#faad14' : '#1890ff'}
+                                      showInfo={false}
+                                      style={{ margin: 0 }}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </Space>
+                          </Card>
+                        </>
+                      )}
+                    </div>
+                  ),
+                },
               ]}
             />
-
-          {viewMode === 'bench' && (
-            <Space wrap style={{ width: '100%', gap: '12px' }}>
-              <Input
-                placeholder="Search by resource name..."
-                style={{ width: '200px' }}
-                value={benchFilters.resourceName}
-                onChange={(e) => setBenchFilters({ ...benchFilters, resourceName: e.target.value })}
-                allowClear
-              />
-              <Input
-                placeholder="Search by RAID..."
-                style={{ width: '150px' }}
-                value={benchFilters.raid}
-                onChange={(e) => setBenchFilters({ ...benchFilters, raid: e.target.value })}
-                allowClear
-              />
-              <Input
-                placeholder="Search by skills..."
-                style={{ width: '150px' }}
-                value={benchFilters.skills}
-                onChange={(e) => setBenchFilters({ ...benchFilters, skills: e.target.value })}
-                allowClear
-              />
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '12px', fontWeight: 600 }}>Experience:</span>
-                <Slider
-                  range
-                  min={0}
-                  max={50}
-                  style={{ width: '180px' }}
-                  value={benchFilters.workexRange}
-                  onChange={(value) => setBenchFilters({ ...benchFilters, workexRange: value as [number, number] })}
-                />
-                <span style={{ fontSize: '12px', minWidth: '60px' }}>{benchFilters.workexRange[0]}-{benchFilters.workexRange[1]} yrs</span>
-              </div>
-              <Button
-                size="small"
-                onClick={() => setBenchFilters({ resourceName: '', raid: '', skills: '', workexRange: [0, 50] })}
-              >
-                Reset
-              </Button>
-            </Space>
-          )}
-          </Space>
-
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            <strong>Total:</strong> {cachedResources?.length || 0} | <strong>Bench:</strong> {benchResources?.length || 0}
           </div>
-
-          {viewMode === 'grouped' && (
-            <Select
-              placeholder="Filter by engagement..."
-              allowClear
-              value={engagementFilter || undefined}
-              onChange={(value) => setEngagementFilter(value || '')}
-              options={(engagementOptions || []).map(eng => ({ label: eng, value: eng }))}
-              style={{ width: '100%', maxWidth: '300px' }}
-            />
-          )}
         </Space>
-      </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
-        {viewMode === 'grouped' ? (
-          collapsibleItems.length > 0 ? (
-            <Collapse items={collapsibleItems} defaultActiveKey={[]} />
-          ) : (
-            <Empty description="No resources found" style={{ marginTop: 48 }} />
-          )
-        ) : (
-          <div>
-            {filteredBenchResources.length === 0 ? (
-              <Empty description={benchResources.length === 0 ? "No bench resources" : "No matches"} style={{ marginTop: 48 }} />
-            ) : (
-              <Row gutter={[16, 16]}>
-                {filteredBenchResources.map(resource => {
-                  if (!resource) return null;
-                  const skillsArray = resource.skills ? resource.skills.split(',').map(s => s.trim()).slice(0, 2) : [];
-                  return (
-                    <Col key={resource.sno} xs={24} sm={12} md={8} lg={6}>
-                      <Card 
-                        style={{ height: '280px', borderLeft: '4px solid #ff7a45', display: 'flex', flexDirection: 'column' }} 
-                        size="small"
-                        hoverable
-                      >
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                              <div style={{ fontSize: '14px', fontWeight: 700, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {resource.empName}
-                              </div>
-                              <Tooltip title="View Details">
-                                <Button 
-                                  type="text" 
-                                  icon={<EyeOutlined />} 
-                                  size="small"
-                                  onClick={() => {
-                                    setSelectedDetailResource(resource);
-                                    setDetailsModalOpen(true);
-                                  }}
-                                  style={{ marginLeft: 4 }}
-                                />
-                              </Tooltip>
-                            </div>
-                            <div style={{ fontSize: '10px', color: '#666', marginBottom: 10, fontWeight: 500 }}>
-                              <strong>RAID:</strong> {resource.raId}
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '11px' }}>
-                              <div>
-                                <div style={{ color: '#999', marginBottom: 1 }}>PIW Role</div>
-                                <div style={{ fontWeight: 600, color: '#333' }}>{resource.piwRole || '—'}</div>
-                              </div>
-                              <div>
-                                <div style={{ color: '#999', marginBottom: 1 }}>Domain</div>
-                                <div style={{ fontWeight: 600, color: '#333' }}>{resource.roleOrDomain || '—'}</div>
-                              </div>
-                              <div>
-                                <div style={{ color: '#999', marginBottom: 1 }}>Experience</div>
-                                <div style={{ fontWeight: 600, color: '#333' }}>{resource.totalWorkex || '—'} yrs</div>
-                              </div>
-                              {skillsArray.length > 0 && (
-                                <div>
-                                  <div style={{ color: '#999', marginBottom: 1 }}>Skills</div>
-                                  <div style={{ fontSize: '10px', color: '#333', lineHeight: '1.4' }}>
-                                    {skillsArray.map((skill, idx) => (
-                                      <div key={idx}>• {skill}</div>
-                                    ))}
-                                    {resource.skills && resource.skills.split(',').length > 2 && (
-                                      <div style={{ color: '#1890ff', cursor: 'pointer', marginTop: 2 }}>
-                                        +{resource.skills.split(',').length - 2} more
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                        <Button 
-                          type="primary" 
-                          block 
-                          size="small"
-                          onClick={() => handleAllocateResource(resource)}
-                          style={{ marginTop: 12 }}
-                        >
-                          Allocate
-                        </Button>
-                      </Card>
-                    </Col>
-                  );
-                })}
-              </Row>
-            )}
-          </div>
-        )}
       </div>
 
       <Drawer title="Allocate Resource" placement="right" onClose={() => setAllocationDrawer(false)} open={allocationDrawer} width={400}>
@@ -455,7 +656,7 @@ export function ResourceUtilization({ resources = [], onUpdateResources }: Resou
               <div>
                 <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>Status</div>
                 <div style={{ fontSize: '14px', fontWeight: 600 }}>
-                  <Tag color="blue">{selectedDetailResource.engagement || 'Bench'}</Tag>
+                  <Tag color={selectedDetailResource.engagement === 'Bench' ? 'warning' : 'blue'}>{selectedDetailResource.engagement || 'Bench'}</Tag>
                 </div>
               </div>
             </div>
@@ -471,9 +672,9 @@ export function ResourceUtilization({ resources = [], onUpdateResources }: Resou
               </div>
             )}
 
-            <Button 
-              type="primary" 
-              block 
+            <Button
+              type="primary"
+              block
               size="large"
               onClick={() => {
                 handleAllocateResource(selectedDetailResource);
