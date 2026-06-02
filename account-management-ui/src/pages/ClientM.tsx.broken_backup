@@ -1,0 +1,1839 @@
+﻿import React, { useState, useCallback, useMemo } from 'react';
+import {
+  Upload,
+  Table,
+  Typography,
+  Space,
+  Button,
+  message,
+  Drawer,
+  Tag,
+  Form,
+  Input,
+  Tooltip,
+  Modal,
+  Select,
+  DatePicker,
+  Checkbox,
+  Tabs,
+  Card,
+  Row,
+  Col,
+  List as AntdList,
+  Divider,
+  Badge,
+  Dropdown,
+  Popover,
+} from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import {
+  UploadOutlined,
+  DownloadOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  PlusOutlined,
+  ColumnHeightOutlined,
+  FilterOutlined,
+  FileTextOutlined,
+  BarChartOutlined,
+  CloseOutlined,
+  TableOutlined,
+  AppstoreOutlined,
+  UnorderedListOutlined,
+  TeamOutlined,
+  CheckCircleOutlined,
+  ClockCircleOutlined,
+  MoreOutlined,
+} from '@ant-design/icons';
+import * as XLSX from 'xlsx';
+import { RequestInsights } from './RequestInsights';
+
+const { Title, Text } = Typography;
+
+// Date format utilities (DD/MM/YYYY)
+const formatDateToDDMMYYYY = (dateStr: any): string => {
+  if (!dateStr && dateStr !== 0) return '';
+  try {
+    let date: Date;
+    
+    // If it's a number (Excel date serial), convert it
+    if (typeof dateStr === 'number') {
+      // Excel stores dates as days since 1900-01-01
+      // Excel serial date: 1 = 1900-01-01, 44562 = 2022-01-01, etc.
+      // Adjustment: 25567 represents days from 1900-01-01 to 1970-01-01
+      // But we need to account for the leap year bug in Excel (1900 is not a leap year but Excel treats it as one)
+      
+      // More accurate formula: date = (serial - 1) * 24 * 60 * 60 * 1000 + epoch
+      const excelEpochMs = new Date(1900, 0, 1).getTime(); // 1900-01-01 in local timezone
+      const serialDate = Math.floor(dateStr); // Ensure it's a whole number
+      
+      // Account for Excel's leap year bug (Feb 29, 1900 doesn't exist)
+      const dayOffset = serialDate > 59 ? 1 : 0; // Serial 60 is Feb 29, 1900 (fictitious)
+      date = new Date(excelEpochMs + (serialDate - dayOffset - 1) * 24 * 60 * 60 * 1000);
+    } else {
+      dateStr = String(dateStr).trim();
+      
+      // If it's already in DD/MM/YYYY format, validate and return
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
+        const [day, month, year] = dateStr.split('/');
+        const d = parseInt(day, 10);
+        const m = parseInt(month, 10);
+        const y = parseInt(year, 10);
+        
+        // Validate the date
+        if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && y >= 1900) {
+          return dateStr; // Return as-is if valid
+        }
+      }
+      
+      // If it's YYYY-MM-DD format, convert it
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        date = new Date(dateStr + 'T00:00:00Z');
+      } else {
+        // Try parsing as-is
+        date = new Date(dateStr);
+      }
+    }
+    
+    if (isNaN(date.getTime())) return String(dateStr);
+    
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    
+    // Validate the output date
+    if (year < 1900 || year > 2100) {
+      return String(dateStr); // Return original if year is unreasonable
+    }
+    
+    return `${day}/${month}/${year}`;
+  } catch {
+    return String(dateStr);
+  }
+};
+
+const parseDDMMYYYY = (dateStr: string): string => {
+  if (!dateStr) return '';
+  try {
+    // If already in YYYY-MM-DD, return as is
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return dateStr;
+    }
+    
+    // Parse DD/MM/YYYY format
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) {
+      const [day, month, year] = dateStr.split('/');
+      return `${year}-${month}-${day}`;
+    }
+    
+    return dateStr;
+  } catch {
+    return dateStr;
+  }
+};
+
+// Display values (what users see and upload)
+const PROCESSING_STATUS_DISPLAY = [
+  'Accepted by Staffing Team',
+  'Resource Shortlisted',
+  'Uploaded Profile on Beeline',
+  'Resource Assessment Scheduled',
+  'Resource Assessment Completed',
+  'Resource Selected',
+  'Resource Rejected',
+  'ZS Onboarding Initiated',
+  'Onboarded in ZS',
+  'ZS Offboarding Initiated',
+  'Resource Offboarded',
+];
+
+const OVERALL_STATUS_DISPLAY = [
+  'Not Started',
+  'In Progress',
+  'Completed',
+  'Cancelled',
+  'On Hold',
+  'Blocked',
+];
+
+const VALID_PROCESSING_STATUSES = new Set(PROCESSING_STATUS_DISPLAY);
+const VALID_OVERALL_STATUSES = new Set(OVERALL_STATUS_DISPLAY);
+
+// Map display values to internal codes
+const PROCESSING_STATUS_MAP: Record<string, string> = {
+  'Accepted by Staffing Team': 'accepted_staffing',
+  'Resource Shortlisted': 'resource_shortlisted',
+  'Uploaded Profile on Beeline': 'uploaded_profile',
+  'Resource Assessment Scheduled': 'assessment_scheduled',
+  'Resource Assessment Completed': 'assessment_completed',
+  'Resource Selected': 'resource_selected',
+  'Resource Rejected': 'resource_rejected',
+  'ZS Onboarding Initiated': 'onboarding_initiated',
+  'Onboarded in ZS': 'onboarded_zs',
+  'ZS Offboarding Initiated': 'offboarding_initiated',
+  'Resource Offboarded': 'resource_offboarded',
+};
+
+const OVERALL_STATUS_MAP: Record<string, string> = {
+  'Not Started': 'not_started',
+  'In Progress': 'in_progress',
+  'Completed': 'completed',
+  'Cancelled': 'cancelled',
+  'On Hold': 'on_hold',
+  'Blocked': 'blocked',
+};
+
+// Reverse maps: code to display
+const PROCESSING_STATUS_DISPLAY_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(PROCESSING_STATUS_MAP).map(([display, code]) => [code, display])
+);
+
+const OVERALL_STATUS_DISPLAY_MAP: Record<string, string> = Object.fromEntries(
+  Object.entries(OVERALL_STATUS_MAP).map(([display, code]) => [code, display])
+);
+
+export type ProcessingStatusType = 
+  | 'accepted_staffing'
+  | 'resource_shortlisted'
+  | 'uploaded_profile'
+  | 'assessment_scheduled'
+  | 'assessment_completed'
+  | 'resource_selected'
+  | 'resource_rejected'
+  | 'onboarding_initiated'
+  | 'onboarded_zs'
+  | 'offboarding_initiated'
+  | 'resource_offboarded';
+
+export type OverallStatusType = 
+  | 'not_started'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'blocked';
+
+export type ClientRequest = {
+  key: string;
+  sno: string;
+  beelineId: string;
+  description: string;
+  raisedBy: string;
+  requestRaised: string;
+  accountAnchorAssigned: string;
+  processingStatus: ProcessingStatusType;
+  updatedOn: string;
+  overallStatus: OverallStatusType;
+};
+
+const PROCESSING_STATUS_OPTIONS = [
+  { label: 'Accepted by Staffing Team', value: 'accepted_staffing' },
+  { label: 'Resource Shortlisted', value: 'resource_shortlisted' },
+  { label: 'Uploaded Profile on Beeline', value: 'uploaded_profile' },
+  { label: 'Resource Assessment Scheduled', value: 'assessment_scheduled' },
+  { label: 'Resource Assessment Completed', value: 'assessment_completed' },
+  { label: 'Resource Selected', value: 'resource_selected' },
+  { label: 'Resource Rejected', value: 'resource_rejected' },
+  { label: 'ZS Onboarding Initiated', value: 'onboarding_initiated' },
+  { label: 'Onboarded in ZS', value: 'onboarded_zs' },
+  { label: 'ZS Offboarding Initiated', value: 'offboarding_initiated' },
+  { label: 'Resource Offboarded', value: 'resource_offboarded' },
+];
+
+const OVERALL_STATUS_OPTIONS = [
+  { label: 'Not Started', value: 'not_started' },
+  { label: 'In Progress', value: 'in_progress' },
+  { label: 'Completed', value: 'completed' },
+  { label: 'Cancelled', value: 'cancelled' },
+  { label: 'Blocked', value: 'blocked' },
+];
+
+type ExcelRow = Record<string, string | undefined>;
+
+type FilterState = {
+  sno: string;
+  beelineId: string;
+  description: string;
+  raisedBy: string;
+  accountAnchorAssigned: string;
+  processingStatus: string;
+  overallStatus: string;
+};
+
+const DEFAULT_FILTERS: FilterState = {
+  sno: '',
+  beelineId: '',
+  description: '',
+  raisedBy: '',
+  accountAnchorAssigned: '',
+  processingStatus: '',
+  overallStatus: '',
+};
+
+const COLUMN_KEYS = ['sno', 'beelineId', 'description', 'raisedBy', 'requestRaised', 'accountAnchorAssigned', 'processingStatus', 'updatedOn', 'overallStatus', 'action'] as const;
+
+const COLUMN_LABELS: Record<string, string> = {
+  sno: 'S.No',
+  beelineId: 'Beeline ID',
+  description: 'Description',
+  raisedBy: 'Raised by',
+  requestRaised: 'Request Raised',
+  accountAnchorAssigned: 'Account Anchor Assigned',
+  processingStatus: 'Processing Status',
+  updatedOn: 'Updated on',
+  overallStatus: 'Overall Status',
+};
+
+const ClientM: React.FC<{ activeTab?: 'requests' | 'connects' }> = ({ activeTab = 'requests' }) => {
+  const [requests, setRequests] = useState<ClientRequest[]>([]);
+  const [editDrawer, setEditDrawer] = useState(false);
+  const [editingRequest, setEditingRequest] = useState<ClientRequest | null>(null);
+  const [form] = Form.useForm();
+  const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
+  const [filterDrawer, setFilterDrawer] = useState(false);
+  const [columnDrawer, setColumnDrawer] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
+    new Set(COLUMN_KEYS)
+  );
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [bulkActionDrawer, setBulkActionDrawer] = useState(false);
+  const [bulkProcessingStatus, setBulkProcessingStatus] = useState<ProcessingStatusType | ''>('');
+  const [bulkOverallStatus, setBulkOverallStatus] = useState<OverallStatusType | ''>('');
+  const [viewMode, setViewMode] = useState<'table' | 'card'>('card');
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
+  const [editingCell, setEditingCell] = useState<{ rowKey: string; field: string } | null>(null);
+
+  const handleUpload = useCallback((file: File) => {
+    try {
+      const reader = new FileReader();
+
+      reader.onload = (e) => {
+        try {
+          const data = e.target?.result;
+          if (!data) {
+            message.error('Failed to read file');
+            return;
+          }
+
+          const workbook = XLSX.read(data, { type: 'binary', cellDates: true });
+          const sheetName = workbook.SheetNames?.[0];
+          if (!sheetName) {
+            message.error('No worksheet found in file');
+            return;
+          }
+
+          const worksheet = workbook.Sheets[sheetName];
+          if (!worksheet) {
+            message.error('Invalid worksheet');
+            return;
+          }
+
+          const jsonData: ExcelRow[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+          if (!Array.isArray(jsonData) || jsonData.length === 0) {
+            message.error('No data found in file');
+            return;
+          }
+
+          const newRequests: ClientRequest[] = jsonData.map((row, idx) => {
+            const totalSno = requests.length + idx + 1;
+            const newKey = String(totalSno);
+            const processingStatusInput = String(row['Processing Status'] || row['Processing status'] || row['processing Status'] || '').trim();
+            const overallStatusInput = String(row['Overall Status'] || row['Overall status'] || row['overall Status'] || '').trim();
+            
+            // Map display values to internal codes
+            const processingStatusCode = PROCESSING_STATUS_MAP[processingStatusInput] || processingStatusInput;
+            const overallStatusCode = OVERALL_STATUS_MAP[overallStatusInput] || overallStatusInput;
+            
+            // Validate status values (now checking display names from the file)
+            const processingStatus = VALID_PROCESSING_STATUSES.has(processingStatusInput) 
+              ? processingStatusCode as ProcessingStatusType
+              : 'accepted_staffing';
+            const overallStatus = VALID_OVERALL_STATUSES.has(overallStatusInput)
+              ? overallStatusCode as OverallStatusType
+              : 'not_started';
+            
+            // Log warnings if invalid statuses were provided
+            if (processingStatusInput && !VALID_PROCESSING_STATUSES.has(processingStatusInput)) {
+              console.warn(`Row ${totalSno}: Invalid Processing Status "${processingStatusInput}" - using default "Accepted by Staffing Team"`);
+            }
+            if (overallStatusInput && !VALID_OVERALL_STATUSES.has(overallStatusInput)) {
+              console.warn(`Row ${totalSno}: Invalid Overall Status "${overallStatusInput}" - using default "Not Started"`);
+            }
+            
+            // Handle date fields - they might be Date objects from XLSX or strings
+            let rawRequestRaised: any = row['Request Raised'] || row['Request raised'] || row['request Raised'];
+            let rawUpdatedOn: any = row['Updated on'] || row['Updated On'] || row['updated on'];
+            
+            // Convert Date objects to string if needed
+            if (rawRequestRaised instanceof Date) {
+              rawRequestRaised = formatDateToDDMMYYYY(rawRequestRaised.getTime());
+            } else {
+              rawRequestRaised = String(rawRequestRaised || '');
+            }
+            
+            if (rawUpdatedOn instanceof Date) {
+              rawUpdatedOn = formatDateToDDMMYYYY(rawUpdatedOn.getTime());
+            } else {
+              rawUpdatedOn = String(rawUpdatedOn || '');
+            }
+            
+            return {
+              key: newKey,
+              sno: String(totalSno),
+              beelineId: String(row['Beeline ID'] || row['Beeline Id'] || row['beeline ID'] || ''),
+              description: String(row['Description'] || row['description'] || ''),
+              raisedBy: String(row['Raised by'] || row['Raised By'] || row['raised by'] || ''),
+              requestRaised: formatDateToDDMMYYYY(rawRequestRaised),
+              accountAnchorAssigned: String(row['Account Anchor'] || row['Account Anchor Assigned'] || row['Account Anchor assigned'] || row['account Anchor Assigned'] || ''),
+              processingStatus: processingStatus as ProcessingStatusType,
+              updatedOn: formatDateToDDMMYYYY(rawUpdatedOn),
+              overallStatus: overallStatus as OverallStatusType,
+            };
+          });
+
+          // Check for invalid statuses
+          let invalidStatusCount = 0;
+          jsonData.forEach((row, idx) => {
+            const processingStatusInput = String(row['Processing Status'] || row['Processing status'] || row['processing Status'] || '').trim();
+            const overallStatusInput = String(row['Overall Status'] || row['Overall status'] || row['overall Status'] || '').trim();
+            
+            if (processingStatusInput && !VALID_PROCESSING_STATUSES.has(processingStatusInput)) {
+              invalidStatusCount++;
+            }
+            if (overallStatusInput && !VALID_OVERALL_STATUSES.has(overallStatusInput)) {
+              invalidStatusCount++;
+            }
+          });
+
+          setRequests([...requests, ...newRequests]);
+          
+          if (invalidStatusCount > 0) {
+            message.warning(
+              `${newRequests.length} records imported. âš ï¸ Warning: ${invalidStatusCount} invalid status value(s) found - defaults applied. Check browser console for details.`
+            );
+          } else {
+            message.success(`${newRequests.length} requests imported successfully`);
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : 'Error parsing file';
+          message.error(`Error: ${errorMsg}. Please check the format.`);
+        }
+      };
+
+      reader.onerror = () => {
+        message.error('Failed to read file');
+      };
+
+      reader.readAsBinaryString(file);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Upload error';
+      message.error(`Error: ${errorMsg}`);
+    }
+    return false;
+  }, [requests.length]);
+
+  const downloadTemplate = useCallback(() => {
+    try {
+      const template = [
+        {
+          'S.No': '1',
+          'Beeline ID': 'BEE001',
+          'Description': 'Resource allocation request for Java developer',
+          'Raised by': 'John Doe',
+          'Request Raised': '15/01/2024',
+          'Account Anchor': 'Jane Smith',
+          'Processing Status': 'Accepted by Staffing Team',
+          'Updated on': '15/01/2024',
+          'Overall Status': 'In Progress',
+        },
+      ];
+
+      const worksheet = XLSX.utils.json_to_sheet(template);
+      worksheet['!cols'] = [
+        { wch: 8 },
+        { wch: 12 },
+        { wch: 40 },
+        { wch: 15 },
+        { wch: 15 },
+        { wch: 20 },
+        { wch: 25 },
+        { wch: 15 },
+        { wch: 18 },
+      ];
+
+      // Create reference sheet with valid status values
+      const referenceData = [
+        { Category: 'Processing Status', 'Valid Values': '' },
+        ...PROCESSING_STATUS_DISPLAY.map(val => ({ Category: 'Processing Status', 'Valid Values': val })),
+        { Category: '', 'Valid Values': '' },
+        { Category: 'Overall Status', 'Valid Values': '' },
+        ...OVERALL_STATUS_DISPLAY.map(val => ({ Category: 'Overall Status', 'Valid Values': val })),
+      ];
+
+      const referenceSheet = XLSX.utils.json_to_sheet(referenceData);
+      referenceSheet['!cols'] = [
+        { wch: 20 },
+        { wch: 30 },
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Requests');
+      XLSX.utils.book_append_sheet(workbook, referenceSheet, 'Valid Values');
+      XLSX.writeFile(workbook, 'Request_Template.xlsx');
+      message.success('Template downloaded successfully');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Download error';
+      message.error(`Error: ${errorMsg}`);
+    }
+  }, []);
+
+  const handleAddNew = useCallback(() => {
+    form.resetFields();
+    setEditingRequest(null);
+    setEditDrawer(true);
+  }, [form]);
+
+  const handleEdit = useCallback((request: ClientRequest | null) => {
+    if (!request) return;
+
+    setEditingRequest(request);
+    form.setFieldsValue({
+      sno: request.sno || '',
+      beelineId: request.beelineId || '',
+      description: request.description || '',
+      raisedBy: request.raisedBy || '',
+      requestRaised: request.requestRaised || '',
+      accountAnchorAssigned: request.accountAnchorAssigned || '',
+      processingStatus: request.processingStatus || 'accepted_staffing',
+      updatedOn: request.updatedOn || '',
+      overallStatus: request.overallStatus || 'not_started',
+    });
+    setEditDrawer(true);
+  }, [form]);
+
+  const handleSaveEdit = useCallback(
+    async (values: any) => {
+      try {
+        if (!values || typeof values !== 'object') {
+          message.error('Invalid form data');
+          return;
+        }
+
+        // Get current date in DD/MM/YYYY format
+        const today = new Date();
+        const todayFormatted = formatDateToDDMMYYYY(today);
+
+        if (editingRequest && editingRequest.key) {
+          setRequests(
+            requests.map((r) =>
+              r.key === editingRequest.key
+                ? {
+                    ...r,
+                    beelineId: String(values.beelineId || ''),
+                    description: String(values.description || ''),
+                    raisedBy: String(values.raisedBy || ''),
+                    requestRaised: String(values.requestRaised || ''),
+                    accountAnchorAssigned: String(values.accountAnchorAssigned || ''),
+                    processingStatus: String(values.processingStatus || 'accepted_staffing') as any,
+                    updatedOn: todayFormatted,
+                    overallStatus: String(values.overallStatus || 'not_started') as any,
+                  }
+                : r
+            )
+          );
+          message.success('Request updated successfully');
+        } else {
+          const newKey = String(requests.length + 1);
+          const newRequest: ClientRequest = {
+            key: newKey,
+            sno: newKey,
+            beelineId: String(values.beelineId || ''),
+            description: String(values.description || ''),
+            raisedBy: String(values.raisedBy || ''),
+            requestRaised: String(values.requestRaised || ''),
+            accountAnchorAssigned: String(values.accountAnchorAssigned || ''),
+            processingStatus: String(values.processingStatus || 'accepted_staffing') as any,
+            updatedOn: todayFormatted,
+            overallStatus: String(values.overallStatus || 'not_started') as any,
+          };
+
+          setRequests([...requests, newRequest]);
+          message.success('Request added successfully');
+        }
+
+        setEditDrawer(false);
+        form.resetFields();
+        setEditingRequest(null);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Error saving';
+        message.error(`Error: ${errorMsg}`);
+      }
+    },
+    [editingRequest, requests, form]
+  );
+
+  const handleDelete = useCallback((record: ClientRequest) => {
+    Modal.confirm({
+      title: 'Delete Request',
+      content: `Are you sure you want to delete request ${record.beelineId}?`,
+      okText: 'Yes',
+      cancelText: 'No',
+      onOk() {
+        setRequests(requests.filter((r) => r.key !== record.key));
+        message.success('Request deleted successfully');
+      },
+    });
+  }, [requests]);
+
+  const getFilteredRequests = useCallback(() => {
+    return requests.filter((request) => {
+      if (filters.sno && !request.sno.includes(filters.sno)) return false;
+      if (filters.beelineId && !request.beelineId.toLowerCase().includes(filters.beelineId.toLowerCase())) return false;
+      if (filters.description && !request.description.toLowerCase().includes(filters.description.toLowerCase())) return false;
+      if (filters.raisedBy && !request.raisedBy.toLowerCase().includes(filters.raisedBy.toLowerCase())) return false;
+      if (filters.accountAnchorAssigned && !request.accountAnchorAssigned.toLowerCase().includes(filters.accountAnchorAssigned.toLowerCase())) return false;
+      if (filters.processingStatus && request.processingStatus !== filters.processingStatus) return false;
+      if (filters.overallStatus && request.overallStatus !== filters.overallStatus) return false;
+      return true;
+    });
+  }, [requests, filters]);
+
+  const handleClearFilters = useCallback(() => {
+    setFilters(DEFAULT_FILTERS);
+  }, []);
+
+  const isFilterActive = useCallback(() => {
+    return (
+      filters.sno !== '' ||
+      filters.beelineId !== '' ||
+      filters.description !== '' ||
+      filters.raisedBy !== '' ||
+      filters.accountAnchorAssigned !== '' ||
+      filters.processingStatus !== '' ||
+      filters.overallStatus !== ''
+    );
+  }, [filters]);
+
+  const getProcessingStatusLabel = (value: ProcessingStatusType): string => {
+    const option = PROCESSING_STATUS_OPTIONS.find(opt => opt.value === value);
+    return option?.label || String(value);
+  };
+
+  const getOverallStatusLabel = (value: OverallStatusType): string => {
+    const option = OVERALL_STATUS_OPTIONS.find(opt => opt.value === value);
+    return option?.label || String(value);
+  };
+
+  const getOverallStatusColor = (value: OverallStatusType): string => {
+    switch (value) {
+      case 'completed':
+        return '#1a5f12';
+      case 'in_progress':
+        return '#d48806';
+      case 'blocked':
+        return '#b42318';
+      case 'cancelled':
+        return '#434343';
+      case 'not_started':
+      default:
+        return '#0050b3';
+    }
+  };
+
+  const getOverallStatusBackgroundColor = (value: OverallStatusType): string => {
+    switch (value) {
+      case 'completed':
+        return '#f6ffed';
+      case 'in_progress':
+        return '#fffbe6';
+      case 'blocked':
+        return '#fff1f0';
+      case 'cancelled':
+        return '#fafafa';
+      case 'not_started':
+      default:
+        return '#f0f5ff';
+    }
+  };
+
+  const handleQuickEdit = useCallback((record: ClientRequest, field: string, value: any) => {
+    const today = new Date();
+    const todayFormatted = formatDateToDDMMYYYY(today);
+
+    setRequests(
+      requests.map((r) =>
+        r.key === record.key
+          ? {
+              ...r,
+              [field]: value,
+              updatedOn: todayFormatted,
+            }
+          : r
+      )
+    );
+    message.success(`${field} updated successfully`);
+  }, [requests]);
+
+  const handleBulkStatusUpdate = useCallback(() => {
+    if ((bulkProcessingStatus === '' && bulkOverallStatus === '') || selectedRowKeys.length === 0) {
+      message.warning('Please select records and at least one status');
+      return;
+    }
+
+    const today = new Date();
+    const todayFormatted = formatDateToDDMMYYYY(today);
+
+    setRequests(
+      requests.map((r) =>
+        selectedRowKeys.includes(r.key)
+          ? {
+              ...r,
+              ...(bulkProcessingStatus && { processingStatus: bulkProcessingStatus as ProcessingStatusType }),
+              ...(bulkOverallStatus && { overallStatus: bulkOverallStatus as OverallStatusType }),
+              updatedOn: todayFormatted,
+            }
+          : r
+      )
+    );
+
+    setSelectedRowKeys([]);
+    setBulkActionDrawer(false);
+    setBulkProcessingStatus('');
+    setBulkOverallStatus('');
+    message.success(`${selectedRowKeys.length} record(s) updated successfully`);
+  }, [requests, selectedRowKeys, bulkProcessingStatus, bulkOverallStatus]);
+
+  const handleBulkDelete = useCallback(() => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('Please select records to delete');
+      return;
+    }
+
+    Modal.confirm({
+      title: 'Delete Records',
+      content: `Are you sure you want to delete ${selectedRowKeys.length} record(s)? This action cannot be undone.`,
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk() {
+        setRequests(requests.filter((r) => !selectedRowKeys.includes(r.key)));
+        setSelectedRowKeys([]);
+        message.success(`${selectedRowKeys.length} record(s) deleted successfully`);
+      },
+    });
+  }, [requests, selectedRowKeys]);
+
+  const columns = useMemo<ColumnsType<ClientRequest>>(
+    () => [
+      {
+        title: 'S.No',
+        dataIndex: 'sno',
+        key: 'sno',
+        width: 60,
+        render: (_, __, index) => <span>{index + 1}</span>,
+      },
+      {
+        title: 'Beeline ID',
+        dataIndex: 'beelineId',
+        key: 'beelineId',
+        width: 120,
+        render: (value) => (
+          <div style={{ fontWeight: 600, color: '#001529' }}>
+            {String(value || '')}
+          </div>
+        ),
+      },
+      {
+        title: 'Description',
+        dataIndex: 'description',
+        key: 'description',
+        width: 120,
+        ellipsis: true,
+        render: (value) => (
+          <div 
+            style={{ cursor: 'pointer', color: '#1890FF' }}
+            onClick={() => {
+              Modal.info({
+                title: 'Description',
+                content: value,
+                width: 600,
+              });
+            }}
+          >
+            <Tooltip title={value}>
+              <span>{String(value || '').substring(0, 30)}{String(value || '').length > 30 ? '...' : ''}</span>
+            </Tooltip>
+          </div>
+        ),
+      },
+      {
+        title: 'Raised by',
+        dataIndex: 'raisedBy',
+        key: 'raisedBy',
+        width: 150,
+        render: (value) => <span>{String(value || '')}</span>,
+      },
+      {
+        title: 'Request Raised',
+        dataIndex: 'requestRaised',
+        key: 'requestRaised',
+        width: 130,
+        render: (value) => <span>{String(value || '')}</span>,
+      },
+      {
+        title: 'Account Anchor',
+        dataIndex: 'accountAnchorAssigned',
+        key: 'accountAnchorAssigned',
+        width: 180,
+        render: (text, record) => {
+          const isEditing = editingCell?.rowKey === record.key && editingCell?.field === 'accountAnchorAssigned';
+          return isEditing ? (
+            <Input
+              value={text}
+              onChange={(e) => {
+                handleQuickEdit(record, 'accountAnchorAssigned', e.target.value);
+              }}
+              onBlur={() => setEditingCell(null)}
+              autoFocus
+              size="small"
+              placeholder="Enter name"
+            />
+          ) : (
+            <span 
+              onMouseEnter={(e) => {
+                (e.target as HTMLElement).style.textDecoration = 'underline';
+                (e.target as HTMLElement).style.fontWeight = '500';
+              }}
+              onMouseLeave={(e) => {
+                (e.target as HTMLElement).style.textDecoration = 'none';
+                (e.target as HTMLElement).style.fontWeight = 'normal';
+              }}
+              onClick={() => setEditingCell({ rowKey: record.key, field: 'accountAnchorAssigned' })}
+              style={{ cursor: 'pointer', color: '#262626' }}
+              title="Click to edit"
+            >
+              {text || '-'}
+            </span>
+          );
+        },
+      },
+      {
+        title: 'Processing Status',
+        dataIndex: 'processingStatus',
+        key: 'processingStatus',
+        width: 200,
+        render: (value, record) => {
+          const label = getProcessingStatusLabel(value);
+          const isEditing = editingCell?.rowKey === record.key && editingCell?.field === 'processingStatus';
+          return isEditing ? (
+            <Select
+              value={value}
+              onChange={(newValue) => {
+                handleQuickEdit(record, 'processingStatus', newValue);
+                setEditingCell(null);
+              }}
+              options={PROCESSING_STATUS_OPTIONS}
+              size="small"
+              style={{ width: '100%' }}
+              autoFocus
+            />
+          ) : (
+            <span 
+              onMouseEnter={(e) => {
+                (e.target as HTMLElement).style.textDecoration = 'underline';
+                (e.target as HTMLElement).style.fontWeight = '500';
+              }}
+              onMouseLeave={(e) => {
+                (e.target as HTMLElement).style.textDecoration = 'none';
+                (e.target as HTMLElement).style.fontWeight = 'normal';
+              }}
+              onClick={() => setEditingCell({ rowKey: record.key, field: 'processingStatus' })}
+              style={{ cursor: 'pointer', color: '#262626' }}
+              title="Click to edit"
+            >
+              {label}
+            </span>
+          );
+        },
+      },
+      {
+        title: 'Updated on',
+        dataIndex: 'updatedOn',
+        key: 'updatedOn',
+        width: 130,
+        render: (value) => <span>{String(value || '')}</span>,
+      },
+      {
+        title: 'Overall Status',
+        dataIndex: 'overallStatus',
+        key: 'overallStatus',
+        width: 160,
+        render: (value, record) => {
+          const textColor = getOverallStatusColor(value);
+          const isEditing = editingCell?.rowKey === record.key && editingCell?.field === 'overallStatus';
+          const label = getOverallStatusLabel(value);
+          
+          const getBackgroundColor = (color: string): string => {
+            const colorMap: Record<string, string> = {
+              '#1a5f12': '#f6ffed',
+              '#d48806': '#fffbe6',
+              '#b42318': '#fff1f0',
+              '#434343': '#fafafa',
+              '#0050b3': '#f0f5ff',
+            };
+            return colorMap[color] || '#fff';
+          };
+          
+          return isEditing ? (
+            <Select
+              value={value}
+              onChange={(newValue) => {
+                handleQuickEdit(record, 'overallStatus', newValue);
+                setEditingCell(null);
+              }}
+              options={OVERALL_STATUS_OPTIONS}
+              size="small"
+              style={{ width: '100%' }}
+              autoFocus
+            />
+          ) : (
+            <span 
+              onMouseEnter={(e) => {
+                (e.target as HTMLElement).style.textDecoration = 'underline';
+                (e.target as HTMLElement).style.fontWeight = '600';
+              }}
+              onMouseLeave={(e) => {
+                (e.target as HTMLElement).style.textDecoration = 'none';
+                (e.target as HTMLElement).style.fontWeight = '500';
+              }}
+              onClick={() => setEditingCell({ rowKey: record.key, field: 'overallStatus' })}
+              style={{ 
+                cursor: 'pointer', 
+                color: textColor, 
+                fontWeight: 500,
+                padding: '4px 8px',
+                backgroundColor: getBackgroundColor(textColor),
+                borderRadius: '4px',
+                display: 'inline-block'
+              }}
+              title="Click to edit"
+            >
+              {label}
+            </span>
+          );
+        },
+      },
+      {
+        title: 'Action',
+        key: 'action',
+        width: 100,
+        fixed: 'right' as const,
+        render: (_, record) => {
+          if (!record) return null;
+          return (
+            <Space size="small">
+              <Button
+                type="text"
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => handleEdit(record)}
+                style={{ color: '#1890FF' }}
+                title="Edit"
+              />
+              <Button
+                type="text"
+                size="small"
+                icon={<DeleteOutlined />}
+                onClick={() => handleDelete(record)}
+                style={{ color: '#ff4d4f' }}
+                title="Delete"
+              />
+            </Space>
+          );
+        },
+      },
+    ],
+    [handleEdit, handleDelete]
+  );
+
+  const displayColumns = useMemo(
+    () => columns.filter((col) => !col.key || visibleColumns.has(col.key as string)),
+    [columns, visibleColumns]
+  );
+
+  const filteredRequests = getFilteredRequests();
+
+  return (
+    <div style={{ minHeight: '100vh', background: '#ffffff' }}>
+      {activeTab === 'requests' ? (
+        <div style={{ minHeight: '100vh', background: '#ffffff', padding: '16px 24px' }}>
+          <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+            <Tabs
+              items={[
+                {
+                  key: 'list',
+                  label: (
+                    <span>
+                      <AppstoreOutlined />
+                      Cards
+                    </span>
+                  ),
+                  children: (
+                    <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                        {/* Left side: showing info */}
+                        {requests.length > 0 && (
+                          <Text type="secondary" style={{ fontSize: '13px', display: 'flex', alignItems: 'center', color: '#595959' }}>
+                            Showing: <strong style={{ marginLeft: 4, color: '#262626' }}>{filteredRequests.length}</strong>
+                            {filteredRequests.length !== requests.length && (
+                              <span style={{ marginLeft: 4 }}>/ {requests.length}</span>
+                            )}
+                          </Text>
+                        )}
+
+                        {/* Right side: all controls */}
+                        <Space wrap style={{ gap: '8px' }} size={6}>
+                          {/* Bulk Upload - Always visible */}
+                          <Upload
+                            accept=".xlsx,.xls"
+                            beforeUpload={handleUpload}
+                            showUploadList={false}
+                          >
+                            <Tooltip title="Bulk Upload Requests">
+                              <Button 
+                                icon={<UploadOutlined />} 
+                                size="small"
+                                style={{ borderRadius: '6px' }}
+                              />
+                            </Tooltip>
+                          </Upload>
+
+                          {/* Template Download - Always visible */}
+                          <Tooltip title="Download Excel Template">
+                            <Button 
+                              icon={<DownloadOutlined />} 
+                              onClick={downloadTemplate}
+                              size="small"
+                              style={{ borderRadius: '6px' }}
+                            />
+                          </Tooltip>
+
+                          {requests.length > 0 && (
+                            <>
+                              {/* Cards View */}
+                              <Tooltip title="Card View">
+                                <Button
+                                  icon={<AppstoreOutlined />}
+                                  onClick={() => setViewMode('card')}
+                                  type={viewMode === 'card' ? 'primary' : 'default'}
+                                  size="small"
+                                  style={{ borderRadius: '6px' }}
+                                />
+                              </Tooltip>
+                              
+                              {/* Table View */}
+                              <Tooltip title="Table View">
+                                <Button
+                                  icon={<TableOutlined />}
+                                  onClick={() => setViewMode('table')}
+                                  type={viewMode === 'table' ? 'primary' : 'default'}
+                                  size="small"
+                                  style={{ borderRadius: '6px' }}
+                                />
+                              </Tooltip>
+                              
+                              {/* Columns */}
+                              <Tooltip title="Column Settings">
+                                <Button
+                                  icon={<ColumnHeightOutlined />}
+                                  onClick={() => setColumnDrawer(true)}
+                                  size="small"
+                                  style={{ borderRadius: '6px' }}
+                                />
+                              </Tooltip>
+                              
+                              {/* Filter */}
+                              <Tooltip title={isFilterActive() ? 'Filters Active - Click to modify' : 'Advanced Filters'}>
+                                <Button
+                                  icon={<FilterOutlined />}
+                                  onClick={() => setFilterDrawer(true)}
+                                  type={isFilterActive() ? 'primary' : 'default'}
+                                  size="small"
+                                  style={{ borderRadius: '6px' }}
+                                />
+                              </Tooltip>
+                              
+                              {isFilterActive() && (
+                                <Tooltip title="Clear All Filters">
+                                  <Button
+                                    icon={<CloseOutlined />}
+                                    onClick={handleClearFilters}
+                                    danger
+                                    type="text"
+                                    size="small"
+                                    style={{ borderRadius: '6px' }}
+                                  />
+                                </Tooltip>
+                              )}
+                            </>
+                          )}
+                          
+                          {/* Add Request */}
+                          <Tooltip title="Add New Request">
+                            <Button 
+                              icon={<PlusOutlined />} 
+                              type="default" 
+                              onClick={handleAddNew} 
+                              size="small"
+                              style={{ borderRadius: '6px', fontSize: '11px', color: '#262626', borderColor: '#d9d9d9' }}
+                            >
+                              Add
+                            </Button>
+                          </Tooltip>
+                        </Space>
+                      </div>
+
+                      {requests.length === 0 ? (
+                        <div
+                          style={{
+                            background: '#fff',
+                            borderRadius: '8px',
+                            padding: 60,
+                            textAlign: 'center',
+                          }}
+                        >
+                          <Text type="secondary">
+                            No requests yet. Upload a file or add a new request to get started.
+                          </Text>
+                        </div>
+                      ) : (
+                        <>
+                          {selectedRowKeys.length > 0 && (
+                            <div style={{ 
+                              background: '#f0f2f5', 
+                              padding: '12px 16px', 
+                              borderRadius: '8px', 
+                              marginBottom: '12px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}>
+                              <Text>{selectedRowKeys.length} record(s) selected</Text>
+                              <Space size="small">
+                                <Button
+                                  type="primary"
+                                  size="small"
+                                  onClick={() => setBulkActionDrawer(true)}
+                                  icon={<EditOutlined />}
+                                >
+                                  Update Status
+                                </Button>
+                                <Button
+                                  danger
+                                  size="small"
+                                  onClick={handleBulkDelete}
+                                  icon={<DeleteOutlined />}
+                                >
+                                  Delete
+                                </Button>
+                                <Button
+                                  type="text"
+                                  size="small"
+                                  onClick={() => setSelectedRowKeys([])}
+                                >
+                                  Clear Selection
+                                </Button>
+                              </Space>
+                            </div>
+                          )}
+                          
+                          {viewMode === 'table' ? (
+                            <div className="client-m-table">
+                              <Table<ClientRequest>
+                                dataSource={filteredRequests}
+                                columns={displayColumns}
+                                pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: ['15', '20', '30', '50'] }}
+                                scroll={{ x: 'max-content' }}
+                                size="small"
+                                style={{ background: '#fff', borderRadius: '6px', overflow: 'hidden' }}
+                                locale={{ emptyText: 'No requests match your filters' }}
+                                rowSelection={{
+                                  selectedRowKeys,
+                                  onChange: (newSelectedRowKeys) => setSelectedRowKeys(newSelectedRowKeys),
+                                  type: 'checkbox',
+                                }}
+                              />
+                            </div>
+                          ) : (
+                            <div 
+                              style={{ marginBottom: '16px' }} 
+                              onClick={(e) => {
+                                // Only clear selection if clicking on the background, not on cards
+                                if (e.target === e.currentTarget) {
+                                  setSelectedRowKeys([]);
+                                }
+                              }}
+                            >
+                              <Row gutter={[16, 16]}>
+                                {filteredRequests.map((request) => (
+                                  <Col key={request.sno} xs={24} sm={24} md={12} lg={8}>
+                                    <Card
+                                      hoverable
+                                      onClick={() => {
+                                        if (selectedRowKeys.includes(request.sno)) {
+                                          setSelectedRowKeys(selectedRowKeys.filter(key => key !== request.sno));
+                                        } else {
+                                          setSelectedRowKeys([...selectedRowKeys, request.sno]);
+                                        }
+                                      }}
+                                      style={{
+                                        height: '100%',
+                                        borderRadius: '8px',
+                                        border: selectedRowKeys.includes(request.sno) ? '2px solid #1a1a1a' : '1px solid #d9d9d9',
+                                        cursor: 'pointer',
+                                        backgroundColor: selectedRowKeys.includes(request.sno) ? '#f5f5f5' : '#ffffff',
+                                        boxShadow: selectedRowKeys.includes(request.sno) ? '0 3px 10px rgba(0, 0, 0, 0.1)' : '0 1px 4px rgba(0, 0, 0, 0.08)',
+                                        transition: 'all 0.3s ease',
+                                        padding: '12px'
+                                      }}
+                                      bodyStyle={{ padding: 0 }}
+                                    >
+                                      <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                                        {/* Header: Beeline ID + Account Anchor + Actions Menu */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
+                                          <div style={{ flex: 1, minWidth: 0 }}>
+                                            <Text style={{ fontSize: '14px', fontWeight: '700', color: '#1a1a1a', display: 'block' }}>
+                                              {request.beelineId || 'No ID'}
+                                            </Text>
+                                            <Text style={{ fontSize: '12px', color: '#595959', display: 'block', marginTop: '2px' }}>
+                                              {request.raisedBy || '-'}
+                                            </Text>
+                                          </div>
+                                          <Text style={{ fontSize: '11px', color: '#262626', fontWeight: '500', textAlign: 'right', minWidth: '80px' }}>
+                                            {request.accountAnchorAssigned || '-'}
+                                          </Text>
+                                          <Dropdown
+                                            menu={{
+                                              items: [
+                                                {
+                                                  key: 'edit',
+                                                  label: 'Edit',
+                                                  icon: <EditOutlined />,
+                                                  onClick: (e) => {
+                                                    e.domEvent.stopPropagation();
+                                                    handleEdit(request);
+                                                  },
+                                                },
+                                                {
+                                                  key: 'delete',
+                                                  label: 'Delete',
+                                                  icon: <DeleteOutlined />,
+                                                  danger: true,
+                                                  onClick: (e) => {
+                                                    e.domEvent.stopPropagation();
+                                                    handleDelete(request);
+                                                  },
+                                                },
+                                              ],
+                                            }}
+                                            trigger={['click']}
+                                          >
+                                            <Button
+                                              type="text"
+                                              size="small"
+                                              icon={<MoreOutlined />}
+                                              style={{ color: '#8c8c8c' }}
+                                              onClick={(e) => e.stopPropagation()}
+                                            />
+                                          </Dropdown>
+                                        </div>
+
+                                        <Divider style={{ margin: '6px 0' }} />
+
+                                        {/* Status Info - Left: Overall Status, Right: Processing Status */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                          <Text
+                                            style={{
+                                              backgroundColor: getOverallStatusBackgroundColor(request.overallStatus),
+                                              border: `1px solid ${getOverallStatusColor(request.overallStatus)}`,
+                                              color: getOverallStatusColor(request.overallStatus),
+                                              padding: '3px 8px',
+                                              fontSize: '11px',
+                                              fontWeight: '500',
+                                              borderRadius: '3px',
+                                              display: 'inline-block'
+                                            }}
+                                          >
+                                            {OVERALL_STATUS_DISPLAY_MAP[request.overallStatus] || request.overallStatus}
+                                          </Text>
+                                          <Text
+                                            style={{
+                                              color: '#262626',
+                                              fontSize: '11px',
+                                              fontStyle: 'italic',
+                                              textAlign: 'right'
+                                            }}
+                                          >
+                                            {PROCESSING_STATUS_DISPLAY_MAP[request.processingStatus] || request.processingStatus}
+                                          </Text>
+                                        </div>
+
+                                        {/* Description Preview */}
+                                        {request.description && (
+                                          <div
+                                            style={{
+                                              padding: '6px 8px',
+                                              backgroundColor: '#fafafa',
+                                              borderRadius: '4px',
+                                              cursor: 'pointer',
+                                              border: '1px solid #f0f0f0'
+                                            }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              const newExpanded = new Set(expandedDescriptions);
+                                              if (newExpanded.has(request.sno)) {
+                                                newExpanded.delete(request.sno);
+                                              } else {
+                                                newExpanded.add(request.sno);
+                                              }
+                                              setExpandedDescriptions(newExpanded);
+                                            }}
+                                          >
+                                            <Text
+                                              style={{
+                                                fontSize: '11px',
+                                                color: '#595959',
+                                                lineHeight: '1.4'
+                                              }}
+                                              ellipsis={!expandedDescriptions.has(request.sno) ? { rows: 2 } : false}
+                                            >
+                                              {request.description}
+                                            </Text>
+                                          </div>
+                                        )}
+
+                                        {/* Footer: Updated Date + Single Card Selection Options */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                          <Text style={{ fontSize: '10px', color: '#bfbfbf' }}>
+                                            Updated: {request.updatedOn || '-'}
+                                          </Text>
+                                          
+                                          {selectedRowKeys.length === 1 && selectedRowKeys.includes(request.sno) && (
+                                            <Space size={4} style={{ display: 'flex', gap: '4px' }}>
+                                              <Popover
+                                                content={
+                                                  <Space direction="vertical" size={4} style={{ width: '150px' }}>
+                                                    {OVERALL_STATUS_OPTIONS.map(status => (
+                                                      <Button
+                                                        key={status.value}
+                                                        type="text"
+                                                        size="small"
+                                                        onClick={() => {
+                                                          const updated = requests.map(r =>
+                                                            r.sno === request.sno ? { ...r, overallStatus: status.value as OverallStatusType, updatedOn: formatDateToDDMMYYYY(Date.now()) } : r
+                                                          );
+                                                          setRequests(updated);
+                                                        }}
+                                                        style={{ fontSize: '11px', justifyContent: 'flex-start', width: '100%', color: '#262626' }}
+                                                      >
+                                                        {status.label}
+                                                      </Button>
+                                                    ))}
+                                                  </Space>
+                                                }
+                                                trigger="click"
+                                                placement="topRight"
+                                              >
+                                                <Button 
+                                                  type="text" 
+                                                  size="small" 
+                                                  onClick={(e) => e.stopPropagation()}
+                                                  style={{ fontSize: '10px', color: '#595959', padding: '0 4px', height: 'auto' }}
+                                                >
+                                                  Status
+                                                </Button>
+                                              </Popover>
+                                              
+                                              <Divider type="vertical" style={{ margin: '0 2px', height: '14px' }} />
+                                              
+                                              <Button
+                                                type="text"
+                                                size="small"
+                                                danger
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  handleDelete(request);
+                                                }}
+                                                style={{ fontSize: '10px', color: '#ff4d4f', padding: '0 4px', height: 'auto' }}
+                                              >
+                                                Delete
+                                              </Button>
+                                              
+                                              <Divider type="vertical" style={{ margin: '0 2px', height: '14px' }} />
+                                              
+                                              <Button
+                                                type="text"
+                                                size="small"
+                                                icon={<CloseOutlined />}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  setSelectedRowKeys([]);
+                                                }}
+                                                style={{ fontSize: '10px', color: '#595959', padding: '0 4px', height: 'auto' }}
+                                              />
+                                            </Space>
+                                          )}
+                                        </div>
+                                      </Space>
+                                    </Card>
+                                  </Col>
+                                ))}
+                              </Row>
+
+                              {/* Bulk Operations Bar - Outside cards */}
+                              {selectedRowKeys.length > 1 && (
+                                <div style={{
+                                  marginTop: '16px',
+                                  padding: '12px 16px',
+                                  backgroundColor: '#fafafa',
+                                  borderRadius: '6px',
+                                  border: '1px solid #d9d9d9',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '16px'
+                                }}>
+                                  <Text style={{ fontSize: '12px', color: '#262626' }}>
+                                    <strong>{selectedRowKeys.length}</strong> cards selected
+                                  </Text>
+
+                                  <Space size={8} style={{ display: 'flex', gap: '8px' }}>
+                                    <Popover
+                                      content={
+                                        <Space direction="vertical" size={4} style={{ width: '180px' }}>
+                                          {OVERALL_STATUS_OPTIONS.map(status => (
+                                            <Button
+                                              key={status.value}
+                                              type="text"
+                                              size="small"
+                                              onClick={() => {
+                                                const updated = requests.map(r =>
+                                                  selectedRowKeys.includes(r.sno) 
+                                                    ? { ...r, overallStatus: status.value as OverallStatusType, updatedOn: formatDateToDDMMYYYY(Date.now()) } 
+                                                    : r
+                                                );
+                                                setRequests(updated);
+                                              }}
+                                              style={{ fontSize: '11px', justifyContent: 'flex-start', width: '100%', color: '#262626' }}
+                                            >
+                                              {status.label}
+                                            </Button>
+                                          ))}
+                                        </Space>
+                                      }
+                                      trigger="click"
+                                      placement="topRight"
+                                    >
+                                      <Button 
+                                        type="default"
+                                        size="small" 
+                                        style={{ fontSize: '11px', color: '#262626', borderColor: '#d9d9d9' }}
+                                      >
+                                        Update Status
+                                      </Button>
+                                    </Popover>
+
+                                    <Button
+                                      type="default"
+                                      size="small"
+                                      danger
+                                      onClick={() => {
+                                        Modal.confirm({
+                                          title: 'Delete Selected',
+                                          content: `Delete ${selectedRowKeys.length} selected requests?`,
+                                          okText: 'Delete',
+                                          cancelText: 'Cancel',
+                                          danger: true,
+                                          onOk: () => {
+                                            setRequests(requests.filter(r => !selectedRowKeys.includes(r.sno)));
+                                            setSelectedRowKeys([]);
+                                          },
+                                        });
+                                      }}
+                                      style={{ fontSize: '11px', color: '#ff4d4f', borderColor: '#ff4d4f' }}
+                                    >
+                                      Delete All
+                                    </Button>
+
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<CloseOutlined />}
+                                      onClick={() => setSelectedRowKeys([])}
+                                      style={{ fontSize: '11px', color: '#595959', padding: '0 8px', height: 'auto' }}
+                                    />
+                                  </Space>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </>
+                      </Space>
+                    ),
+                },
+                {
+                  key: 'insights',
+                  label: (
+                    <span>
+                      <BarChartOutlined />
+                      Insights
+                    </span>
+                  ),
+                  children: (
+                    <RequestInsights requests={requests} />
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </div>
+      ) : (
+        <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '24px' }}>
+          <div style={{ maxWidth: '1400px', margin: '0 auto', background: '#fff', borderRadius: '8px', padding: 24, textAlign: 'center' }}>
+            <Title level={4}>Connects Management</Title>
+            <Text type="secondary">
+              This section will contain client connection and relationship management features. Coming soon!
+            </Text>
+          </div>
+        </div>
+      )}
+
+      <Drawer
+        title={editingRequest ? 'Edit Request' : 'Add New Request'}
+        placement="right"
+        onClose={() => {
+          setEditDrawer(false);
+          form.resetFields();
+          setEditingRequest(null);
+        }}
+        open={editDrawer}
+        width={600}
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSaveEdit}
+        >
+          <Form.Item
+            name="beelineId"
+            label="Beeline ID"
+            rules={[{ required: true, message: 'Please enter Beeline ID' }]}
+          >
+            <Input placeholder="Enter Beeline ID" />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label="Description"
+            rules={[{ required: true, message: 'Please enter description' }]}
+          >
+            <Input.TextArea placeholder="Enter description" rows={2} />
+          </Form.Item>
+
+          <Form.Item
+            name="raisedBy"
+            label="Raised by"
+            rules={[{ required: true, message: 'Please enter who raised this request' }]}
+          >
+            <Input placeholder="Enter name" />
+          </Form.Item>
+
+          <Form.Item
+            name="requestRaised"
+            label="Request Raised (DD/MM/YYYY)"
+          >
+            <Input 
+              placeholder="DD/MM/YYYY" 
+              maxLength={10}
+              onChange={(e) => {
+                let value = e.target.value;
+                // Auto-format as user types
+                if (value.length === 2 && !value.includes('/')) {
+                  value = value + '/';
+                } else if (value.length === 5 && (value.match(/\//g) || []).length === 1) {
+                  value = value + '/';
+                }
+                e.target.value = value;
+              }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="accountAnchorAssigned"
+            label="Account Anchor Assigned"
+          >
+            <Input placeholder="Enter name" />
+          </Form.Item>
+
+          <Form.Item
+            name="processingStatus"
+            label="Processing Status"
+          >
+            <Select
+              placeholder="Select processing status"
+              options={PROCESSING_STATUS_OPTIONS}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="updatedOn"
+            label="Updated on (DD/MM/YYYY)"
+          >
+            <Input 
+              placeholder="DD/MM/YYYY" 
+              maxLength={10}
+              onChange={(e) => {
+                let value = e.target.value;
+                // Auto-format as user types
+                if (value.length === 2 && !value.includes('/')) {
+                  value = value + '/';
+                } else if (value.length === 5 && (value.match(/\//g) || []).length === 1) {
+                  value = value + '/';
+                }
+                e.target.value = value;
+              }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="overallStatus"
+            label="Overall Status"
+          >
+            <Select
+              placeholder="Select overall status"
+              options={OVERALL_STATUS_OPTIONS}
+            />
+          </Form.Item>
+
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block>
+              Save Request
+            </Button>
+          </Form.Item>
+        </Form>
+      </Drawer>
+
+      <Drawer
+        title="Column Visibility"
+        placement="right"
+        onClose={() => setColumnDrawer(false)}
+        open={columnDrawer}
+        width={300}
+      >
+        <Space direction="vertical" style={{ width: '100%' }}>
+          {Object.entries(COLUMN_LABELS)
+            .filter(([key]) => key !== 'action')
+            .map(([key, label]) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Checkbox
+                  checked={visibleColumns.has(key)}
+                  onChange={(e) => {
+                    const newVisible = new Set(visibleColumns);
+                    if (e.target.checked) {
+                      newVisible.add(key);
+                    } else {
+                      newVisible.delete(key);
+                    }
+                    setVisibleColumns(newVisible);
+                  }}
+                />
+                <label style={{ marginBottom: 0, cursor: 'pointer' }}>
+                  {label}
+                </label>
+              </div>
+            ))}
+        </Space>
+      </Drawer>
+
+      <Drawer
+        title="Filters"
+        placement="right"
+        onClose={() => setFilterDrawer(false)}
+        open={filterDrawer}
+        width={400}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              S.No
+            </Text>
+            <Input
+              placeholder="Filter by S.No..."
+              value={filters.sno}
+              onChange={(e) => setFilters({ ...filters, sno: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Beeline ID
+            </Text>
+            <Input
+              placeholder="Filter by Beeline ID..."
+              value={filters.beelineId}
+              onChange={(e) => setFilters({ ...filters, beelineId: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Description
+            </Text>
+            <Input
+              placeholder="Filter by description..."
+              value={filters.description}
+              onChange={(e) => setFilters({ ...filters, description: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Raised by
+            </Text>
+            <Input
+              placeholder="Filter by name..."
+              value={filters.raisedBy}
+              onChange={(e) => setFilters({ ...filters, raisedBy: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Account Anchor Assigned
+            </Text>
+            <Input
+              placeholder="Filter by anchor name..."
+              value={filters.accountAnchorAssigned}
+              onChange={(e) => setFilters({ ...filters, accountAnchorAssigned: e.target.value || '' })}
+              allowClear
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Processing Status
+            </Text>
+            <Select
+              placeholder="All statuses"
+              value={filters.processingStatus || undefined}
+              onChange={(value) => setFilters({ ...filters, processingStatus: value || '' })}
+              allowClear
+              options={PROCESSING_STATUS_OPTIONS}
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Overall Status
+            </Text>
+            <Select
+              placeholder="All overall statuses"
+              value={filters.overallStatus || undefined}
+              onChange={(value) => setFilters({ ...filters, overallStatus: value || '' })}
+              allowClear
+              options={OVERALL_STATUS_OPTIONS}
+            />
+          </div>
+
+          <Button
+            type="primary"
+            danger
+            block
+            onClick={handleClearFilters}
+          >
+            Reset Filters
+          </Button>
+        </Space>
+      </Drawer>
+
+      <Drawer
+        title="Bulk Update Status"
+        placement="right"
+        onClose={() => {
+          setBulkActionDrawer(false);
+          setBulkProcessingStatus('');
+          setBulkOverallStatus('');
+        }}
+        open={bulkActionDrawer}
+        width={400}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          <div>
+            <Text strong>Update status for {selectedRowKeys.length} record(s)</Text>
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Select Processing Status
+            </Text>
+            <Select
+              placeholder="Select processing status"
+              value={bulkProcessingStatus || undefined}
+              onChange={(value) => setBulkProcessingStatus(value)}
+              options={PROCESSING_STATUS_OPTIONS}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <div>
+            <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 8 }}>
+              Select Overall Status
+            </Text>
+            <Select
+              placeholder="Select overall status"
+              value={bulkOverallStatus || undefined}
+              onChange={(value) => setBulkOverallStatus(value)}
+              options={OVERALL_STATUS_OPTIONS}
+              style={{ width: '100%' }}
+            />
+          </div>
+
+          <Text type="warning" style={{ fontSize: '12px' }}>
+            Note: Selected statuses will be applied to all {selectedRowKeys.length} selected record(s)
+          </Text>
+
+          <Space style={{ width: '100%', gap: 8 }} direction="vertical">
+            <Button
+              type="primary"
+              block
+              onClick={handleBulkStatusUpdate}
+              disabled={bulkProcessingStatus === '' && bulkOverallStatus === ''}
+            >
+              Apply to Selected
+            </Button>
+            <Button
+              block
+              onClick={() => {
+                setBulkActionDrawer(false);
+                setBulkProcessingStatus('');
+                setBulkOverallStatus('');
+              }}
+            >
+              Cancel
+            </Button>
+          </Space>
+        </Space>
+      </Drawer>
+    </div>
+  );
+};
+
+export default ClientM;
+
+
+
+
+

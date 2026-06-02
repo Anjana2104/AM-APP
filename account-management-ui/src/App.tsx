@@ -3,15 +3,17 @@ import { useState } from 'react';
 import { AccountFinance } from './pages/AccountFinance';
 import ResourceManagement from './pages/ResourceMgmt';
 import { ResourceUtilization } from './pages/ResourceUtilization';
-import { DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined, RocketOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import ClientM from './pages/ClientM';
+import { DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined, RocketOutlined, ThunderboltOutlined, UserOutlined } from '@ant-design/icons';
 import type { ResourceRow } from './pages/ResourceMgmt';
 
 const { Header, Content } = Layout;
 const { Title } = Typography;
 
 export default function App() {
-  const [activeModule, setActiveModule] = useState<'home' | 'finance' | 'resources'>('home');
+  const [activeModule, setActiveModule] = useState<'home' | 'finance' | 'resources' | 'clientm'>('home');
   const [activeResourceTab, setActiveResourceTab] = useState<'details' | 'utilization' | 'upskilling'>('details');
+  const [activeClientMTab, setActiveClientMTab] = useState<'requests' | 'connects'>('requests');
   const [resources, setResources] = useState<ResourceRow[]>([]);
 
   if (activeModule === 'finance') {
@@ -72,6 +74,91 @@ export default function App() {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
           <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
             <AccountFinance />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (activeModule === 'clientm') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'row' }}>
+        <div style={{ background: '#001529', color: '#fff', width: '220px', padding: '20px 16px', minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+              <UserOutlined style={{ fontSize: '24px', color: '#FFA940' }} />
+              <Title level={4} style={{ color: '#fff', margin: 0, fontSize: '16px', fontWeight: 700, letterSpacing: '0.5px' }}>
+                ClientM
+              </Title>
+            </div>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.6)', marginLeft: '38px', fontWeight: 500 }}>
+              Client Management Hub
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 24, flex: 1 }}>
+            <button
+              onClick={() => setActiveClientMTab('requests')}
+              style={{
+                background: activeClientMTab === 'requests' ? '#1890FF' : 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                transition: 'background 0.3s',
+              }}
+            >
+              <FileTextOutlined style={{ fontSize: '16px' }} /> Requests
+            </button>
+            <button
+              onClick={() => setActiveClientMTab('connects')}
+              style={{
+                background: activeClientMTab === 'connects' ? '#1890FF' : 'rgba(255,255,255,0.08)',
+                color: '#fff',
+                border: 'none',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                textAlign: 'left',
+                cursor: 'pointer',
+                fontSize: '13px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                transition: 'background 0.3s',
+              }}
+            >
+              <TeamOutlined style={{ fontSize: '16px' }} /> Connects
+            </button>
+          </div>
+          
+          <button 
+            onClick={() => setActiveModule('home')}
+            style={{ 
+              width: '100%', 
+              background: '#fff', 
+              border: 'none', 
+              padding: '10px 12px', 
+              cursor: 'pointer', 
+              borderRadius: '6px', 
+              fontWeight: 600, 
+              fontSize: '13px',
+              color: '#001529',
+              marginTop: 'auto'
+            }}
+          >
+            ← Back to Dashboard
+          </button>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflow: 'auto', background: '#fff' }}>
+            <ClientM activeTab={activeClientMTab} />
           </div>
         </div>
       </div>
@@ -373,16 +460,26 @@ export default function App() {
               </button>
             </div>
 
-            {/* PLACEHOLDER FOR CLIENT MANAGEMENT */}
+            {/* CLIENT MANAGEMENT CARD */}
             <div 
+              onClick={() => setActiveModule('clientm')}
               style={{
                 padding: 32,
                 background: '#fff',
                 borderRadius: 12,
+                cursor: 'pointer',
                 boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
                 border: '3px solid #FFA940',
+                transition: 'all 0.3s',
                 minHeight: 280,
-                opacity: 0.5,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.boxShadow = '0 12px 24px rgba(255,169,64,0.15)';
+                e.currentTarget.style.transform = 'translateY(-8px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)';
+                e.currentTarget.style.transform = 'none';
               }}
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
@@ -395,26 +492,36 @@ export default function App() {
                     justifyContent: 'center',
                   }}
                 >
-                  👥
+                  <UserOutlined />
                 </div>
                 <div style={{ flex: 1 }}>
                   <h2 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#001529' }}>
                     Client Management
                   </h2>
                   <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0 0' }}>
-                    Coming Soon
+                    Requests & Connections
                   </p>
                 </div>
               </div>
 
               <div style={{ background: '#FFFBE6', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <p style={{ margin: 0, fontSize: '13px', color: '#666' }}>
-                  Client profiles, projects, requests, and communication management coming in the next release.
-                </p>
+                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: '1.8' }}>
+                  <li style={{ fontSize: '13px', color: '#333' }}>
+                    <strong>Request Management</strong> - Track and manage client requests
+                  </li>
+                  <li style={{ fontSize: '13px', color: '#333' }}>
+                    <strong>Bulk Upload</strong> - Import requests from Excel template
+                  </li>
+                  <li style={{ fontSize: '13px', color: '#333' }}>
+                    <strong>Status Tracking</strong> - Monitor request processing status
+                  </li>
+                  <li style={{ fontSize: '13px', color: '#333' }}>
+                    <strong>Connections Hub</strong> - Manage client relationships
+                  </li>
+                </ul>
               </div>
 
               <button 
-                disabled
                 style={{
                   width: '100%',
                   padding: '12px 16px',
@@ -422,13 +529,19 @@ export default function App() {
                   color: '#fff',
                   border: 'none',
                   borderRadius: 6,
-                  cursor: 'not-allowed',
+                  cursor: 'pointer',
                   fontWeight: 600,
                   fontSize: '14px',
-                  opacity: 0.5,
+                  transition: 'all 0.3s'
+                }}
+                onMouseEnter={(e) => {
+                  (e.target as HTMLButtonElement).style.background = '#FF7A45';
+                }}
+                onMouseLeave={(e) => {
+                  (e.target as HTMLButtonElement).style.background = '#FFA940';
                 }}
               >
-                Coming Soon
+                Manage Clients →
               </button>
             </div>
           </div>
