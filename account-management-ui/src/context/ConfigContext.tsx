@@ -1,5 +1,37 @@
 ﻿import React, { createContext, useContext, useState, useCallback } from 'react';
 
+// ── App Values (key:value store) ─────────────────────────────────────
+
+export interface AppValue {
+  key: string;
+  value: string;
+  description?: string;
+}
+
+const VALUES_STORAGE_KEY = 'eam_app_values';
+
+const DEFAULT_APP_VALUES: AppValue[] = [
+  {
+    key: 'SOW_STORAGE_URL',
+    value: 'https://rockwellautomation-my.sharepoint.com/:f:/r/personal/anjana_sharma_rockwellautomation_com/Documents/Anjana%20Sharma%20-%20All%20Important%20Documents/1.%20My%20work/RA%20Work/New%20folder?csf=1&web=1&e=Mchxcf',
+    description: 'SharePoint folder URL where SOW documents are stored',
+  },
+];
+
+function loadValuesFromStorage(): AppValue[] {
+  try {
+    const raw = localStorage.getItem(VALUES_STORAGE_KEY);
+    if (raw) return JSON.parse(raw) as AppValue[];
+  } catch { /* ignore */ }
+  return DEFAULT_APP_VALUES;
+}
+
+function saveValuesToStorage(values: AppValue[]) {
+  try { localStorage.setItem(VALUES_STORAGE_KEY, JSON.stringify(values)); } catch { /* ignore */ }
+}
+
+// ── Config types ──────────────────────────────────────────────────────
+
 export interface ConfigItem {
   value: string;
   label: string;
@@ -102,12 +134,19 @@ interface ConfigContextValue {
   editItem: (configId: string, itemValue: string, newLabel: string, newColor?: string) => void;
   reorderItems: (configId: string, items: ConfigItem[]) => void;
   updateLinks: (configId: string, linkedTo: string[]) => void;
+  // App Values (key:value)
+  appValues: AppValue[];
+  getAppValue: (key: string) => string | undefined;
+  setAppValue: (key: string, value: string, description?: string) => void;
+  addAppValue: (key: string, value: string, description?: string) => void;
+  removeAppValue: (key: string) => void;
 }
 
 const ConfigContext = createContext<ConfigContextValue | null>(null);
 
 export function ConfigProvider({ children }: { children: React.ReactNode }) {
   const [configs, setConfigs] = useState<ConfigType[]>(() => loadFromStorage());
+  const [appValues, setAppValues] = useState<AppValue[]>(() => loadValuesFromStorage());
 
   const persist = useCallback((next: ConfigType[]) => {
     setConfigs(next);
@@ -187,8 +226,38 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     persist(configs.map(c => c.id === configId ? { ...c, linkedTo } : c));
   }, [configs, persist]);
 
+  // ── App Values ──────────────────────────────────────────────────────
+  const persistValues = useCallback((next: AppValue[]) => {
+    setAppValues(next);
+    saveValuesToStorage(next);
+  }, []);
+
+  const getAppValue = useCallback((key: string) => {
+    return appValues.find(v => v.key === key)?.value;
+  }, [appValues]);
+
+  const setAppValue = useCallback((key: string, value: string, description?: string) => {
+    persistValues(appValues.map(v => v.key === key ? { ...v, value, ...(description !== undefined ? { description } : {}) } : v));
+  }, [appValues, persistValues]);
+
+  const addAppValue = useCallback((key: string, value: string, description?: string) => {
+    if (appValues.some(v => v.key === key)) {
+      setAppValue(key, value, description);
+      return;
+    }
+    persistValues([...appValues, { key, value, description: description ?? '' }]);
+  }, [appValues, persistValues, setAppValue]);
+
+  const removeAppValue = useCallback((key: string) => {
+    persistValues(appValues.filter(v => v.key !== key));
+  }, [appValues, persistValues]);
+
   return (
-    <ConfigContext.Provider value={{ configs, getConfig, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs, addItem, removeItem, editItem, reorderItems, updateLinks }}>
+    <ConfigContext.Provider value={{
+      configs, getConfig, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs,
+      addItem, removeItem, editItem, reorderItems, updateLinks,
+      appValues, getAppValue, setAppValue, addAppValue, removeAppValue,
+    }}>
       {children}
     </ConfigContext.Provider>
   );

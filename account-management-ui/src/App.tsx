@@ -1,14 +1,14 @@
-import { Typography, Tooltip } from 'antd';
+import { Tooltip } from 'antd';
 import { useState, useEffect } from 'react';
-import { AccountFinance } from './pages/AccountFinance';
-import ResourceManagement from './pages/ResourceMgmt';
-import { ResourceUtilization } from './pages/ResourceUtilization';
-import ClientM from './pages/ClientM';
-import { ClientRateCard } from './pages/ClientRateCard';
-import { ClientTeamHierarchy } from './pages/ClientTeamHierarchy';
-import { RAProcess } from './pages/RAProcess';
+import { FinanceManagement } from './pages/FinanceManagement';
+import ResourceInformation from './pages/ResourceInformation';
+import { EngagementMapping } from './pages/EngagementMapping';
+import RequestManagement from './pages/RequestManagement';
+import { RateCard } from './pages/RateCard';
+import { TeamHierarchy } from './pages/TeamHierarchy';
+import { InternalProcess } from './pages/InternalProcess';
 import { Configuration } from './pages/Configuration';
-import { ConfigProvider } from './context/ConfigContext';
+import { CodeGuide } from './pages/CodeGuide';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
@@ -17,7 +17,7 @@ import {
   CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined, SettingOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
-import type { ResourceRow } from './pages/ResourceMgmt';
+import type { ResourceRow } from './pages/ResourceInformation';
 
 type EAMPage =
   | 'executive_revenue'
@@ -30,11 +30,11 @@ type EAMPage =
   | 'information_ratecard'
   | 'information_teamhierarchy'
   | 'information_process'
+  | 'information_codeguide'
   | 'configuration';
 
 type EAMSection = 'executive' | 'resources' | 'clientmgmt' | 'information' | 'configuration';
 
-const { Title } = Typography;
 
 const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   executive_revenue: 'executive',
@@ -47,6 +47,7 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   information_ratecard: 'information',
   information_teamhierarchy: 'information',
   information_process: 'information',
+  information_codeguide: 'information',
   configuration: 'configuration',
 };
 
@@ -194,15 +195,16 @@ export default function App() {
 
     const renderContent = () => {
       switch (activePage) {
-        case 'executive_revenue':     return <AccountFinance />;
+        case 'executive_revenue':     return <FinanceManagement />;
         case 'executive_invoicing':   return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Invoicing Details — Coming Soon</div>;
-        case 'resources_info':        return <ResourceManagement onResourcesChange={setResources} />;
-        case 'resources_utilization': return <ResourceUtilization resources={resources} onUpdateResources={setResources} />;
+        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} />;
+        case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} />;
         case 'resources_upskilling':  return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Upskilling — Coming Soon</div>;
-        case 'clientmgmt_requests':   return <ClientM activeTab="requests" />;
-        case 'clientmgmt_connects':   return <RAProcess />;
-        case 'information_ratecard':      return <ClientRateCard />;
-        case 'information_teamhierarchy': return <ClientTeamHierarchy />;
+        case 'clientmgmt_requests':   return <RequestManagement activeTab="requests" />;
+        case 'clientmgmt_connects':   return <InternalProcess />;
+        case 'information_ratecard':      return <RateCard />;
+        case 'information_teamhierarchy': return <TeamHierarchy />;
+        case 'information_codeguide':        return <CodeGuide />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
         case 'configuration':             return <Configuration />;
         default: return null;
@@ -268,8 +270,8 @@ export default function App() {
                   { icon: <ThunderboltOutlined />, label: 'Resources', action: () => navigateTo('resources_info', 'resources'), active: activePage.startsWith('resources') },
                   { icon: <UserOutlined />, label: 'Request Management', action: () => navigateTo('clientmgmt_requests', 'clientmgmt'), active: activePage.startsWith('clientmgmt') },
                   { icon: <NodeIndexOutlined />, label: 'Internal Process', action: () => navigateTo('clientmgmt_connects', 'clientmgmt'), active: activePage === 'clientmgmt_connects' },
-                  { icon: <InfoCircleOutlined />, label: 'Information', action: () => navigateTo('information_ratecard', 'information'), active: activePage.startsWith('information') },
                   { icon: <SettingOutlined />, label: 'Configuration', action: () => navigateTo('configuration', 'configuration'), active: activePage === 'configuration' },
+                  { icon: <InfoCircleOutlined />, label: 'Knowledge Base', action: () => navigateTo('information_ratecard', 'information'), active: activePage.startsWith('information') },
                 ].map(item => (
                   <Tooltip key={item.label} title={item.label} placement="right">
                     <button onClick={item.action} style={{ background: item.active ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: item.active ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
@@ -334,18 +336,6 @@ export default function App() {
                 {/* ── SETTINGS & CONFIGURATION section ── */}
                 <SectionLabel label="Settings & Configuration" />
 
-                {/* Information */}
-                <SideNavGroup
-                  icon={<InfoCircleOutlined />} label="Information"
-                  active={activePage.startsWith('information')}
-                  expanded={isExp('information')}
-                  onToggle={() => toggleSection('information')}
-                >
-                  <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => { setActivePage('information_ratecard'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => { setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => { setActivePage('information_process'); setActiveModule('eam'); }} />
-                </SideNavGroup>
-
                 {/* Configuration */}
                 <SideNavGroup
                   icon={<SettingOutlined />} label="Configuration"
@@ -353,6 +343,19 @@ export default function App() {
                   expanded={isExp('configuration')}
                   onToggle={() => { navigateTo('configuration', 'configuration'); toggleSection('configuration'); }}
                 />
+
+                {/* Knowledge Base */}
+                <SideNavGroup
+                  icon={<InfoCircleOutlined />} label="Knowledge Base"
+                  active={activePage.startsWith('information')}
+                  expanded={isExp('information')}
+                  onToggle={() => toggleSection('information')}
+                >
+                  <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => { setActivePage('information_ratecard'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => { setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => { setActivePage('information_process'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Code Guide" active={activePage === 'information_codeguide'} onClick={() => { setActivePage('information_codeguide'); setActiveModule('eam'); }} />
+                </SideNavGroup>
 
               </div>
             )}

@@ -1,15 +1,15 @@
 ﻿import React, { useState } from 'react';
 import {
   Button, Input, Modal, Form, Tag, Space, Typography,
-  Divider, Tooltip, Popconfirm, Empty, message, Upload, Select, Checkbox,
+  Divider, Tooltip, Popconfirm, Empty, message, Upload, Select, Checkbox, Tabs,
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, EditOutlined, SettingOutlined,
   LockOutlined, SaveOutlined, CloseOutlined, UploadOutlined, DownloadOutlined,
-  LinkOutlined,
+  LinkOutlined, AppstoreOutlined, TableOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
-import { useConfig, ConfigItem, AVAILABLE_LINK_TARGETS } from '../context/ConfigContext';
+import { useConfig, ConfigItem, AVAILABLE_LINK_TARGETS, AppValue } from '../context/ConfigContext';
 
 const { Title, Text } = Typography;
 
@@ -19,6 +19,50 @@ const TAG_COLORS = [
 ];
 
 export function Configuration() {
+  return (
+    <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '24px' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
+        <div style={{ marginBottom: '20px' }}>
+          <Space align="center" style={{ marginBottom: 2 }}>
+            <SettingOutlined style={{ fontSize: '20px', color: '#1890ff' }} />
+            <Title level={4} style={{ margin: 0 }}>Configuration</Title>
+          </Space>
+          <div style={{ marginLeft: 2, marginTop: 2 }}>
+            <Text strong style={{ fontSize: '13px', color: '#595959', display: 'block' }}>
+              Manage Dropdown Values
+            </Text>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              Configure dropdowns and application key-value settings used across all modules.
+            </Text>
+          </div>
+        </div>
+        <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e8e8e8' }}>
+          <Tabs
+            defaultActiveKey="dropdowns"
+            size="small"
+            style={{ padding: '0 16px' }}
+            items={[
+              {
+                key: 'dropdowns',
+                label: <span><AppstoreOutlined /> Dropdowns</span>,
+                children: <DropdownsTab />,
+              },
+              {
+                key: 'values',
+                label: <span><TableOutlined /> Values</span>,
+                children: <ValuesTab />,
+              },
+            ]}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Dropdowns Tab ─────────────────────────────────────────────────────
+
+function DropdownsTab() {
   const { configs, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs, addItem, removeItem, editItem, updateLinks } = useConfig();
 
   const [selectedId, setSelectedId] = useState<string | null>(configs[0]?.id ?? null);
@@ -153,30 +197,12 @@ export function Configuration() {
   };
 
   return (
-    <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '24px' }}>
-      <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
-
-        {/* Page Header */}
-        <div style={{ marginBottom: '24px' }}>
-          <Space align="center" style={{ marginBottom: 2 }}>
-            <SettingOutlined style={{ fontSize: '20px', color: '#1890ff' }} />
-            <Title level={4} style={{ margin: 0 }}>Configuration</Title>
-          </Space>
-          <div style={{ marginLeft: 2, marginTop: 2 }}>
-            <Text strong style={{ fontSize: '13px', color: '#595959', display: 'block' }}>
-              Manage Dropdown Values
-            </Text>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              Add, edit or remove values used in dropdowns across the application. Changes reflect immediately in all linked modules.
-            </Text>
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
+    <div style={{ padding: '16px 0' }}>
+      <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
 
           {/* ─── Left panel: config type list ─────────────────── */}
           <div style={{ width: '300px', flexShrink: 0 }}>
-            <div style={{ background: '#fff', borderRadius: '10px', border: '1px solid #e8e8e8', overflow: 'hidden' }}>
+            <div style={{ background: '#fafafa', borderRadius: '10px', border: '1px solid #e8e8e8', overflow: 'hidden' }}>
               <div style={{ padding: '14px 16px', borderBottom: '1px solid #f0f0f0' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <Text strong style={{ fontSize: '13px' }}>Configuration Types</Text>
@@ -477,7 +503,6 @@ export function Configuration() {
             )}
           </div>
         </div>
-      </div>
 
       {/* ─── New Config Type Modal ────────────────────────────── */}
       <Modal
@@ -575,5 +600,188 @@ function LinksModal({ open, configName, currentLinks, onSave, onCancel }: LinksM
         </div>
       ))}
     </Modal>
+  );
+}
+
+// ── Values Tab ────────────────────────────────────────────────────────
+
+function ValuesTab() {
+  const { appValues, addAppValue, setAppValue, removeAppValue } = useConfig();
+
+  const [addKey, setAddKey] = useState('');
+  const [addVal, setAddVal] = useState('');
+  const [addDesc, setAddDesc] = useState('');
+
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editVal, setEditVal] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+
+  const handleAdd = () => {
+    const k = addKey.trim().toUpperCase().replace(/\s+/g, '_');
+    if (!k) { message.warning('Key is required'); return; }
+    if (!addVal.trim()) { message.warning('Value is required'); return; }
+    addAppValue(k, addVal.trim(), addDesc.trim());
+    setAddKey(''); setAddVal(''); setAddDesc('');
+    message.success('Value added');
+  };
+
+  const handleEditSave = () => {
+    if (!editingKey) return;
+    setAppValue(editingKey, editVal.trim(), editDesc.trim());
+    setEditingKey(null);
+    message.success('Value updated');
+  };
+
+  return (
+    <div style={{ padding: '16px 0' }}>
+      <div style={{ marginBottom: 16 }}>
+        <Text strong style={{ fontSize: '13px' }}>Application Key-Value Settings</Text>
+        <div style={{ marginTop: 2 }}>
+          <Text type="secondary" style={{ fontSize: '12px' }}>
+            Store configurable values (URLs, settings, flags) used across the application.
+            These are referenced by key in linked features.
+          </Text>
+        </div>
+      </div>
+
+      {/* Values list */}
+      {appValues.length === 0 ? (
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No values yet. Add one below." style={{ margin: '24px 0' }} />
+      ) : (
+        <div style={{ marginBottom: 16 }}>
+          {appValues.map((item: AppValue) => (
+            <div key={item.key} style={{
+              background: editingKey === item.key ? '#f0f7ff' : '#fafafa',
+              border: '1px solid #f0f0f0',
+              borderRadius: 8,
+              padding: '12px 16px',
+              marginBottom: 8,
+              transition: 'background 0.15s',
+            }}>
+              {editingKey === item.key ? (
+                <div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap', marginBottom: 8 }}>
+                    <div style={{ flex: '0 0 160px' }}>
+                      <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Key</div>
+                      <Input value={item.key} disabled size="small" style={{ fontFamily: 'monospace', fontSize: '11px' }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 200 }}>
+                      <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Value</div>
+                      <Input
+                        value={editVal}
+                        onChange={e => setEditVal(e.target.value)}
+                        size="small"
+                        style={{ fontSize: '12px' }}
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Description (optional)</div>
+                    <Input
+                      value={editDesc}
+                      onChange={e => setEditDesc(e.target.value)}
+                      size="small"
+                      style={{ fontSize: '12px' }}
+                      placeholder="What is this value used for?"
+                    />
+                  </div>
+                  <Space size={6}>
+                    <Button size="small" type="primary" icon={<SaveOutlined />} onClick={handleEditSave} style={{ borderRadius: 6 }}>Save</Button>
+                    <Button size="small" icon={<CloseOutlined />} onClick={() => setEditingKey(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                  </Space>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <Tag color="geekblue" style={{ fontFamily: 'monospace', fontSize: '11px', margin: 0 }}>{item.key}</Tag>
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#262626', wordBreak: 'break-all', marginBottom: item.description ? 4 : 0 }}>
+                      {item.value.startsWith('http') ? (
+                        <a href={item.value} target="_blank" rel="noopener noreferrer" style={{ color: '#1890ff', fontSize: '12px' }}>
+                          {item.value}
+                        </a>
+                      ) : item.value}
+                    </div>
+                    {item.description && (
+                      <Text type="secondary" style={{ fontSize: '11px' }}>{item.description}</Text>
+                    )}
+                  </div>
+                  <Space size={4}>
+                    <Tooltip title="Edit">
+                      <Button type="text" size="small" icon={<EditOutlined />}
+                        onClick={() => { setEditingKey(item.key); setEditVal(item.value); setEditDesc(item.description || ''); }}
+                        style={{ color: '#595959' }} />
+                    </Tooltip>
+                    <Popconfirm
+                      title="Remove this value?"
+                      description="Any features that reference this key will lose their configured value."
+                      onConfirm={() => { removeAppValue(item.key); message.success('Value removed'); }}
+                      okText="Remove" okButtonProps={{ danger: true }}
+                    >
+                      <Tooltip title="Delete">
+                        <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                      </Tooltip>
+                    </Popconfirm>
+                  </Space>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Divider style={{ margin: '16px 0' }} />
+
+      {/* Add new value */}
+      <div style={{ background: '#f9f9f9', borderRadius: 8, padding: '14px 16px', border: '1px dashed #d9d9d9' }}>
+        <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
+          <PlusOutlined style={{ marginRight: 6, color: '#1890ff' }} />
+          Add New Value
+        </Text>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+          <div style={{ flex: '0 0 160px' }}>
+            <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Key</div>
+            <Input
+              placeholder="e.g. MY_SETTING"
+              value={addKey}
+              onChange={e => setAddKey(e.target.value.toUpperCase().replace(/\s+/g, '_'))}
+              size="small"
+              style={{ fontFamily: 'monospace', fontSize: '11px' }}
+            />
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Value</div>
+            <Input
+              placeholder="e.g. https://... or any setting value"
+              value={addVal}
+              onChange={e => setAddVal(e.target.value)}
+              onPressEnter={handleAdd}
+              size="small"
+              style={{ fontSize: '12px' }}
+            />
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Description (optional)</div>
+          <Input
+            placeholder="What is this value used for?"
+            value={addDesc}
+            onChange={e => setAddDesc(e.target.value)}
+            size="small"
+            style={{ fontSize: '12px' }}
+          />
+        </div>
+        <Button
+          type="primary" size="small" icon={<PlusOutlined />}
+          onClick={handleAdd}
+          disabled={!addKey.trim() || !addVal.trim()}
+          style={{ borderRadius: 6 }}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
   );
 }

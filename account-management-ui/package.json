@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "server": "cd server && node index.js",
+    "dev:full": "npm run dev"
   },
   "devDependencies": {
     "vite": "^8.0.12"
