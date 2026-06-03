@@ -153,8 +153,8 @@ function OrgNode({ node, all, depth }: OrgNodeProps) {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────
-export function ClientTeamHierarchy() {
+// ─── Client Hierarchy (inner component) ───────────────────────────────────
+export function ClientHierarchyInner() {
   const [stakeholders, setStakeholders] = useState<Stakeholder[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -463,35 +463,194 @@ export function ClientTeamHierarchy() {
 
   // ── Main render ────────────────────────────────────────────────────────
   return (
+    <div style={{ background: '#fff', borderRadius: 10, padding: '0 20px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+      <Tabs
+        defaultActiveKey="stakeholders"
+        tabBarStyle={{ marginBottom: 16, paddingTop: 4 }}
+        items={[
+          {
+            key: 'stakeholders',
+            label: <span style={{ fontSize: '12px' }}>👥 Add Stakeholder</span>,
+            children: stakeholdersContent,
+          },
+          {
+            key: 'diagram',
+            label: <span style={{ fontSize: '12px' }}>🗂 Hierarchy Diagram</span>,
+            children: diagramContent,
+          },
+        ]}
+      />
+      {modal}
+    </div>
+  );
+}
+
+// ─── RA Team Hierarchy (reuses same logic) ────────────────────────────────
+function RATeamHierarchy() {
+  const [stakeholders, setStakeholders] = useState<Stakeholder[]>([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form] = Form.useForm();
+
+  const roots = useMemo(() => stakeholders.filter(s => !s.reportingTo), [stakeholders]);
+
+  const handleSave = () => {
+    form.validateFields().then(values => {
+      const id = editingId || `ra_${Date.now()}`;
+      setStakeholders(prev => {
+        if (editingId) return prev.map(s => s.id === editingId ? { ...s, ...values } : s);
+        return [...prev, { id, ...values, reportingTo: values.reportingTo || null }];
+      });
+      form.resetFields();
+      setModalOpen(false);
+      setEditingId(null);
+    });
+  };
+
+  const handleEdit = (record: Stakeholder) => { setEditingId(record.id); form.setFieldsValue({ ...record, reportingTo: record.reportingTo || undefined }); setModalOpen(true); };
+  const handleDelete = (id: string) => setStakeholders(prev => prev.filter(s => s.id !== id).map(s => s.reportingTo === id ? { ...s, reportingTo: null } : s));
+  const handleAdd = () => { setEditingId(null); form.resetFields(); setModalOpen(true); };
+
+  const hStyle = { fontSize: '11px', fontWeight: 700 as const };
+  const tableColumns = [
+    { title: 'S.No.', width: 55, render: (_: any, __: any, i: number) => i + 1, onHeaderCell: () => ({ style: hStyle }) },
+    { title: 'Name', dataIndex: 'name', key: 'name', onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ fontWeight: 600, fontSize: '12px' }}>{v}</span> },
+    { title: 'Title / Role', dataIndex: 'title', key: 'title', onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ fontSize: '12px' }}>{v}</span> },
+    { title: 'Department', dataIndex: 'department', key: 'department', onHeaderCell: () => ({ style: hStyle }), render: (v: string) => { const c = DEPT_COLORS[v] || '#8c8c8c'; return <Tag color={c} style={{ fontSize: '11px' }}>{v}</Tag>; } },
+    { title: 'Reports To', dataIndex: 'reportingTo', key: 'reportingTo', onHeaderCell: () => ({ style: hStyle }), render: (id: string | null) => { const mgr = stakeholders.find(s => s.id === id); return mgr ? <span style={{ fontSize: '12px', color: '#1890ff' }}>{mgr.name}</span> : <span style={{ fontSize: '11px', color: '#8c8c8c' }}>— (Top level)</span>; } },
+    { title: 'Email', dataIndex: 'email', key: 'email', onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ fontSize: '11px', color: '#595959' }}>{v || '—'}</span> },
+    { title: 'Responsibility', dataIndex: 'responsibility', key: 'responsibility', onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ fontSize: '11px', color: '#595959' }}>{v || '—'}</span> },
+    { title: 'Actions', key: 'actions', width: 80, onHeaderCell: () => ({ style: hStyle }), render: (_: any, record: Stakeholder) => (
+      <Space size={4}>
+        <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<EditOutlined />} size="small" onClick={() => handleEdit(record)} style={{ borderRadius: 6 }} /></Tooltip>
+        <Popconfirm title="Remove this member?" onConfirm={() => handleDelete(record.id)} okText="Yes" cancelText="No">
+          <Tooltip title="Delete"><Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} /></Tooltip>
+        </Popconfirm>
+      </Space>
+    )},
+  ];
+
+  const handleDownloadTemplate = () => {
+    const sample = [
+      { 'Name': 'Priya Sharma', 'Title / Role': 'Account Manager', 'Department': 'Management', 'Reporting Manager Name': '', 'Email': 'priya@ra.com', 'Responsibility': 'Account oversight' },
+      { 'Name': 'Rahul Gupta', 'Title / Role': 'Senior Engineer', 'Department': 'Engineering', 'Reporting Manager Name': 'Priya Sharma', 'Email': 'rahul@ra.com', 'Responsibility': 'Delivery' },
+    ];
+    const ws = XLSX.utils.json_to_sheet(sample);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'RA Team');
+    XLSX.writeFile(wb, 'RA_Team_Template.xlsx');
+  };
+
+  const handleUpload = async (file: File) => {
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      if (!ws) { message.error('No sheet found'); return false; }
+      const rows = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
+      const nameToId: Record<string, string> = {};
+      stakeholders.forEach(s => { nameToId[s.name.trim().toLowerCase()] = s.id; });
+      const incoming: Stakeholder[] = rows.map((r, i) => ({ id: `ra_${Date.now()}_${i}`, name: String(r['Name'] || '').trim(), title: String(r['Title / Role'] || '').trim(), department: String(r['Department'] || '').trim(), reportingTo: null, email: String(r['Email'] || '').trim(), responsibility: String(r['Responsibility'] || '').trim() })).filter(s => s.name);
+      const combinedMap: Record<string, string> = { ...nameToId };
+      incoming.forEach(s => { combinedMap[s.name.toLowerCase()] = s.id; });
+      const resolved = incoming.map((s, i) => { const mgrName = String(rows[i]['Reporting Manager Name'] || '').trim().toLowerCase(); return { ...s, reportingTo: mgrName ? (combinedMap[mgrName] || null) : null }; });
+      setStakeholders(prev => [...prev, ...resolved]);
+      message.success(`${resolved.length} member(s) uploaded`);
+    } catch (e: any) { message.error(e.message || 'Upload failed'); }
+    return false;
+  };
+
+  const membersContent = (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
+        <Text type="secondary" style={{ fontSize: '12px' }}>{stakeholders.length} member{stakeholders.length !== 1 ? 's' : ''} added</Text>
+        <Space size={6} wrap>
+          <Tooltip title="Download Template"><Button icon={<DownloadOutlined />} size="small" onClick={handleDownloadTemplate} style={{ borderRadius: 6 }} /></Tooltip>
+          <Tooltip title="Upload from Excel"><Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}><Button icon={<UploadOutlined />} size="small" style={{ borderRadius: 6 }} /></Upload></Tooltip>
+          <Button type="primary" icon={<PlusOutlined />} size="small" onClick={handleAdd} style={{ borderRadius: 6, fontSize: '11px' }}>Add Member</Button>
+        </Space>
+      </div>
+      {stakeholders.length === 0 ? (
+        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '60px 0', textAlign: 'center' }}>
+          <TeamOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 10, display: 'block' }} />
+          <Text type="secondary" style={{ fontSize: '12px' }}>No RA team members yet. Add members to build the hierarchy.</Text>
+        </div>
+      ) : (
+        <div className="compact-table"><Table dataSource={stakeholders} columns={tableColumns} rowKey="id" size="small" pagination={{ pageSize: 15, showSizeChanger: false }} scroll={{ x: 'max-content' }} style={{ background: '#fff', borderRadius: 8 }} /></div>
+      )}
+    </div>
+  );
+
+  const diagramContent = (
+    <div>
+      {stakeholders.length === 0 ? (
+        <Empty image={<ApartmentOutlined style={{ fontSize: 48, color: '#d9d9d9' }} />} imageStyle={{ height: 60 }} description={<Text type="secondary" style={{ fontSize: '12px' }}>Add RA team members first to view the org chart</Text>} />
+      ) : roots.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: 40 }}><Text type="warning" style={{ fontSize: '12px' }}>No top-level member found. Assign at least one person with no reporting manager.</Text></div>
+      ) : (
+        <div>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'center' }}>
+            <Text strong style={{ fontSize: '11px', color: '#595959' }}>Levels:</Text>
+            {LEVEL_STYLES.map((s, i) => (<div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5 }}><div style={{ width: 10, height: 10, borderRadius: '50%', background: s.bg }} /><span style={{ fontSize: '10px', color: '#8c8c8c' }}>Level {i + 1}</span></div>))}
+            <span style={{ fontSize: '10px', color: '#8c8c8c', marginLeft: 8 }}>· Hover over a node for details</span>
+          </div>
+          <div style={{ overflowX: 'auto', overflowY: 'auto', background: '#f8f9ff', border: '1px solid #e8eaf0', borderRadius: 10, padding: '32px 40px', minHeight: 300 }}>
+            {roots.length === 1 ? <div style={{ display: 'flex', justifyContent: 'center' }}><OrgNode node={roots[0]} all={stakeholders} depth={0} /></div> : <div style={{ display: 'flex', gap: 48, justifyContent: 'center', flexWrap: 'wrap' }}>{roots.map(root => <OrgNode key={root.id} node={root} all={stakeholders} depth={0} />)}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div style={{ background: '#fff', borderRadius: 10, padding: '0 20px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+      <Tabs defaultActiveKey="members" tabBarStyle={{ marginBottom: 16, paddingTop: 4 }}
+        items={[
+          { key: 'members', label: <span style={{ fontSize: '12px' }}>👥 Add Member</span>, children: membersContent },
+          { key: 'diagram', label: <span style={{ fontSize: '12px' }}>🗂 Hierarchy Diagram</span>, children: diagramContent },
+        ]}
+      />
+      <Modal title={<span style={{ fontSize: '13px' }}>{editingId ? 'Edit Member' : 'Add RA Member'}</span>} open={modalOpen} onOk={handleSave} onCancel={() => { setModalOpen(false); setEditingId(null); form.resetFields(); }} okText="Save" width={520} okButtonProps={{ size: 'small', style: { borderRadius: 6 } }} cancelButtonProps={{ size: 'small', style: { borderRadius: 6 } }}>
+        <Form form={form} layout="vertical" size="small" style={{ marginTop: 12 }}>
+          <Form.Item name="name" label={<span style={{ fontSize: '11px' }}>Full Name</span>} rules={[{ required: true, message: 'Enter name' }]}><Input prefix={<UserOutlined style={{ color: '#bfbfbf' }} />} placeholder="e.g. Priya Sharma" style={{ fontSize: '12px' }} /></Form.Item>
+          <Form.Item name="title" label={<span style={{ fontSize: '11px' }}>Title / Role</span>} rules={[{ required: true, message: 'Enter title' }]}><Input placeholder="e.g. Account Manager" style={{ fontSize: '12px' }} /></Form.Item>
+          <Form.Item name="department" label={<span style={{ fontSize: '11px' }}>Department</span>} rules={[{ required: true, message: 'Enter department' }]}><Input placeholder="e.g. Engineering, Management..." style={{ fontSize: '12px' }} /></Form.Item>
+          <Form.Item name="reportingTo" label={<span style={{ fontSize: '11px' }}>Reporting Manager</span>}><Select placeholder="— Top level (no manager)" allowClear style={{ fontSize: '12px' }} options={stakeholders.filter(s => s.id !== editingId).map(s => ({ label: `${s.name} (${s.title})`, value: s.id }))} /></Form.Item>
+          <Form.Item name="email" label={<span style={{ fontSize: '11px' }}>Email</span>}><Input placeholder="e.g. priya@ra.com" style={{ fontSize: '12px' }} /></Form.Item>
+          <Form.Item name="responsibility" label={<span style={{ fontSize: '11px' }}>Responsibility / Notes</span>}><Input.TextArea rows={2} style={{ fontSize: '12px' }} /></Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  );
+}
+
+// ─── Outer wrapper with Client / Internal RA tabs ─────────────────────────
+export function ClientTeamHierarchy() {
+  return (
     <div style={{ padding: '20px 24px', maxWidth: 1360, margin: '0 auto' }}>
-      {/* Page header */}
       <div style={{ marginBottom: 20 }}>
-        <Title level={4} style={{ margin: 0, color: '#262626' }}>Client Team Hierarchy</Title>
+        <Title level={4} style={{ margin: 0, color: '#262626' }}>Team Hierarchy</Title>
         <Text type="secondary" style={{ fontSize: '12px' }}>
-          Build and visualise the client stakeholder org chart
+          Build and visualise stakeholder org charts for Client and Internal RA teams
         </Text>
       </div>
-
-      <div style={{ background: '#fff', borderRadius: 10, padding: '0 20px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
-        <Tabs
-          defaultActiveKey="stakeholders"
-          tabBarStyle={{ marginBottom: 16, paddingTop: 4 }}
-          items={[
-            {
-              key: 'stakeholders',
-              label: <span style={{ fontSize: '12px' }}>👥 Stakeholders</span>,
-              children: stakeholdersContent,
-            },
-            {
-              key: 'diagram',
-              label: <span style={{ fontSize: '12px' }}>🗂 Hierarchy Diagram</span>,
-              children: diagramContent,
-            },
-          ]}
-        />
-      </div>
-
-      {modal}
+      <Tabs
+        defaultActiveKey="client"
+        type="card"
+        tabBarStyle={{ marginBottom: 0 }}
+        items={[
+          {
+            key: 'client',
+            label: <span style={{ fontSize: '12px' }}>🏢 Client</span>,
+            children: <ClientHierarchyInner />,
+          },
+          {
+            key: 'ra',
+            label: <span style={{ fontSize: '12px' }}>⚙️ Internal RA</span>,
+            children: <RATeamHierarchy />,
+          },
+        ]}
+      />
     </div>
   );
 }

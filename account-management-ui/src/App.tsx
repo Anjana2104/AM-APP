@@ -1,4 +1,4 @@
-import { Layout, Typography, Tooltip } from 'antd';
+import { Typography, Tooltip } from 'antd';
 import { useState, useEffect } from 'react';
 import { AccountFinance } from './pages/AccountFinance';
 import ResourceManagement from './pages/ResourceMgmt';
@@ -6,12 +6,16 @@ import { ResourceUtilization } from './pages/ResourceUtilization';
 import ClientM from './pages/ClientM';
 import { ClientRateCard } from './pages/ClientRateCard';
 import { ClientTeamHierarchy } from './pages/ClientTeamHierarchy';
+import { RAProcess } from './pages/RAProcess';
+import { Configuration } from './pages/Configuration';
+import { ConfigProvider } from './context/ConfigContext';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DownOutlined, RightOutlined,
   EyeOutlined, BankOutlined, HomeOutlined, InfoCircleOutlined,
-  CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined,
+  CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined, SettingOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import type { ResourceRow } from './pages/ResourceMgmt';
 
@@ -25,11 +29,11 @@ type EAMPage =
   | 'clientmgmt_connects'
   | 'information_ratecard'
   | 'information_teamhierarchy'
-  | 'information_process';
+  | 'information_process'
+  | 'configuration';
 
-type EAMSection = 'executive' | 'resources' | 'clientmgmt' | 'information';
+type EAMSection = 'executive' | 'resources' | 'clientmgmt' | 'information' | 'configuration';
 
-const { Header, Content } = Layout;
 const { Title } = Typography;
 
 const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
@@ -43,6 +47,7 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   information_ratecard: 'information',
   information_teamhierarchy: 'information',
   information_process: 'information',
+  configuration: 'configuration',
 };
 
 const ALL_PAGES = Object.keys(PAGE_SECTION_MAP) as EAMPage[];
@@ -59,6 +64,84 @@ function parseHash(): { module: 'home' | 'eam'; page: EAMPage } {
 
 function toHash(module: 'home' | 'eam', page?: EAMPage) {
   return module === 'home' ? '#/home' : `#/eam/${page}`;
+}
+
+/* ─── Sidebar sub-components ──────────────────────────────────── */
+function SectionLabel({ label }: { label: string }) {
+  return (
+    <div style={{ padding: '10px 12px 4px', fontSize: '9.5px', fontWeight: 700, letterSpacing: '0.8px', color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', userSelect: 'none' }}>
+      {label}
+    </div>
+  );
+}
+
+function SideNavItem({ icon, label, active, onClick, showArrow }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void; showArrow?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 10px',
+        background: active ? 'rgba(59,130,246,0.16)' : 'transparent',
+        border: 'none', borderLeft: active ? '3px solid #3b82f6' : '3px solid transparent',
+        borderRadius: active ? '0 7px 7px 0' : '7px',
+        color: active ? '#93c5fd' : 'rgba(255,255,255,0.7)',
+        cursor: 'pointer', fontSize: '12.5px', fontWeight: active ? 600 : 400,
+        transition: 'all 0.15s', textAlign: 'left',
+      }}
+    >
+      <span style={{ width: 26, height: 26, borderRadius: 6, background: active ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '12px' }}>{icon}</span>
+      <span style={{ flex: 1 }}>{label}</span>
+      {showArrow && <RightOutlined style={{ fontSize: '8px', opacity: 0.45 }} />}
+    </button>
+  );
+}
+
+function SideNavGroup({ icon, label, active, expanded, onToggle, children }: { icon: React.ReactNode; label: string; active: boolean; expanded: boolean; onToggle: () => void; children?: React.ReactNode }) {
+  return (
+    <>
+      <button
+        onClick={onToggle}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 10px',
+          background: active ? 'rgba(59,130,246,0.16)' : 'transparent',
+          border: 'none', borderLeft: active ? '3px solid #3b82f6' : '3px solid transparent',
+          borderRadius: active ? '0 7px 7px 0' : '7px',
+          color: active ? '#93c5fd' : 'rgba(255,255,255,0.7)',
+          cursor: 'pointer', fontSize: '12.5px', fontWeight: active ? 600 : 400,
+          transition: 'all 0.15s', textAlign: 'left',
+        }}
+      >
+        <span style={{ width: 26, height: 26, borderRadius: 6, background: active ? 'rgba(59,130,246,0.25)' : 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: '12px' }}>{icon}</span>
+        <span style={{ flex: 1 }}>{label}</span>
+        {children && (expanded ? <DownOutlined style={{ fontSize: '8px', opacity: 0.5 }} /> : <RightOutlined style={{ fontSize: '8px', opacity: 0.5 }} />)}
+      </button>
+      {expanded && children && (
+        <div style={{ marginLeft: 14, marginBottom: 1 }}>
+          {children}
+        </div>
+      )}
+    </>
+  );
+}
+
+function SubNavItem({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 7, width: '100%',
+        padding: '6px 8px 6px 12px',
+        background: active ? 'rgba(59,130,246,0.14)' : 'transparent',
+        border: 'none', borderRadius: 5,
+        color: active ? '#93c5fd' : 'rgba(255,255,255,0.5)',
+        cursor: 'pointer', fontSize: '11.5px', fontWeight: active ? 600 : 400,
+        transition: 'all 0.15s', textAlign: 'left',
+      }}
+    >
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: active ? '#3b82f6' : 'rgba(255,255,255,0.22)', flexShrink: 0 }} />
+      {label}
+    </button>
+  );
 }
 
 export default function App() {
@@ -105,39 +188,6 @@ export default function App() {
     });
   };
 
-  const subBtnStyle = (active: boolean): React.CSSProperties => ({
-    background: active ? '#1890FF' : 'transparent',
-    color: active ? '#fff' : 'rgba(255,255,255,0.7)',
-    border: 'none',
-    padding: '7px 10px 7px 30px',
-    borderRadius: '5px',
-    textAlign: 'left',
-    cursor: 'pointer',
-    fontSize: '12px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    width: '100%',
-    transition: 'background 0.2s',
-  });
-
-  const groupBtnStyle = (active: boolean): React.CSSProperties => ({
-    background: active ? 'rgba(24,144,255,0.18)' : 'transparent',
-    color: '#fff',
-    border: 'none',
-    padding: '9px 10px',
-    borderRadius: '6px',
-    textAlign: 'left',
-    cursor: 'pointer',
-    fontSize: '13px',
-    fontWeight: 600,
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    width: '100%',
-    transition: 'background 0.2s',
-  });
-
   if (activeModule === 'eam') {
     const collapsed = sidebarCollapsed;
     const isExp = (s: EAMSection) => expandedSections.has(s);
@@ -150,10 +200,11 @@ export default function App() {
         case 'resources_utilization': return <ResourceUtilization resources={resources} onUpdateResources={setResources} />;
         case 'resources_upskilling':  return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Upskilling — Coming Soon</div>;
         case 'clientmgmt_requests':   return <ClientM activeTab="requests" />;
-        case 'clientmgmt_connects':   return <ClientM activeTab="connects" />;
+        case 'clientmgmt_connects':   return <RAProcess />;
         case 'information_ratecard':      return <ClientRateCard />;
         case 'information_teamhierarchy': return <ClientTeamHierarchy />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
+        case 'configuration':             return <Configuration />;
         default: return null;
       }
     };
@@ -162,130 +213,162 @@ export default function App() {
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
 
         {/* ─── Left Sidebar ───────────────────────────────────── */}
-        <div style={{ background: '#001529', color: '#fff', width: collapsed ? '54px' : '230px', height: '100vh', display: 'flex', flexDirection: 'column', flexShrink: 0, transition: 'width 0.2s', overflow: 'hidden' }}>
+        <div style={{
+          background: '#0d1b2e',
+          color: '#fff',
+          width: collapsed ? '60px' : '248px',
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          flexShrink: 0,
+          transition: 'width 0.22s cubic-bezier(.4,0,.2,1)',
+          overflow: 'hidden',
+        }}>
 
-          {/* Logo / Title */}
-          <div style={{ padding: collapsed ? '14px 10px' : '14px 14px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'space-between', gap: 8, flexShrink: 0 }}>
-            {!collapsed && (
-              <div style={{ overflow: 'hidden' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <EyeOutlined style={{ fontSize: '17px', color: '#40A9FF', flexShrink: 0 }} />
-                  <span style={{ fontWeight: 700, fontSize: '15px', whiteSpace: 'nowrap', color: '#fff' }}>EAM</span>
+          {/* ── Top header row: Home icon + Account + collapse ── */}
+          <div style={{ padding: collapsed ? '12px 6px' : '12px 12px', display: 'flex', alignItems: 'center', gap: collapsed ? 0 : 8, justifyContent: collapsed ? 'center' : 'space-between', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+            {collapsed ? (
+              <Tooltip title="Home" placement="right">
+                <button onClick={goHome} style={{ background: activeModule === 'home' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <HomeOutlined style={{ fontSize: '17px' }} />
+                </button>
+              </Tooltip>
+            ) : (
+              <>
+                {/* Home icon — clickable */}
+                <button onClick={goHome} style={{ background: activeModule === 'home' ? 'rgba(59,130,246,0.18)' : 'transparent', border: 'none', color: activeModule === 'home' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '6px 8px', borderRadius: 7, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0 }}>
+                  <HomeOutlined style={{ fontSize: '15px' }} />
+                </button>
+
+                {/* ZS Associates account */}
+                <div style={{ flex: 1, background: 'rgba(255,255,255,0.06)', borderRadius: 7, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.07)', minWidth: 0 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 5, background: 'rgba(59,130,246,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <BankOutlined style={{ fontSize: '11px', color: '#60a5fa' }} />
+                  </div>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>ZS Associates</span>
+                  <DownOutlined style={{ fontSize: '8px', color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
                 </div>
-                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.45)', marginTop: 2, whiteSpace: 'nowrap', marginLeft: 25 }}>Enterprise Account Management</div>
-              </div>
+
+                {/* Collapse toggle */}
+                <button onClick={() => setSidebarCollapsed(true)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.28)', cursor: 'pointer', padding: '6px', borderRadius: 6, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                  <MenuFoldOutlined style={{ fontSize: '12px' }} />
+                </button>
+              </>
             )}
-            <button onClick={() => setSidebarCollapsed(!collapsed)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: 4, borderRadius: 4, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-              {collapsed ? <MenuUnfoldOutlined style={{ fontSize: '14px' }} /> : <MenuFoldOutlined style={{ fontSize: '14px' }} />}
-            </button>
           </div>
 
-          {/* Nav items */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: collapsed ? '8px 6px' : '8px 8px' }}>
+          {/* ── Nav items ────────────────────── */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: collapsed ? '4px 6px' : '2px 8px', scrollbarWidth: 'none' }}>
+
             {collapsed ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              /* Collapsed: icons only */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {[
-                  { s: null, icon: <HomeOutlined />, label: 'Home', page: null },
-                  { s: 'executive' as EAMSection, icon: <DollarOutlined />, label: 'Executive View', page: 'executive_revenue' as EAMPage },
-                  { s: 'resources' as EAMSection, icon: <ThunderboltOutlined />, label: 'Resource Details', page: 'resources_info' as EAMPage },
-                  { s: 'clientmgmt' as EAMSection, icon: <UserOutlined />, label: 'Client Management', page: 'clientmgmt_requests' as EAMPage },
-                  { s: 'information' as EAMSection, icon: <InfoCircleOutlined />, label: 'Information', page: 'information_ratecard' as EAMPage },
-                ].map(({ s, icon, label, page }) => (
-                  <Tooltip key={label} title={label} placement="right">
-                    <a
-                      href={page ? toHash('eam', page) : toHash('home')}
-                      onClick={e => { e.preventDefault(); if (!s) goHome(); else navigateTo(page!, s); }}
-                      style={{ background: s && activePage.startsWith(s === 'clientmgmt' ? 'clientmgmt' : s) ? 'rgba(24,144,255,0.28)' : 'transparent', color: '#fff', textDecoration: 'none', padding: '10px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '16px' }}
-                    >
-                      {icon}
-                    </a>
+                  { icon: <DollarOutlined />, label: 'Finance Management', action: () => navigateTo('executive_revenue', 'executive'), active: activePage.startsWith('executive') },
+                  { icon: <ThunderboltOutlined />, label: 'Resources', action: () => navigateTo('resources_info', 'resources'), active: activePage.startsWith('resources') },
+                  { icon: <UserOutlined />, label: 'Request Management', action: () => navigateTo('clientmgmt_requests', 'clientmgmt'), active: activePage.startsWith('clientmgmt') },
+                  { icon: <NodeIndexOutlined />, label: 'Internal Process', action: () => navigateTo('clientmgmt_connects', 'clientmgmt'), active: activePage === 'clientmgmt_connects' },
+                  { icon: <InfoCircleOutlined />, label: 'Information', action: () => navigateTo('information_ratecard', 'information'), active: activePage.startsWith('information') },
+                  { icon: <SettingOutlined />, label: 'Configuration', action: () => navigateTo('configuration', 'configuration'), active: activePage === 'configuration' },
+                ].map(item => (
+                  <Tooltip key={item.label} title={item.label} placement="right">
+                    <button onClick={item.action} style={{ background: item.active ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: item.active ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      {item.icon}
+                    </button>
                   </Tooltip>
                 ))}
+                <div style={{ margin: '4px 6px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
+                <Tooltip title="Expand" placement="right">
+                  <button onClick={() => setSidebarCollapsed(false)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+                    <MenuUnfoldOutlined style={{ fontSize: '13px' }} />
+                  </button>
+                </Tooltip>
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                {/* Home */}
-                <a href={toHash('home')} onClick={e => { e.preventDefault(); goHome(); }} style={{ ...groupBtnStyle(false), textDecoration: 'none' }}>
-                  <HomeOutlined style={{ fontSize: '13px', flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>Home</span>
-                </a>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
 
-                {/* Executive View */}
-                <button onClick={() => toggleSection('executive')} style={groupBtnStyle(activePage.startsWith('executive'))}>
-                  <DollarOutlined style={{ fontSize: '13px', flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>Executive View</span>
-                  {isExp('executive') ? <DownOutlined style={{ fontSize: '9px' }} /> : <RightOutlined style={{ fontSize: '9px' }} />}
-                </button>
-                {isExp('executive') && (
-                  <div style={{ marginBottom: 2 }}>
-                    <a href={toHash('eam', 'executive_revenue')} onClick={e => { e.preventDefault(); setActivePage('executive_revenue'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'executive_revenue'), textDecoration: 'none' }}>
-                      <DollarOutlined style={{ fontSize: '11px' }} /> Revenue Details
-                    </a>
-                    <a href={toHash('eam', 'executive_invoicing')} onClick={e => { e.preventDefault(); setActivePage('executive_invoicing'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'executive_invoicing'), textDecoration: 'none' }}>
-                      <BankOutlined style={{ fontSize: '11px' }} /> Invoicing Details
-                    </a>
-                  </div>
-                )}
+                {/* ── ACCOUNT OPERATIONS section ── */}
+                <SectionLabel label="Account Operations" />
 
-                {/* Resource Details */}
-                <button onClick={() => toggleSection('resources')} style={groupBtnStyle(activePage.startsWith('resources'))}>
-                  <ThunderboltOutlined style={{ fontSize: '13px', flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>Resource Details</span>
-                  {isExp('resources') ? <DownOutlined style={{ fontSize: '9px' }} /> : <RightOutlined style={{ fontSize: '9px' }} />}
-                </button>
-                {isExp('resources') && (
-                  <div style={{ marginBottom: 2 }}>
-                    <a href={toHash('eam', 'resources_info')} onClick={e => { e.preventDefault(); setActivePage('resources_info'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'resources_info'), textDecoration: 'none' }}>
-                      <FileTextOutlined style={{ fontSize: '11px' }} /> Information
-                    </a>
-                    <a href={toHash('eam', 'resources_utilization')} onClick={e => { e.preventDefault(); setActivePage('resources_utilization'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'resources_utilization'), textDecoration: 'none' }}>
-                      <BarChartOutlined style={{ fontSize: '11px' }} /> Engagement Mapping
-                    </a>
-                    <a href={toHash('eam', 'resources_upskilling')} onClick={e => { e.preventDefault(); setActivePage('resources_upskilling'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'resources_upskilling'), textDecoration: 'none' }}>
-                      <RocketOutlined style={{ fontSize: '11px' }} /> Upskilling
-                    </a>
-                  </div>
-                )}
+                {/* Finance */}
+                <SideNavGroup
+                  icon={<DollarOutlined />} label="Finance"
+                  active={activePage.startsWith('executive')}
+                  expanded={isExp('executive')}
+                  onToggle={() => toggleSection('executive')}
+                >
+                  <SubNavItem label="Revenue Details" active={activePage === 'executive_revenue'} onClick={() => { setActivePage('executive_revenue'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Invoicing Details" active={activePage === 'executive_invoicing'} onClick={() => { setActivePage('executive_invoicing'); setActiveModule('eam'); }} />
+                </SideNavGroup>
 
-                {/* Client Management */}
-                <button onClick={() => toggleSection('clientmgmt')} style={groupBtnStyle(activePage.startsWith('clientmgmt'))}>
-                  <UserOutlined style={{ fontSize: '13px', flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>Client Management</span>
-                  {isExp('clientmgmt') ? <DownOutlined style={{ fontSize: '9px' }} /> : <RightOutlined style={{ fontSize: '9px' }} />}
-                </button>
-                {isExp('clientmgmt') && (
-                  <div style={{ marginBottom: 2 }}>
-                    <a href={toHash('eam', 'clientmgmt_requests')} onClick={e => { e.preventDefault(); setActivePage('clientmgmt_requests'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'clientmgmt_requests'), textDecoration: 'none' }}>
-                      <FileTextOutlined style={{ fontSize: '11px' }} /> Requests
-                    </a>
-                    <a href={toHash('eam', 'clientmgmt_connects')} onClick={e => { e.preventDefault(); setActivePage('clientmgmt_connects'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'clientmgmt_connects'), textDecoration: 'none' }}>
-                      <TeamOutlined style={{ fontSize: '11px' }} /> Connects
-                    </a>
-                  </div>
-                )}
+                {/* Resources */}
+                <SideNavGroup
+                  icon={<ThunderboltOutlined />} label="Resources"
+                  active={activePage.startsWith('resources')}
+                  expanded={isExp('resources')}
+                  onToggle={() => toggleSection('resources')}
+                >
+                  <SubNavItem label="Information" active={activePage === 'resources_info'} onClick={() => { setActivePage('resources_info'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Engagement Mapping" active={activePage === 'resources_utilization'} onClick={() => { setActivePage('resources_utilization'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Upskilling" active={activePage === 'resources_upskilling'} onClick={() => { setActivePage('resources_upskilling'); setActiveModule('eam'); }} />
+                </SideNavGroup>
+
+                {/* Client Requests */}
+                <SideNavGroup
+                  icon={<UserOutlined />} label="Client Requests"
+                  active={activePage === 'clientmgmt_requests'}
+                  expanded={isExp('clientmgmt')}
+                  onToggle={() => toggleSection('clientmgmt')}
+                >
+                  <SubNavItem label="Overview" active={activePage === 'clientmgmt_requests'} onClick={() => { setActivePage('clientmgmt_requests'); setActiveModule('eam'); }} />
+                </SideNavGroup>
+
+                {/* Internal Process */}
+                <SideNavItem
+                  icon={<NodeIndexOutlined />} label="Internal Process"
+                  active={activePage === 'clientmgmt_connects'}
+                  onClick={() => navigateTo('clientmgmt_connects', 'clientmgmt')}
+                  showArrow
+                />
+
+                {/* ── SETTINGS & CONFIGURATION section ── */}
+                <SectionLabel label="Settings & Configuration" />
 
                 {/* Information */}
-                <button onClick={() => toggleSection('information')} style={groupBtnStyle(activePage.startsWith('information'))}>
-                  <InfoCircleOutlined style={{ fontSize: '13px', flexShrink: 0 }} />
-                  <span style={{ flex: 1 }}>Information</span>
-                  {isExp('information') ? <DownOutlined style={{ fontSize: '9px' }} /> : <RightOutlined style={{ fontSize: '9px' }} />}
-                </button>
-                {isExp('information') && (
-                  <div style={{ marginBottom: 2 }}>
-                    <a href={toHash('eam', 'information_ratecard')} onClick={e => { e.preventDefault(); setActivePage('information_ratecard'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'information_ratecard'), textDecoration: 'none' }}>
-                      <CreditCardOutlined style={{ fontSize: '11px' }} /> Client Rate Card
-                    </a>
-                    <a href={toHash('eam', 'information_teamhierarchy')} onClick={e => { e.preventDefault(); setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'information_teamhierarchy'), textDecoration: 'none' }}>
-                      <ApartmentOutlined style={{ fontSize: '11px' }} /> Client Team Hierarchy
-                    </a>
-                    <a href={toHash('eam', 'information_process')} onClick={e => { e.preventDefault(); setActivePage('information_process'); setActiveModule('eam'); }} style={{ ...subBtnStyle(activePage === 'information_process'), textDecoration: 'none' }}>
-                      <NodeIndexOutlined style={{ fontSize: '11px' }} /> Client Process
-                    </a>
-                  </div>
-                )}
+                <SideNavGroup
+                  icon={<InfoCircleOutlined />} label="Information"
+                  active={activePage.startsWith('information')}
+                  expanded={isExp('information')}
+                  onToggle={() => toggleSection('information')}
+                >
+                  <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => { setActivePage('information_ratecard'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => { setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => { setActivePage('information_process'); setActiveModule('eam'); }} />
+                </SideNavGroup>
+
+                {/* Configuration */}
+                <SideNavGroup
+                  icon={<SettingOutlined />} label="Configuration"
+                  active={activePage === 'configuration'}
+                  expanded={isExp('configuration')}
+                  onToggle={() => { navigateTo('configuration', 'configuration'); toggleSection('configuration'); }}
+                />
+
               </div>
             )}
           </div>
+
+          {/* ── User footer ──────────────────── */}
+          {!collapsed && (
+            <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1d4ed8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>AM</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Account Manager</div>
+                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.38)' }}>Admin</div>
+              </div>
+              <DownOutlined style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
+            </div>
+          )}
 
         </div>
 
@@ -300,104 +383,146 @@ export default function App() {
   }
 
   // ── Home Dashboard ────────────────────────────────────────────
+  const homeCards = [
+    {
+      icon: <DollarOutlined style={{ fontSize: 26, color: '#1890ff' }} />,
+      iconBg: '#e6f4ff',
+      title: 'Financial Intelligence',
+      desc: 'Track revenue, billing, and performance with clarity.',
+      page: 'executive_revenue' as EAMPage,
+      section: 'executive' as EAMSection,
+    },
+    {
+      icon: <TeamOutlined style={{ fontSize: 26, color: '#13c2c2' }} />,
+      iconBg: '#e6fffb',
+      title: 'Resource Planning',
+      desc: 'Plan, allocate, and optimize resources effectively.',
+      page: 'resources_info' as EAMPage,
+      section: 'resources' as EAMSection,
+    },
+    {
+      icon: <UserOutlined style={{ fontSize: 26, color: '#fa8c16' }} />,
+      iconBg: '#fff7e6',
+      title: 'Client Operations',
+      desc: 'Manage and resolve client requests seamlessly.',
+      page: 'clientmgmt_requests' as EAMPage,
+      section: 'clientmgmt' as EAMSection,
+    },
+    {
+      icon: <NodeIndexOutlined style={{ fontSize: 26, color: '#722ed1' }} />,
+      iconBg: '#f9f0ff',
+      title: 'Process Governance',
+      desc: 'Standardize SOWs, approvals, and ensure compliance.',
+      page: 'clientmgmt_connects' as EAMPage,
+      section: 'clientmgmt' as EAMSection,
+    },
+  ];
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#001529', display: 'flex', alignItems: 'center' }}>
-        <Title level={4} style={{ color: '#fff', margin: 0 }}>Enterprise Account Management</Title>
-      </Header>
-      <Content style={{ padding: 24, background: '#f5f5f5' }}>
-        <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-          <div style={{ marginBottom: 40 }}>
-            <h1 style={{ fontSize: '32px', fontWeight: 700, marginBottom: 8 }}>Welcome to Enterprise Account Management</h1>
-            <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>Manage projects, finances, and resources from one unified platform</p>
-          </div>
+    <div style={{
+      minHeight: '100vh',
+      background: 'linear-gradient(160deg, #eef2fb 0%, #f5f8ff 60%, #eaf4ff 100%)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '40px 24px',
+    }}>
+      <div style={{ maxWidth: 820, width: '100%', textAlign: 'center' }}>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: 24 }}>
-
-            {/* FINANCE */}
-            <div onClick={() => navigateTo('executive_revenue', 'executive')}
-              style={{ padding: 32, background: '#fff', borderRadius: 12, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: '3px solid #1890FF', transition: 'all 0.3s', minHeight: 280 }}
-              onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 12px 24px rgba(24,144,255,0.15)'; e.currentTarget.style.transform = 'translateY(-8px)'; }}
-              onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)'; e.currentTarget.style.transform = 'none'; }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
-                <div style={{ fontSize: '40px', color: '#1890FF' }}><DollarOutlined /></div>
-                <div style={{ flex: 1 }}>
-                  <h2 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#001529' }}>Finance Management</h2>
-                  <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0 0' }}>Project Milestones & Revenue Insights</p>
-                </div>
-              </div>
-              <div style={{ background: '#F0F5FF', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: '1.8' }}>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Project Milestones</strong> - Upload and track project revenue</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Revenue Insights</strong> - Quarterly analytics & YoY comparison</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Currency Support</strong> - INR/USD conversion</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Fiscal Year View</strong> - Multi-year data support</li>
-                </ul>
-              </div>
-              <button style={{ width: '100%', padding: '12px 16px', background: '#1890FF', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-                onMouseEnter={e => { (e.target as HTMLButtonElement).style.background = '#0050B3'; }}
-                onMouseLeave={e => { (e.target as HTMLButtonElement).style.background = '#1890FF'; }}>
-                View Finance Details →
-              </button>
-            </div>
-
-            {/* RESOURCES */}
-            <div onClick={() => navigateTo('resources_info', 'resources')}
-              style={{ padding: 32, background: '#fff', borderRadius: 12, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: '3px solid #52C41A', transition: 'all 0.3s', minHeight: 280 }}
-              onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 12px 24px rgba(82,196,26,0.15)'; e.currentTarget.style.transform = 'translateY(-8px)'; }}
-              onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)'; e.currentTarget.style.transform = 'none'; }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
-                <div style={{ fontSize: '40px', color: '#52C41A' }}><TeamOutlined /></div>
-                <div style={{ flex: 1 }}>
-                  <h2 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#001529' }}>Resource Management</h2>
-                  <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0 0' }}>Team, Skills & Allocation</p>
-                </div>
-              </div>
-              <div style={{ background: '#F6FFED', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: '1.8' }}>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Resource Details</strong> - ID, Name, Skills, Experience</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Project Allocation</strong> - Current assignment tracking</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Bulk Upload</strong> - Import from Excel template</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Expandable Details</strong> - View full resource profile</li>
-                </ul>
-              </div>
-              <button style={{ width: '100%', padding: '12px 16px', background: '#52C41A', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-                onMouseEnter={e => { (e.target as HTMLButtonElement).style.background = '#389E0D'; }}
-                onMouseLeave={e => { (e.target as HTMLButtonElement).style.background = '#52C41A'; }}>
-                Manage Resources →
-              </button>
-            </div>
-
-            {/* CLIENT MANAGEMENT */}
-            <div onClick={() => navigateTo('clientmgmt_requests', 'clientmgmt')}
-              style={{ padding: 32, background: '#fff', borderRadius: 12, cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', border: '3px solid #FFA940', transition: 'all 0.3s', minHeight: 280 }}
-              onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 12px 24px rgba(255,169,64,0.15)'; e.currentTarget.style.transform = 'translateY(-8px)'; }}
-              onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)'; e.currentTarget.style.transform = 'none'; }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, marginBottom: 16 }}>
-                <div style={{ fontSize: '40px', color: '#FFA940' }}><UserOutlined /></div>
-                <div style={{ flex: 1 }}>
-                  <h2 style={{ fontSize: '22px', fontWeight: 700, margin: 0, color: '#001529' }}>Client Management</h2>
-                  <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0 0' }}>Requests & Connections</p>
-                </div>
-              </div>
-              <div style={{ background: '#FFFBE6', padding: 16, borderRadius: 8, marginBottom: 16 }}>
-                <ul style={{ margin: 0, paddingLeft: 16, lineHeight: '1.8' }}>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Request Management</strong> - Track and manage client requests</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Bulk Upload</strong> - Import requests from Excel template</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Status Tracking</strong> - Monitor request processing status</li>
-                  <li style={{ fontSize: '13px', color: '#333' }}><strong>Connections Hub</strong> - Manage client relationships</li>
-                </ul>
-              </div>
-              <button style={{ width: '100%', padding: '12px 16px', background: '#FFA940', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600, fontSize: '14px' }}
-                onMouseEnter={e => { (e.target as HTMLButtonElement).style.background = '#FF7A45'; }}
-                onMouseLeave={e => { (e.target as HTMLButtonElement).style.background = '#FFA940'; }}>
-                Manage Clients →
-              </button>
-            </div>
-
-          </div>
+        {/* Welcome label */}
+        <div style={{ fontSize: '12px', fontWeight: 700, letterSpacing: '2px', color: '#1890ff', textTransform: 'uppercase', marginBottom: 12 }}>
+          Welcome to
         </div>
-      </Content>
-    </Layout>
+
+        {/* Main title */}
+        <h1 style={{ fontSize: 'clamp(28px, 5vw, 48px)', fontWeight: 800, color: '#0a1628', margin: '0 0 12px', lineHeight: 1.15 }}>
+          Enterprise Account Management
+        </h1>
+
+        {/* Blue accent line */}
+        <div style={{ width: 48, height: 4, background: '#1890ff', borderRadius: 2, margin: '0 auto 20px' }} />
+
+        {/* Subtitle */}
+        <p style={{ fontSize: '16px', color: '#5a6a8a', margin: '0 auto 40px', maxWidth: 480, lineHeight: 1.6 }}>
+          Manage finances, client requests, and resources<br />from one unified platform.
+        </p>
+
+        {/* Feature cards */}
+        <div style={{
+          background: '#fff',
+          borderRadius: 16,
+          boxShadow: '0 4px 24px rgba(24,70,150,0.08)',
+          border: '1px solid #e8eef8',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          marginBottom: 44,
+          overflow: 'hidden',
+        }}>
+          {homeCards.map((card, idx) => (
+            <div
+              key={card.title}
+              onClick={() => navigateTo(card.page, card.section)}
+              style={{
+                padding: '28px 20px',
+                borderRight: idx < homeCards.length - 1 ? '1px solid #f0f4fb' : undefined,
+                cursor: 'pointer',
+                transition: 'background 0.15s',
+                textAlign: 'left',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#f5f8ff'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+            >
+              {/* Icon circle */}
+              <div style={{
+                width: 52, height: 52, borderRadius: '50%',
+                background: card.iconBg,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                marginBottom: 14,
+              }}>
+                {card.icon}
+              </div>
+              <div style={{ fontWeight: 700, fontSize: '15px', color: '#0a1628', marginBottom: 6 }}>
+                {card.title}
+              </div>
+              <div style={{ fontSize: '13px', color: '#7a8ba8', lineHeight: 1.5 }}>
+                {card.desc}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Shield icon */}
+        <div style={{ marginBottom: 12 }}>
+          <SafetyCertificateOutlined style={{ fontSize: 28, color: '#1890ff' }} />
+        </div>
+
+        {/* Bottom tagline */}
+        <p style={{ fontSize: '15px', color: '#5a6a8a', margin: '0 auto 32px', maxWidth: 420, lineHeight: 1.65 }}>
+          Everything you need to manage your account—<br />
+          simplified, integrated, and built for impact.
+        </p>
+
+        {/* Explore button */}
+        <button
+          onClick={() => navigateTo('executive_revenue', 'executive')}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 12,
+            background: '#0a1e4a',
+            color: '#fff', border: 'none', borderRadius: 50,
+            padding: '16px 48px', fontSize: '16px', fontWeight: 700,
+            cursor: 'pointer', letterSpacing: '0.3px',
+            boxShadow: '0 6px 24px rgba(10,30,74,0.25)',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#1890ff'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = '#0a1e4a'; e.currentTarget.style.transform = 'none'; }}
+        >
+          <RocketOutlined style={{ fontSize: 18 }} />
+          Explore the Platform
+          <span style={{ fontSize: 18 }}>→</span>
+        </button>
+
+      </div>
+    </div>
   );
 }

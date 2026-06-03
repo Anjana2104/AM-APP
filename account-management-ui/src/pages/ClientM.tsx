@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Table,
   Button,
@@ -18,11 +18,11 @@ import {
   Popover,
   Dropdown,
   Tabs,
+  Tag,
   DatePicker,
   Spin,
   Badge,
   Typography,
-  Filter,
   Pagination,
   Checkbox,
 } from 'antd';
@@ -47,122 +47,67 @@ import {
 import * as XLSX from 'xlsx';
 import dayjs from 'dayjs';
 import { RequestInsights } from './RequestInsights';
+import { useConfig } from '../context/ConfigContext';
 import '../style.css';
 
 // Types and interfaces
-type ProcessingStatusType = 
-  | 'accepted_staffing'
-  | 'resource_shortlisted'
-  | 'uploaded_profile_beeline'
-  | 'resource_assessment_scheduled'
-  | 'resource_assessment_completed'
-  | 'resource_selected'
-  | 'resource_rejected'
-  | 'zs_onboarding_initiated'
-  | 'onboarded_in_zs'
-  | 'zs_offboarding_initiated'
-  | 'resource_offboarded';
-
-type OverallStatusType = 
-  | 'not_started'
-  | 'in_progress'
-  | 'completed'
-  | 'blocked'
-  | 'cancelled';
-
 interface ClientRequest {
   sno: string;
   beelineId: string;
   description: string;
   raisedBy: string;
-  processingStatus: ProcessingStatusType;
-  overallStatus: OverallStatusType;
+  processingStatus: string;
+  overallStatus: string;
   accountAnchor: string;
   dateRaised: string;
+  requestType?: string;
   updatedOn?: string;
 }
 
 // Constants
-const PROCESSING_STATUS_DISPLAY_MAP: Record<ProcessingStatusType, string> = {
-  'accepted_staffing': 'Accepted by Staffing Team',
-  'resource_shortlisted': 'Resource Shortlisted',
-  'uploaded_profile_beeline': 'Uploaded Profile on Beeline',
-  'resource_assessment_scheduled': 'Resource Assessment Scheduled',
-  'resource_assessment_completed': 'Resource Assessment Completed',
-  'resource_selected': 'Resource Selected',
-  'resource_rejected': 'Resource Rejected',
-  'zs_onboarding_initiated': 'ZS Onboarding Initiated',
-  'onboarded_in_zs': 'Onboarded in ZS',
-  'zs_offboarding_initiated': 'ZS Offboarding Initiated',
-  'resource_offboarded': 'Resource Offboarded',
-};
-
-const OVERALL_STATUS_DISPLAY_MAP: Record<OverallStatusType, string> = {
-  'not_started': 'Not Started',
-  'in_progress': 'In Progress',
-  'completed': 'Completed',
-  'blocked': 'Blocked',
-  'cancelled': 'Cancelled',
-};
-
-const PROCESSING_STATUS_OPTIONS = [
-  { label: 'Accepted by Staffing Team', value: 'accepted_staffing' },
-  { label: 'Resource Shortlisted', value: 'resource_shortlisted' },
-  { label: 'Uploaded Profile on Beeline', value: 'uploaded_profile_beeline' },
-  { label: 'Resource Assessment Scheduled', value: 'resource_assessment_scheduled' },
-  { label: 'Resource Assessment Completed', value: 'resource_assessment_completed' },
-  { label: 'Resource Selected', value: 'resource_selected' },
-  { label: 'Resource Rejected', value: 'resource_rejected' },
-  { label: 'ZS Onboarding Initiated', value: 'zs_onboarding_initiated' },
-  { label: 'Onboarded in ZS', value: 'onboarded_in_zs' },
-  { label: 'ZS Offboarding Initiated', value: 'zs_offboarding_initiated' },
-  { label: 'Resource Offboarded', value: 'resource_offboarded' },
+const REQUEST_TYPES = [
+  { label: 'Resource Demand', value: 'resource_demand', color: 'blue' },
+  { label: 'Onboarding', value: 'onboarding', color: 'green' },
+  { label: 'Offboarding', value: 'offboarding', color: 'red' },
 ];
-
-const OVERALL_STATUS_OPTIONS = [
-  { label: 'Not Started', value: 'not_started' },
-  { label: 'In Progress', value: 'in_progress' },
-  { label: 'Completed', value: 'completed' },
-  { label: 'Blocked', value: 'blocked' },
-  { label: 'Cancelled', value: 'cancelled' },
-];
+const REQUEST_TYPE_OPTIONS = REQUEST_TYPES.map(t => ({ label: t.label, value: t.value }));
+const REQUEST_TYPE_LABEL: Record<string, string> = Object.fromEntries(REQUEST_TYPES.map(t => [t.value, t.label]));
+const REQUEST_TYPE_COLOR: Record<string, string> = Object.fromEntries(REQUEST_TYPES.map(t => [t.value, t.color]));
 
 // Utility Functions
 const formatDateToDDMMYYYY = (dateString: string | undefined): string => {
   if (!dateString) return '';
-  
   const parsed = dayjs(dateString);
-  if (parsed.isValid()) {
-    return parsed.format('DD/MM/YYYY');
-  }
-  
+  if (parsed.isValid()) return parsed.format('DD/MM/YYYY');
   return dateString;
 };
 
-const getOverallStatusColor = (status: OverallStatusType): string => {
-  const colors: Record<OverallStatusType, string> = {
-    'not_started': '#1890ff',
-    'in_progress': '#faad14',
-    'completed': '#52c41a',
-    'blocked': '#f5222d',
-    'cancelled': '#666666',
-  };
-  return colors[status] || '#000000';
+const OVERALL_STATUS_COLOR_MAP: Record<string, string> = {
+  'not_started': '#1890ff', 'in_progress': '#faad14', 'completed': '#52c41a',
+  'blocked': '#f5222d', 'cancelled': '#666666',
+};
+const OVERALL_STATUS_BG_MAP: Record<string, string> = {
+  'not_started': '#e6f7ff', 'in_progress': '#fffbe6', 'completed': '#f6ffed',
+  'blocked': '#fff1f0', 'cancelled': '#fafafa',
 };
 
-const getOverallStatusBackgroundColor = (status: OverallStatusType): string => {
-  const colors: Record<OverallStatusType, string> = {
-    'not_started': '#e6f7ff',
-    'in_progress': '#fffbe6',
-    'completed': '#f6ffed',
-    'blocked': '#fff1f0',
-    'cancelled': '#fafafa',
-  };
-  return colors[status] || '#f5f5f5';
-};
+const getOverallStatusColor = (status: string): string => OVERALL_STATUS_COLOR_MAP[status] || '#000000';
+const getOverallStatusBackgroundColor = (status: string): string => OVERALL_STATUS_BG_MAP[status] || '#f5f5f5';
 
 // Main Component
 export default function ClientM() {
+  const { getConfig } = useConfig();
+
+  // Derive processing/overall status options dynamically from config context
+  const processingStatusItems = getConfig('request_processing_status')?.items ?? [];
+  const overallStatusItems = getConfig('request_overall_status')?.items ?? [];
+
+  const PROCESSING_STATUS_OPTIONS = processingStatusItems.map(i => ({ label: i.label, value: i.value }));
+  const OVERALL_STATUS_OPTIONS = overallStatusItems.map(i => ({ label: i.label, value: i.value }));
+
+  // Build display maps from config
+  const PROCESSING_STATUS_DISPLAY_MAP: Record<string, string> = Object.fromEntries(processingStatusItems.map(i => [i.value, i.label]));
+  const OVERALL_STATUS_DISPLAY_MAP: Record<string, string> = Object.fromEntries(overallStatusItems.map(i => [i.value, i.label]));
   const [requests, setRequests] = useState<ClientRequest[]>([]);
   const [form] = Form.useForm();
   const [editDrawer, setEditDrawer] = useState(false);
@@ -176,6 +121,7 @@ export default function ClientM() {
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     sno: true,
     beelineId: true,
+    requestType: true,
     description: true,
     raisedBy: true,
     processingStatus: true,
@@ -195,7 +141,7 @@ export default function ClientM() {
         if (key === 'description' && !req.description.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'raisedBy' && !req.raisedBy.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'accountAnchor' && !req.accountAnchor.toLowerCase().includes(value.toLowerCase())) return false;
-        if (key === 'processingStatus' && req.processingStatus !== value) return false;
+        if (key === 'requestType' && req.requestType !== value) return false;
         if (key === 'overallStatus' && req.overallStatus !== value) return false;
       }
       return true;
@@ -220,24 +166,30 @@ export default function ClientM() {
         const newRequests: ClientRequest[] = jsonData.map((row: any, idx: number) => {
           const sno = requests.length + idx + 1;
           
-          let processingStatus: ProcessingStatusType = 'accepted_staffing';
+          let processingStatus = PROCESSING_STATUS_OPTIONS[0]?.value || '';
           const processingValue = row['Processing Status'] || '';
           for (const [code, display] of Object.entries(PROCESSING_STATUS_DISPLAY_MAP)) {
             if (display === processingValue) {
-              processingStatus = code as ProcessingStatusType;
+              processingStatus = code;
               break;
             }
           }
           
-          let overallStatus: OverallStatusType = 'not_started';
+          let overallStatus = OVERALL_STATUS_OPTIONS[0]?.value || 'not_started';
           const overallValue = row['Overall Status'] || '';
           for (const [code, display] of Object.entries(OVERALL_STATUS_DISPLAY_MAP)) {
             if (display === overallValue) {
-              overallStatus = code as OverallStatusType;
+              overallStatus = code;
               break;
             }
           }
           
+          let requestType = '';
+          const typeValue = (row['Request Type'] || '').toString().trim();
+          const matchedType = REQUEST_TYPES.find(t => t.label.toLowerCase() === typeValue.toLowerCase() || t.value === typeValue.toLowerCase().replace(/\s+/g, '_'));
+          if (matchedType) requestType = matchedType.value;
+          else if (typeValue) requestType = typeValue;
+
           return {
             sno: sno.toString(),
             beelineId: row['Beeline ID'] || '',
@@ -247,6 +199,7 @@ export default function ClientM() {
             overallStatus,
             accountAnchor: row['Account Anchor'] || row['Account Anchor Assigned'] || '',
             dateRaised: formatDateToDDMMYYYY(row['Date Raised']),
+            requestType,
             updatedOn: formatDateToDDMMYYYY(new Date().toISOString()),
           };
         });
@@ -271,6 +224,7 @@ export default function ClientM() {
     const template = [
       {
         'Beeline ID': 'BL-001',
+        'Request Type': 'Resource Demand',
         'Description': 'Sample request description',
         'Raised by': 'John Doe',
         'Processing Status': 'Accepted by Staffing Team',
@@ -363,6 +317,16 @@ export default function ClientM() {
       hidden: !visibleColumns.beelineId,
     },
     {
+      title: 'Type',
+      dataIndex: 'requestType',
+      key: 'requestType',
+      width: 130,
+      hidden: !visibleColumns.requestType,
+      render: (type: string) => type
+        ? <Tag color={REQUEST_TYPE_COLOR[type] || 'default'} style={{ fontSize: '10px' }}>{REQUEST_TYPE_LABEL[type] || type}</Tag>
+        : <span style={{ fontSize: '11px', color: '#bfbfbf' }}>—</span>,
+    },
+    {
       title: 'Description',
       dataIndex: 'description',
       key: 'description',
@@ -388,7 +352,7 @@ export default function ClientM() {
       key: 'processingStatus',
       width: 150,
       hidden: !visibleColumns.processingStatus,
-      render: (status: ProcessingStatusType) => PROCESSING_STATUS_DISPLAY_MAP[status] || status,
+      render: (status: string) => PROCESSING_STATUS_DISPLAY_MAP[status] || status,
     },
     {
       title: 'Overall Status',
@@ -396,7 +360,7 @@ export default function ClientM() {
       key: 'overallStatus',
       width: 130,
       hidden: !visibleColumns.overallStatus,
-      render: (status: OverallStatusType) => (
+      render: (status: string) => (
         <span style={{
           backgroundColor: getOverallStatusBackgroundColor(status),
           color: getOverallStatusColor(status),
@@ -468,8 +432,14 @@ export default function ClientM() {
     }
   };
 
-  const isFilterApplied = Object.values(filters).some(v => v);
+  const [activeTypeTab, setActiveTypeTab] = useState('all');
 
+  const typeFilteredRequests = useMemo(() => {
+    if (activeTypeTab === 'all') return filteredRequests;
+    return filteredRequests.filter(r => r.requestType === activeTypeTab);
+  }, [filteredRequests, activeTypeTab]);
+
+  const isFilterApplied = Object.values(filters).some(v => v);
   const filterPanelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!showFilterPanel) return;
@@ -495,7 +465,7 @@ export default function ClientM() {
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         <Space direction="vertical" style={{ width: '100%' }} size={6}>
           <div>
-            <Typography.Title level={4} style={{ marginBottom: 2 }}>Client Requests</Typography.Title>
+            <Typography.Title level={4} style={{ marginBottom: 2 }}>Request Management</Typography.Title>
             <Text type="secondary" style={{ fontSize: '12px' }}>Manage client requests, staffing status, and processing</Text>
           </div>
           <div style={{ background: '#fff', borderRadius: '8px', padding: '16px' }}>
@@ -505,11 +475,25 @@ export default function ClientM() {
             items={[
               {
                 key: 'views',
-                label: 'Requests',
+                label: 'Overview',
                   children: (
                     <div onClick={handleContainerClick} style={{ minHeight: '500px' }}>
+                      {/* Child tabs by request type */}
+                      <Tabs
+                        activeKey={activeTypeTab}
+                        onChange={setActiveTypeTab}
+                        size="small"
+                        tabBarStyle={{ marginBottom: 12 }}
+                        items={[
+                          { key: 'all', label: <span>All <span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.length})</span></span> },
+                          ...REQUEST_TYPES.map(t => ({
+                            key: t.value,
+                            label: <span><Tag color={t.color} style={{ fontSize: '10px', marginRight: 4 }}>{t.label}</Tag><span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.filter(r => r.requestType === t.value).length})</span></span>,
+                          })),
+                        ]}
+                      />
                       <Space style={{ marginBottom: '16px', width: '100%', justifyContent: 'space-between', display: 'flex' }} direction="horizontal">
-                        <Text type="secondary">Showing: <strong>{filteredRequests.length}</strong> {filteredRequests.length !== requests.length ? `/ ${requests.length}` : ''}</Text>
+                        <Text type="secondary">Showing: <strong>{typeFilteredRequests.length}</strong> {typeFilteredRequests.length !== requests.length ? `/ ${requests.length}` : ''}</Text>
                         <Space wrap size={8}>
                           {isFilterApplied && (
                             <Button
@@ -584,7 +568,7 @@ export default function ClientM() {
                                       onClick={() => {
                                         setRequests(requests.map(r =>
                                           selectedRowKeys.includes(r.sno)
-                                            ? { ...r, overallStatus: status.value as OverallStatusType, updatedOn: formatDateToDDMMYYYY(new Date().toISOString()) }
+                                            ? { ...r, overallStatus: status.value, updatedOn: formatDateToDDMMYYYY(new Date().toISOString()) }
                                             : r
                                         ));
                                         setSelectedRowKeys([]);
@@ -612,7 +596,7 @@ export default function ClientM() {
                                       onClick={() => {
                                         setRequests(requests.map(r =>
                                           selectedRowKeys.includes(r.sno)
-                                            ? { ...r, processingStatus: status.value as ProcessingStatusType, updatedOn: formatDateToDDMMYYYY(new Date().toISOString()) }
+                                            ? { ...r, processingStatus: status.value, updatedOn: formatDateToDDMMYYYY(new Date().toISOString()) }
                                             : r
                                         ));
                                         setSelectedRowKeys([]);
@@ -668,13 +652,17 @@ export default function ClientM() {
                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Processing Status</div>
                                   <Select size="small" placeholder="All" allowClear value={filters.processingStatus || undefined} onChange={val => setFilters({ ...filters, processingStatus: val })} options={PROCESSING_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
                                 </div>
+                                 <div>
+                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Request Type</div>
+                                   <Select size="small" placeholder="All" allowClear value={filters.requestType || undefined} onChange={val => setFilters({ ...filters, requestType: val })} options={REQUEST_TYPE_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
+                                 </div>
                               </Space>
                             </div>
                           )}
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <div className="compact-table">
                               <Table<ClientRequest>
-                                dataSource={filteredRequests}
+                                dataSource={typeFilteredRequests}
                                 columns={displayColumns}
                                 pagination={{ pageSize: 15, showSizeChanger: false }}
                                 scroll={{ x: 'max-content', y: 420 }}
@@ -722,12 +710,16 @@ export default function ClientM() {
                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Processing Status</div>
                                   <Select size="small" placeholder="All" allowClear value={filters.processingStatus || undefined} onChange={val => setFilters({ ...filters, processingStatus: val })} options={PROCESSING_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
                                 </div>
+                                 <div>
+                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Request Type</div>
+                                   <Select size="small" placeholder="All" allowClear value={filters.requestType || undefined} onChange={val => setFilters({ ...filters, requestType: val })} options={REQUEST_TYPE_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
+                                 </div>
                               </Space>
                             </div>
                           )}
                           <div style={{ flex: 1 }}>
                             <Row gutter={[16, 16]}>
-                          {filteredRequests.map(request => (
+                          {typeFilteredRequests.map(request => (
                             <Col key={request.sno} xs={24} sm={24} md={12} lg={8}>
                               <Card
                                 hoverable
@@ -856,6 +848,7 @@ export default function ClientM() {
             {[
               { key: 'sno', label: 'S.No.' },
               { key: 'beelineId', label: 'Beeline ID' },
+              { key: 'requestType', label: 'Type' },
               { key: 'description', label: 'Description' },
               { key: 'raisedBy', label: 'Raised By' },
               { key: 'processingStatus', label: 'Processing Status' },
@@ -888,6 +881,9 @@ export default function ClientM() {
           >
             <Form.Item name="beelineId" label="Beeline ID" rules={[{ required: true }]}>
               <Input />
+            </Form.Item>
+            <Form.Item name="requestType" label="Request Type">
+              <Select options={REQUEST_TYPE_OPTIONS} placeholder="Select request type" allowClear />
             </Form.Item>
             <Form.Item name="description" label="Description">
               <Input.TextArea rows={3} />
