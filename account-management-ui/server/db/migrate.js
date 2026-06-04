@@ -89,6 +89,45 @@ async function migrate() {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_config_types (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      type_id    TEXT NOT NULL UNIQUE,
+      name       TEXT NOT NULL,
+      description TEXT DEFAULT "",
+      built_in   INTEGER DEFAULT 0,
+      linked_to  TEXT DEFAULT "[]",
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_config_items (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      type_id    TEXT NOT NULL,
+      item_value TEXT NOT NULL,
+      label      TEXT NOT NULL,
+      color      TEXT DEFAULT "default",
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT,
+      updated_at TEXT,
+      UNIQUE(type_id, item_value)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS app_values (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      key         TEXT NOT NULL UNIQUE,
+      value       TEXT DEFAULT "",
+      description TEXT DEFAULT "",
+      created_at  TEXT,
+      updated_at  TEXT
+    )
+  `);
+
   console.log("Migration complete.");
   db.close();
   resetDb();

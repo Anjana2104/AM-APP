@@ -1,4 +1,5 @@
-﻿import React, { createContext, useContext, useState, useCallback } from 'react';
+﻿import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import * as configApi from '../api/configApi';
 
 // ── App Values (key:value store) ─────────────────────────────────────
 
@@ -134,12 +135,14 @@ interface ConfigContextValue {
   editItem: (configId: string, itemValue: string, newLabel: string, newColor?: string) => void;
   reorderItems: (configId: string, items: ConfigItem[]) => void;
   updateLinks: (configId: string, linkedTo: string[]) => void;
+  clearAllConfigs: () => void;
   // App Values (key:value)
   appValues: AppValue[];
   getAppValue: (key: string) => string | undefined;
   setAppValue: (key: string, value: string, description?: string) => void;
   addAppValue: (key: string, value: string, description?: string) => void;
   removeAppValue: (key: string) => void;
+  clearAllValues: () => void;
 }
 
 const ConfigContext = createContext<ConfigContextValue | null>(null);
@@ -147,6 +150,40 @@ const ConfigContext = createContext<ConfigContextValue | null>(null);
 export function ConfigProvider({ children }: { children: React.ReactNode }) {
   const [configs, setConfigs] = useState<ConfigType[]>(() => loadFromStorage());
   const [appValues, setAppValues] = useState<AppValue[]>(() => loadValuesFromStorage());
+
+  // ── Load from DB on mount ───────────────────────────────────────────
+  useEffect(() => {
+    configApi.getConfigTypes().then(({ configTypes, fromServer }) => {
+      if (fromServer && configTypes.length > 0) {
+        const mapped: ConfigType[] = configTypes.map((t: any) => ({
+          id: t.typeId,
+          name: t.name,
+          description: t.description || '',
+          builtIn: !!t.builtIn,
+          linkedTo: t.linkedTo || [],
+          items: (t.items || []).map((i: any) => ({
+            value: i.itemValue,
+            label: i.label,
+            color: i.color || 'default',
+          })),
+        }));
+        setConfigs(mapped);
+        saveToStorage(mapped);
+      }
+    }).catch(() => { /* ignore, use localStorage fallback */ });
+
+    configApi.getValues().then(({ values, fromServer }) => {
+      if (fromServer && values.length > 0) {
+        const mapped: AppValue[] = values.map((v: any) => ({
+          key: v.key,
+          value: v.value || '',
+          description: v.description || '',
+        }));
+        setAppValues(mapped);
+        saveValuesToStorage(mapped);
+      }
+    }).catch(() => { /* ignore */ });
+  }, []);
 
   const persist = useCallback((next: ConfigType[]) => {
     setConfigs(next);
@@ -157,21 +194,24 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
 
   const addConfigType = useCallback((name: string, description: string) => {
     const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_' + Date.now();
-    persist([...configs, { id, name, description, items: [], builtIn: false, linkedTo: [] }]);
+    const next = [...configs, { id, name, description, items: [], builtIn: false, linkedTo: [] }];
+    persist(next);
+    configApi.createType({ typeId: id, name, description, builtIn: false, linkedTo: [] });
   }, [configs, persist]);
 
   const renameConfigType = useCallback((id: string, newName: string) => {
     persist(configs.map(c => c.id === id ? { ...c, name: newName } : c));
+    configApi.updateType(id, { name: newName });
   }, [configs, persist]);
 
   const deleteConfigType = useCallback((id: string) => {
     persist(configs.filter(c => c.id !== id || !!c.builtIn));
+    configApi.deleteType(id);
   }, [configs, persist]);
 
   const bulkImportConfigs = useCallback((entries: Array<{ name: string; values: string[] }>) => {
     let created = 0;
     let added = 0;
-    // Work on a mutable copy of current configs
     const next = configs.map(c => ({ ...c, items: [...c.items] }));
 
     entries.forEach(({ name, values }) => {
@@ -194,6 +234,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     });
 
     persist(next);
+    configApi.bulkImport(entries);
     return { created, added };
   }, [configs, persist]);
 
@@ -202,12 +243,14 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
     persist(configs.map(c =>
       c.id === configId ? { ...c, items: [...c.items, { value, label, color: color || 'default' }] } : c
     ));
+    configApi.addItem(configId, { itemValue: value, label, color: color || 'default' });
   }, [configs, persist]);
 
   const removeItem = useCallback((configId: string, itemValue: string) => {
     persist(configs.map(c =>
       c.id === configId ? { ...c, items: c.items.filter(i => i.value !== itemValue) } : c
     ));
+    configApi.deleteItem(configId, itemValue);
   }, [configs, persist]);
 
   const editItem = useCallback((configId: string, itemValue: string, newLabel: string, newColor?: string) => {
@@ -216,14 +259,23 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
         ? { ...c, items: c.items.map(i => i.value === itemValue ? { ...i, label: newLabel, color: newColor || i.color } : i) }
         : c
     ));
+    configApi.updateItem(configId, itemValue, { label: newLabel, color: newColor });
   }, [configs, persist]);
 
   const reorderItems = useCallback((configId: string, items: ConfigItem[]) => {
     persist(configs.map(c => c.id === configId ? { ...c, items } : c));
+    configApi.reorderItems(configId, items.map((it, idx) => ({ itemValue: it.value, label: it.label, color: it.color || 'default', sortOrder: idx })));
   }, [configs, persist]);
 
   const updateLinks = useCallback((configId: string, linkedTo: string[]) => {
     persist(configs.map(c => c.id === configId ? { ...c, linkedTo } : c));
+    configApi.updateType(configId, { linkedTo });
+  }, [configs, persist]);
+
+  const clearAllConfigs = useCallback(() => {
+    const builtIns = configs.filter(c => !!c.builtIn);
+    persist(builtIns);
+    configApi.deleteAllTypes();
   }, [configs, persist]);
 
   // ── App Values ──────────────────────────────────────────────────────
@@ -238,6 +290,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
 
   const setAppValue = useCallback((key: string, value: string, description?: string) => {
     persistValues(appValues.map(v => v.key === key ? { ...v, value, ...(description !== undefined ? { description } : {}) } : v));
+    configApi.upsertValue(key, value, description);
   }, [appValues, persistValues]);
 
   const addAppValue = useCallback((key: string, value: string, description?: string) => {
@@ -246,17 +299,24 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     persistValues([...appValues, { key, value, description: description ?? '' }]);
+    configApi.upsertValue(key, value, description);
   }, [appValues, persistValues, setAppValue]);
 
   const removeAppValue = useCallback((key: string) => {
     persistValues(appValues.filter(v => v.key !== key));
+    configApi.deleteValue(key);
   }, [appValues, persistValues]);
+
+  const clearAllValues = useCallback(() => {
+    persistValues([]);
+    configApi.deleteAllValues();
+  }, [persistValues]);
 
   return (
     <ConfigContext.Provider value={{
       configs, getConfig, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs,
-      addItem, removeItem, editItem, reorderItems, updateLinks,
-      appValues, getAppValue, setAppValue, addAppValue, removeAppValue,
+      addItem, removeItem, editItem, reorderItems, updateLinks, clearAllConfigs,
+      appValues, getAppValue, setAppValue, addAppValue, removeAppValue, clearAllValues,
     }}>
       {children}
     </ConfigContext.Provider>

@@ -13,6 +13,7 @@ const financeRoutes = require('./routes/finance');
 const resourceRoutes = require('./routes/resources');
 const requestRoutes = require('./routes/requests');
 const processRoutes = require('./routes/process');
+const configRoutes = require('./routes/config');
 
 const PORT = process.env.PORT || 3001;
 
@@ -39,6 +40,7 @@ app.use('/api/finance', financeRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/process', processRoutes);
+app.use('/api/config', configRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────────────
 app.use((req, res) => {

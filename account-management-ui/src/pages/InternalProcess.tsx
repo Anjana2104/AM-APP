@@ -1176,28 +1176,41 @@ export function InternalProcess() {
       </div>
       <div style={{ background: '#fff', borderRadius: 10, padding: '0 20px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
         <Tabs
-          defaultActiveKey="sow"
+          defaultActiveKey="process"
           tabBarStyle={{ marginBottom: 16, paddingTop: 4 }}
           items={[
             {
-              key: 'sow',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><FileProtectOutlined /> SOW</span>,
-              children: <SowTab onUpload={handleSowUpload} onDelete={handleSowDelete} />,
-            },
-            {
-              key: 'piw',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><IdcardOutlined /> PIW</span>,
-              children: <ComingSoon label="PIW (Person in Waiting)" />,
-            },
-            {
               key: 'process',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><NodeIndexOutlined /> Internal Process</span>,
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><NodeIndexOutlined /> Process Overview</span>,
               children: <ProcessTab rows={processRows} setRows={setProcessRows} fromServer={fromServer} setFromServer={setFromServer} />,
             },
             {
               key: 'insights',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><BarChartOutlined /> Insights</span>,
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><BarChartOutlined /> Process Insights</span>,
               children: <ProcessInsights rows={processRows} />,
+            },
+            {
+              key: 'sow-piw',
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><FileProtectOutlined /> SOW &amp; PIW</span>,
+              children: (
+                <Tabs
+                  defaultActiveKey="sow"
+                  size="small"
+                  tabBarStyle={{ marginBottom: 12 }}
+                  items={[
+                    {
+                      key: 'sow',
+                      label: <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}><FileProtectOutlined /> SOW</span>,
+                      children: <SowTab onUpload={handleSowUpload} onDelete={handleSowDelete} />,
+                    },
+                    {
+                      key: 'piw',
+                      label: <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}><IdcardOutlined /> PIW</span>,
+                      children: <ComingSoon label="PIW (Person in Waiting)" />,
+                    },
+                  ]}
+                />
+              ),
             },
           ]}
         />

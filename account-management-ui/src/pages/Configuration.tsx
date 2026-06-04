@@ -63,7 +63,7 @@ export function Configuration() {
 // ── Dropdowns Tab ─────────────────────────────────────────────────────
 
 function DropdownsTab() {
-  const { configs, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs, addItem, removeItem, editItem, updateLinks } = useConfig();
+  const { configs, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs, addItem, removeItem, editItem, updateLinks, clearAllConfigs } = useConfig();
 
   const [selectedId, setSelectedId] = useState<string | null>(configs[0]?.id ?? null);
   const [newTypeModal, setNewTypeModal] = useState(false);
@@ -118,17 +118,29 @@ function DropdownsTab() {
   };
 
   const handleDownloadTemplate = () => {
+    // Sheet 1: template rows (Linked To uses semicolon-separated IDs)
     const template = [
-      { 'Configuration Type': 'Request Priority', 'Value': 'High' },
-      { 'Configuration Type': 'Request Priority', 'Value': 'Medium' },
-      { 'Configuration Type': 'Request Priority', 'Value': 'Low' },
-      { 'Configuration Type': 'Skill Category', 'Value': 'Frontend' },
-      { 'Configuration Type': 'Skill Category', 'Value': 'Backend' },
+      { 'Configuration Type': 'Request Priority', 'Value': 'High', 'Color': 'red', 'Linked To': '' },
+      { 'Configuration Type': 'Request Priority', 'Value': 'Medium', 'Color': 'gold', 'Linked To': '' },
+      { 'Configuration Type': 'Request Priority', 'Value': 'Low', 'Color': 'green', 'Linked To': '' },
+      { 'Configuration Type': 'Skill Category', 'Value': 'Frontend', 'Color': 'blue', 'Linked To': 'resource_skill_field' },
+      { 'Configuration Type': 'Skill Category', 'Value': 'Backend', 'Color': 'cyan', 'Linked To': 'resource_skill_field' },
     ];
     const ws = XLSX.utils.json_to_sheet(template);
-    ws['!cols'] = [{ wch: 30 }, { wch: 30 }];
+    ws['!cols'] = [{ wch: 30 }, { wch: 30 }, { wch: 12 }, { wch: 40 }];
+
+    // Sheet 2: available link target IDs
+    const linkTargets = AVAILABLE_LINK_TARGETS.map(t => ({
+      'Link Target ID': t.id,
+      'Label': t.label,
+      'Module': t.module,
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(linkTargets);
+    ws2['!cols'] = [{ wch: 40 }, { wch: 40 }, { wch: 25 }];
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Config Template');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Available Link Targets');
     XLSX.writeFile(wb, 'Configuration_Upload_Template.xlsx');
   };
 
@@ -149,14 +161,23 @@ function DropdownsTab() {
           return '';
         };
 
-        // Group rows by config type name
-        const typeMap: Record<string, string[]> = {};
+        // Group rows by config type name, also capture linked_to per type
+        const typeMap: Record<string, { values: string[]; linkedTo: string[] }> = {};
         rows.forEach(row => {
           const typeName = getField(row, 'Configuration Type', 'Config Type', 'configuration_type', 'Type', 'Name');
           const value = getField(row, 'Value', 'value', 'Label', 'label', 'Item');
-          if (typeName && value) {
-            if (!typeMap[typeName]) typeMap[typeName] = [];
-            typeMap[typeName].push(value);
+          const linkedToRaw = getField(row, 'Linked To', 'linked_to', 'LinkedTo', 'Links');
+          if (typeName) {
+            if (!typeMap[typeName]) typeMap[typeName] = { values: [], linkedTo: [] };
+            if (value) typeMap[typeName].values.push(value);
+            // Parse semicolon-separated link IDs; only add valid ones
+            if (linkedToRaw) {
+              linkedToRaw.split(';').map(s => s.trim()).filter(Boolean).forEach(id => {
+                if (AVAILABLE_LINK_TARGETS.some(t => t.id === id) && !typeMap[typeName].linkedTo.includes(id)) {
+                  typeMap[typeName].linkedTo.push(id);
+                }
+              });
+            }
           }
         });
 
@@ -165,8 +186,18 @@ function DropdownsTab() {
           return;
         }
 
-        const entries = Object.entries(typeMap).map(([name, values]) => ({ name, values }));
+        const entries = Object.entries(typeMap).map(([name, { values }]) => ({ name, values }));
         const { created, added } = bulkImportConfigs(entries);
+
+        // Apply linked_to for entries that specify it
+        Object.entries(typeMap).forEach(([name, { linkedTo }]) => {
+          if (linkedTo.length > 0) {
+            setTimeout(() => {
+              const found = configs.find(c => c.name.toLowerCase() === name.toLowerCase());
+              if (found) updateLinks(found.id, linkedTo);
+            }, 300);
+          }
+        });
 
         if (created > 0 || added > 0) {
           message.success(`Imported: ${created} new type(s), ${added} value(s) added`);
@@ -196,6 +227,50 @@ function DropdownsTab() {
     message.success('Links updated');
   };
 
+  const handleExportConfigs = () => {
+    const rows: Record<string, string>[] = [];
+    configs.forEach(cfg => {
+      const linkedToLabels = (cfg.linkedTo ?? [])
+        .map(id => AVAILABLE_LINK_TARGETS.find(t => t.id === id)?.label ?? id)
+        .join('; ');
+      const linkedToIds = (cfg.linkedTo ?? []).join(';');
+      cfg.items.forEach(item => {
+        rows.push({
+          'Configuration Type': cfg.name,
+          'Value': item.label,
+          'Color': item.color || 'default',
+          'Linked To': linkedToIds,
+          'Linked To (Labels)': linkedToLabels,
+        });
+      });
+      if (cfg.items.length === 0) {
+        rows.push({
+          'Configuration Type': cfg.name,
+          'Value': '',
+          'Color': '',
+          'Linked To': linkedToIds,
+          'Linked To (Labels)': linkedToLabels,
+        });
+      }
+    });
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 30 }, { wch: 30 }, { wch: 12 }, { wch: 50 }, { wch: 60 }];
+
+    // Sheet 2: available link target reference
+    const linkTargets = AVAILABLE_LINK_TARGETS.map(t => ({
+      'Link Target ID': t.id,
+      'Label': t.label,
+      'Module': t.module,
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(linkTargets);
+    ws2['!cols'] = [{ wch: 40 }, { wch: 40 }, { wch: 25 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Configurations');
+    XLSX.utils.book_append_sheet(wb, ws2, 'Available Link Targets');
+    XLSX.writeFile(wb, 'Configurations_Export.xlsx');
+  };
+
   return (
     <div style={{ padding: '16px 0' }}>
       <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}>
@@ -216,20 +291,31 @@ function DropdownsTab() {
                     New
                   </Button>
                 </div>
-                {/* Upload first, then Download Template */}
-                <Space size={6}>
-                  <Tooltip title="Upload configuration types from Excel">
+                {/* Icon-only toolbar — labels visible on hover */}
+                <Space size={4}>
+                  <Tooltip title="Upload from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                     <Upload accept=".xlsx,.xls" beforeUpload={handleBulkUpload} showUploadList={false}>
-                      <Button size="small" icon={<UploadOutlined />} style={{ borderRadius: '6px', fontSize: '11px' }}>
-                        Upload
-                      </Button>
+                      <Button size="small" icon={<UploadOutlined />} style={{ borderRadius: '6px' }} />
                     </Upload>
                   </Tooltip>
-                  <Tooltip title="Download upload template">
-                    <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTemplate} style={{ borderRadius: '6px', fontSize: '11px' }}>
-                      Template
-                    </Button>
+                  <Tooltip title="Download template" overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTemplate} style={{ borderRadius: '6px' }} />
                   </Tooltip>
+                  <Tooltip title="Export all to Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Button size="small" icon={<DownloadOutlined />} onClick={handleExportConfigs} style={{ borderRadius: '6px', color: '#52c41a', borderColor: '#52c41a' }} />
+                  </Tooltip>
+                  <Popconfirm
+                    title="Delete all non-built-in configurations?"
+                    description="This will permanently remove all custom configuration types and their values."
+                    onConfirm={() => { clearAllConfigs(); message.success('All configurations deleted'); }}
+                    okText="Delete All"
+                    okButtonProps={{ danger: true, size: 'small' }}
+                    cancelButtonProps={{ size: 'small' }}
+                  >
+                    <Tooltip title="Delete all" overlayInnerStyle={{ fontSize: '11px' }}>
+                      <Button size="small" danger icon={<DeleteOutlined />} style={{ borderRadius: '6px' }} />
+                    </Tooltip>
+                  </Popconfirm>
                 </Space>
               </div>
 
@@ -606,7 +692,7 @@ function LinksModal({ open, configName, currentLinks, onSave, onCancel }: LinksM
 // ── Values Tab ────────────────────────────────────────────────────────
 
 function ValuesTab() {
-  const { appValues, addAppValue, setAppValue, removeAppValue } = useConfig();
+  const { appValues, addAppValue, setAppValue, removeAppValue, clearAllValues } = useConfig();
 
   const [addKey, setAddKey] = useState('');
   const [addVal, setAddVal] = useState('');
@@ -632,15 +718,99 @@ function ValuesTab() {
     message.success('Value updated');
   };
 
+  const handleDownloadValuesTemplate = () => {
+    const template = [
+      { Key: 'SOW_STORAGE_URL', Value: 'https://sharepoint.com/...', Description: 'SharePoint URL for SOW documents' },
+      { Key: 'REPORT_EMAIL', Value: 'reports@company.com', Description: 'Email address for report notifications' },
+    ];
+    const ws = XLSX.utils.json_to_sheet(template);
+    ws['!cols'] = [{ wch: 25 }, { wch: 50 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Values Template');
+    XLSX.writeFile(wb, 'AppValues_Upload_Template.xlsx');
+  };
+
+  const handleUploadValues = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target?.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        if (!rows.length) { message.warning('No data found in the file'); return; }
+
+        const getField = (row: Record<string, string>, ...keys: string[]) => {
+          for (const k of Object.keys(row)) {
+            if (keys.some(key => k.trim().toLowerCase() === key.toLowerCase())) return (row[k] || '').toString().trim();
+          }
+          return '';
+        };
+
+        let count = 0;
+        rows.forEach(row => {
+          const k = getField(row, 'Key', 'key').toUpperCase().replace(/\s+/g, '_');
+          const v = getField(row, 'Value', 'value');
+          const d = getField(row, 'Description', 'description');
+          if (k && v) { addAppValue(k, v, d); count++; }
+        });
+
+        if (count > 0) message.success(`${count} value(s) imported`);
+        else message.warning('No valid rows found. Ensure columns are "Key" and "Value".');
+      } catch {
+        message.error('Failed to read file. Please use the provided template.');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    return false;
+  };
+
+  const handleExportValues = () => {
+    const rows = appValues.map(v => ({ Key: v.key, Value: v.value, Description: v.description || '' }));
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [{ wch: 25 }, { wch: 50 }, { wch: 40 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'App Values');
+    XLSX.writeFile(wb, 'AppValues_Export.xlsx');
+  };
+
   return (
     <div style={{ padding: '16px 0' }}>
       <div style={{ marginBottom: 16 }}>
-        <Text strong style={{ fontSize: '13px' }}>Application Key-Value Settings</Text>
-        <div style={{ marginTop: 2 }}>
-          <Text type="secondary" style={{ fontSize: '12px' }}>
-            Store configurable values (URLs, settings, flags) used across the application.
-            These are referenced by key in linked features.
-          </Text>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <Text strong style={{ fontSize: '13px' }}>Application Key-Value Settings</Text>
+            <div style={{ marginTop: 2 }}>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                Store configurable values (URLs, settings, flags) used across the application.
+                These are referenced by key in linked features.
+              </Text>
+            </div>
+          </div>
+          <Space size={4}>
+            <Tooltip title="Upload from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Upload accept=".xlsx,.xls" beforeUpload={handleUploadValues} showUploadList={false}>
+                <Button size="small" icon={<UploadOutlined />} style={{ borderRadius: '6px' }} />
+              </Upload>
+            </Tooltip>
+            <Tooltip title="Download template" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadValuesTemplate} style={{ borderRadius: '6px' }} />
+            </Tooltip>
+            <Tooltip title="Export all to Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button size="small" icon={<DownloadOutlined />} onClick={handleExportValues} style={{ borderRadius: '6px', color: '#52c41a', borderColor: '#52c41a' }} />
+            </Tooltip>
+            <Popconfirm
+              title="Delete all application values?"
+              description="This will permanently remove all key-value settings."
+              onConfirm={() => { clearAllValues(); message.success('All values deleted'); }}
+              okText="Delete All"
+              okButtonProps={{ danger: true, size: 'small' }}
+              cancelButtonProps={{ size: 'small' }}
+            >
+              <Tooltip title="Delete all" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button size="small" danger icon={<DeleteOutlined />} style={{ borderRadius: '6px' }} />
+              </Tooltip>
+            </Popconfirm>
+          </Space>
         </div>
       </div>
 
