@@ -23,6 +23,10 @@ export interface FinanceProject {
   active?: number | boolean;
   /** keyed by month label e.g. "Oct'25" → number */
   revenue: Record<string, number>;
+  /** keyed by month label e.g. "Oct'25" → 'booked' | 'anticipated'; default 'booked' */
+  milestoneTypes?: Record<string, 'booked' | 'anticipated'>;
+  /** Free-text project comment */
+  comments?: string;
   monthHeaders?: string[];
 }
 
@@ -113,6 +117,22 @@ export async function clearAll(): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
   const res = await fetch(`${BASE}/projects`, { method: 'DELETE' });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+// ── Update milestone types for a project (per-month, no amount change) ───────
+export async function updateMilestoneTypes(
+  projectId: number,
+  types: Record<string, 'booked' | 'anticipated'>,
+): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/projects/${projectId}/milestone-types`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ types }),
+  });
   const data = await res.json();
   return data.ok === true;
 }

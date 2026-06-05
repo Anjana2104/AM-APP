@@ -159,6 +159,7 @@ export default function App() {
   const [expandedSections, setExpandedSections] = useState<Set<EAMSection>>(new Set<EAMSection>());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [resources, setResources] = useState<ResourceRow[]>([]);
+  const [resourceInfoRoleFilter, setResourceInfoRoleFilter] = useState<string | undefined>(undefined);
 
   // Sync URL → state when user navigates with browser back/forward or opens bookmarked hash
   useEffect(() => {
@@ -204,8 +205,8 @@ export default function App() {
         case 'executive_summary':    return <FinanceSummary onNavigate={page => navigateTo(page, 'executive')} />;
         case 'executive_revenue':     return <FinanceManagement />;
         case 'executive_invoicing':   return <InvoiceManagement />;
-        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} />;
-        case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} />;
+        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} initialRoleFilter={resourceInfoRoleFilter} onFilterApplied={() => setResourceInfoRoleFilter(undefined)} />;
+        case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} onNavigate={(page, roleFilter) => { setResourceInfoRoleFilter(roleFilter); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} />;
         case 'resources_upskilling':  return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Upskilling — Coming Soon</div>;
         case 'clientmgmt_requests':   return <RequestManagement activeTab="requests" />;
         case 'clientmgmt_connects':   return <InternalProcess />;

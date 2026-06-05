@@ -35,6 +35,7 @@ async function runMigrations() {
   try { db.run(`ALTER TABLE finance_projects ADD COLUMN active INTEGER DEFAULT 1`); } catch (_) {}
   try { db.run(`ALTER TABLE finance_projects ADD COLUMN status TEXT DEFAULT 'Active'`); } catch (_) {}
   try { db.run(`ALTER TABLE finance_projects ADD COLUMN company TEXT DEFAULT ""`); } catch (_) {}
+  try { db.run(`ALTER TABLE finance_projects ADD COLUMN comments TEXT DEFAULT ""`); } catch (_) {}
   db.run(`UPDATE finance_projects SET status = 'Active' WHERE status IS NULL AND (active IS NULL OR active = 1)`);
   db.run(`UPDATE finance_projects SET status = 'Inactive' WHERE status IS NULL AND active = 0`);
   db.run(`UPDATE finance_projects SET active = CASE WHEN status = 'Inactive' THEN 0 ELSE 1 END WHERE status IS NOT NULL`);
@@ -43,8 +44,10 @@ async function runMigrations() {
 
   db.run(`CREATE TABLE IF NOT EXISTS finance_revenue (
     id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
-    month TEXT NOT NULL, amount REAL DEFAULT 0, UNIQUE(project_id, month)
+    month TEXT NOT NULL, amount REAL DEFAULT 0,
+    milestone_type TEXT DEFAULT 'booked', UNIQUE(project_id, month)
   )`);
+  try { db.run(`ALTER TABLE finance_revenue ADD COLUMN milestone_type TEXT DEFAULT 'booked'`); } catch (_) {}
   db.run(`CREATE TABLE IF NOT EXISTS client_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
     beeline_id TEXT NOT NULL UNIQUE, description TEXT DEFAULT "",

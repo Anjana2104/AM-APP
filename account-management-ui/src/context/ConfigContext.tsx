@@ -17,6 +17,26 @@ const DEFAULT_APP_VALUES: AppValue[] = [
     value: 'https://rockwellautomation-my.sharepoint.com/:f:/r/personal/anjana_sharma_rockwellautomation_com/Documents/Anjana%20Sharma%20-%20All%20Important%20Documents/1.%20My%20work/RA%20Work/New%20folder?csf=1&web=1&e=Mchxcf',
     description: 'SharePoint folder URL where SOW documents are stored',
   },
+  {
+    key: 'PIW_STORAGE_URL',
+    value: '',
+    description: 'SharePoint folder URL where PIW documents are stored',
+  },
+  {
+    key: 'RESUME_STORAGE_URL',
+    value: '',
+    description: 'SharePoint folder URL where employee resumes are stored',
+  },
+  {
+    key: 'UTIL_LOW_THRESHOLD',
+    value: '70',
+    description: 'Resource utilisation % below which bench/utilisation stats are highlighted red (default: 70)',
+  },
+  {
+    key: 'OPEN_REQUESTS_ALERT_PCT',
+    value: '50',
+    description: 'Open client requests % above which the open count is highlighted red (default: 50)',
+  },
 ];
 
 function loadValuesFromStorage(): AppValue[] {

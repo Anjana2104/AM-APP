@@ -22,6 +22,7 @@ import * as financeApi from '../api/financeApi';
 import * as invoiceApi from '../api/invoiceApi';
 import * as resourceApi from '../api/resourceApi';
 import * as requestApi from '../api/requestApi';
+import { useConfig } from '../context/ConfigContext';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const MONTH_ORDER = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
@@ -107,7 +108,7 @@ function statusColor(key: string, idx: number): string {
 function KpiTile({
   icon, label, value, sub, trend, trendUp, color, onClick,
 }: {
-  icon: React.ReactNode; label: string; value: string; sub?: React.ReactNode;
+  icon: React.ReactNode; label: string; value: React.ReactNode; sub?: React.ReactNode;
   trend?: string; trendUp?: boolean; color: string; onClick?: () => void;
 }) {
   return (
@@ -210,6 +211,10 @@ interface AccountSummaryProps {
 }
 
 export function AccountSummary({ onNavigate }: AccountSummaryProps) {
+  const { getAppValue } = useConfig();
+  const utilLowThreshold    = parseInt(getAppValue('UTIL_LOW_THRESHOLD') ?? '70', 10) || 70;
+  const openAlertPct        = parseInt(getAppValue('OPEN_REQUESTS_ALERT_PCT') ?? '50', 10) || 50;
+
   const [loading, setLoading] = useState(true);
   const [revProjects, setRevProjects]   = useState<financeApi.FinanceProject[]>([]);
   const [revMonths,   setRevMonths]     = useState<string[]>([]);
@@ -506,20 +511,37 @@ export function AccountSummary({ onNavigate }: AccountSummaryProps) {
         />
         <KpiTile
           icon={<TeamOutlined />} color="#722ED1"
-          label="Active Resources" value={`${resourceMetrics.active}`}
-          sub={`${resourceMetrics.onBench} bench · ${resourceMetrics.total} total`}
+          label="Total Resources" value={`${resourceMetrics.total}`}
+          sub={
+            <span>
+              <span style={{ color: '#52C41A', fontWeight: 600 }}>{resourceMetrics.active} active</span>
+              {' · '}
+              <span style={{ color: resourceMetrics.utilPct < utilLowThreshold ? '#FF4D4F' : '#FFA940', fontWeight: 600 }}>
+                {resourceMetrics.onBench} bench
+              </span>
+            </span>
+          }
           onClick={() => onNavigate?.('resources_info')}
         />
         <KpiTile
           icon={<ApartmentOutlined />} color="#FFA940"
-          label="Resource Utilisation" value={`${resourceMetrics.utilPct}%`}
+          label="Resource Utilisation"
+          value={<span style={{ color: resourceMetrics.utilPct < utilLowThreshold ? '#FF4D4F' : undefined }}>{resourceMetrics.utilPct}%</span>}
           sub={`${resourceMetrics.total} team members`}
           onClick={() => onNavigate?.('resources_utilization')}
         />
         <KpiTile
           icon={<FileTextOutlined />} color="#EB2F96"
           label="Client Requests" value={`${requestMetrics.total}`}
-          sub={`${requestMetrics.open} open · ${requestMetrics.closed} closed`}
+          sub={
+            <span>
+              <span style={{ color: requestMetrics.total && (requestMetrics.open / requestMetrics.total * 100) > openAlertPct ? '#FF4D4F' : '#1890FF', fontWeight: 600 }}>
+                {requestMetrics.open} open
+              </span>
+              {' · '}
+              <span style={{ color: '#52C41A', fontWeight: 600 }}>{requestMetrics.closed} closed</span>
+            </span>
+          }
           onClick={() => onNavigate?.('clientmgmt_requests')}
         />
       </div>
@@ -595,11 +617,11 @@ export function AccountSummary({ onNavigate }: AccountSummaryProps) {
             {[
               { label: 'Total', val: resourceMetrics.total, color: '#722ED1', bg: '#f9f0ff' },
               { label: 'Active', val: resourceMetrics.active, color: '#52C41A', bg: '#f6ffed' },
-              { label: 'Bench', val: resourceMetrics.onBench, color: '#FFA940', bg: '#fffbe6' },
+              { label: 'Bench', val: resourceMetrics.onBench, color: resourceMetrics.utilPct < utilLowThreshold ? '#FF4D4F' : '#FFA940', bg: resourceMetrics.utilPct < utilLowThreshold ? '#fff1f0' : '#fffbe6' },
             ].map(m => (
               <div key={m.label} style={{ flex: 1, background: m.bg, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
                 <div style={{ fontSize: '11px', color: m.color, fontWeight: 600 }}>{m.label}</div>
-                <div style={{ fontSize: '22px', fontWeight: 800, color: '#0a1e4a' }}>{m.val}</div>
+                <div style={{ fontSize: '22px', fontWeight: 800, color: m.label === 'Bench' && resourceMetrics.utilPct < utilLowThreshold ? '#FF4D4F' : '#0a1e4a' }}>{m.val}</div>
               </div>
             ))}
           </div>
@@ -631,7 +653,7 @@ export function AccountSummary({ onNavigate }: AccountSummaryProps) {
             <div style={{ textAlign: 'center', color: '#bfbfbf', fontSize: '12px', padding: '16px 0' }}>No resource data</div>
           )}
           <StatRow label="Utilisation Rate" value={`${resourceMetrics.utilPct}%`}
-            badge={<span style={{ fontSize: '10px', color: resourceMetrics.utilPct >= 70 ? '#52C41A' : '#FFA940' }}>{resourceMetrics.utilPct >= 70 ? '✓ Healthy' : '⚠ Low'}</span>}
+            badge={<span style={{ fontSize: '10px', color: resourceMetrics.utilPct >= utilLowThreshold ? '#52C41A' : '#FF4D4F' }}>{resourceMetrics.utilPct >= utilLowThreshold ? '✓ Healthy' : '⚠ Low'}</span>}
           />
         </SectionCard>
 
@@ -662,12 +684,12 @@ export function AccountSummary({ onNavigate }: AccountSummaryProps) {
           <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
             {[
               { label: 'Total', val: requestMetrics.total, color: '#595959', bg: '#fafafa' },
-              { label: 'Open', val: requestMetrics.open, color: '#1890FF', bg: '#e6f4ff' },
+              { label: 'Open', val: requestMetrics.open, color: requestMetrics.total && (requestMetrics.open / requestMetrics.total * 100) > openAlertPct ? '#FF4D4F' : '#1890FF', bg: requestMetrics.total && (requestMetrics.open / requestMetrics.total * 100) > openAlertPct ? '#fff1f0' : '#e6f4ff' },
               { label: 'Closed', val: requestMetrics.closed, color: '#52C41A', bg: '#f6ffed' },
             ].map(m => (
               <div key={m.label} style={{ flex: 1, background: m.bg, borderRadius: 10, padding: '10px 8px', textAlign: 'center' }}>
                 <div style={{ fontSize: '11px', color: m.color, fontWeight: 600 }}>{m.label}</div>
-                <div style={{ fontSize: '22px', fontWeight: 800, color: '#0a1e4a' }}>{m.val}</div>
+                <div style={{ fontSize: '22px', fontWeight: 800, color: m.color }}>{m.val}</div>
               </div>
             ))}
           </div>

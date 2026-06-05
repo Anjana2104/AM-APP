@@ -295,6 +295,23 @@ code {
   }
 }
 
+/* Scrollbar styling - light/white background */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #ffffff;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d9d9d9;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #bfbfbf;
+}
+
 /* Client Management Table Styling - Professional Grey & Black Theme */
 .client-m-table .ant-table-thead > tr > th {
   background: #262626 !important;
@@ -393,3 +410,9 @@ code {
 .compact-table .ant-table-row {
   height: auto;
 }
+
+/* Allow InputNumber text color to inherit from parent wrapper (used for anticipated=red in milestones) */
+.ant-input-number .ant-input-number-input {
+  color: inherit !important;
+}
+

@@ -608,9 +608,9 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     };
 
     const base: ColumnType<InvRow>[] = [
-      { title: 'S.No.', dataIndex: 'sno', key: 'sno', width: 42, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
+      { title: 'S.No.', dataIndex: 'sno', key: 'sno', width: 42, fixed: 'left' as const, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
       {
-        title: 'OA Project Code', dataIndex: 'project', key: 'project', width: 280,
+        title: 'OA Project Code', dataIndex: 'project', key: 'project', width: 280, fixed: 'left' as const,
         render: (v: string, r: InvRow) => (
           <Tooltip title={v} overlayInnerStyle={{ fontSize: '11px' }}>
             <Input
@@ -628,7 +628,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
       },
       {
-        title: 'Code', dataIndex: 'code', key: 'code', width: 90,
+        title: 'Code', dataIndex: 'code', key: 'code', width: 90, fixed: 'left' as const,
         render: (_: string, r: InvRow) => (
           <span style={{ fontSize: '11px', fontFamily: 'monospace', color: '#595959' }}>{deriveCode(r.project)}</span>
         ),
@@ -1026,9 +1026,79 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
             </div>
           ) : (
             <Table size="small" dataSource={displayRows} columns={columns}
-              pagination={{ pageSize: 15, showSizeChanger: false }}
-              scroll={{ x: 'max-content', y: 420 }}
-              style={{ background: '#fff', borderRadius: 8 }} />
+              pagination={{ pageSize: 12, showSizeChanger: false }}
+              scroll={{ x: 'max-content' }}
+              style={{ background: '#fff', borderRadius: 8 }}
+              summary={() => {
+                if (!displayRows.length) return null;
+                const start = filters.fy ? parseInt(filters.fy) : 0;
+                // All filtered rows across all pages
+                const allFiltered = rows.filter(r => {
+                  if (filters.project && !r.project.toLowerCase().includes(filters.project.toLowerCase())) return false;
+                  if (filters.company && !r.company.toLowerCase().includes(filters.company.toLowerCase())) return false;
+                  if (filters.status === 'active' && r.status !== 'Active') return false;
+                  if (filters.status === 'inactive' && r.status !== 'Inactive') return false;
+                  return true;
+                });
+                const monthTotals = filteredMonthHeaders.map((_, di) => {
+                  const ai = filters.fy ? start + di : di;
+                  return allFiltered.reduce((t, r) => t + (r.revenue[ai] || 0), 0);
+                });
+                const grandTotal = monthTotals.reduce((a, b) => a + b, 0);
+                const fmtT = (v: number) => currency === 'USD'
+                  ? `$ ${(v * exchangeRate).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+                  : `₹ ${v.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+                let cellIdx = 0;
+                let skippedSno = false;
+                let labelEmitted = false;
+                return (
+                  <Table.Summary fixed="bottom">
+                    <Table.Summary.Row style={{ background: '#f0f5ff' }}>
+                      {columns.map(col => {
+                        const key = col.key as string;
+                        const isMonth = filteredMonthHeaders.includes(key);
+                        const isTotal = key === 'total';
+                        const isActions = key === 'actions';
+                        const isSno = key === 'sno';
+                        const isProject = key === 'project';
+                        const idx = cellIdx++;
+                        if (isSno) { skippedSno = true; return null; }
+                        if (isProject && skippedSno && !labelEmitted) {
+                          labelEmitted = true;
+                          return (
+                            <Table.Summary.Cell key={key} index={idx - 1} colSpan={2}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#003a8c' }}>All Projects Total</span>
+                            </Table.Summary.Cell>
+                          );
+                        }
+                        if (isMonth) {
+                          const di = filteredMonthHeaders.indexOf(key);
+                          const t = monthTotals[di] || 0;
+                          return (
+                            <Table.Summary.Cell key={key} index={idx} align="left">
+                              <span style={{ fontSize: '10px', fontWeight: 700, color: t ? '#003a8c' : '#bfbfbf', whiteSpace: 'nowrap' }}>
+                                {t ? fmtT(t) : '—'}
+                              </span>
+                            </Table.Summary.Cell>
+                          );
+                        }
+                        if (isTotal) {
+                          return (
+                            <Table.Summary.Cell key={key} index={idx} align="left">
+                              <div style={{ background: '#FFA940', color: '#fff', borderRadius: 4, padding: '1px 6px', fontSize: '11px', fontWeight: 700, whiteSpace: 'nowrap', display: 'inline-block' }}>
+                                {fmtT(grandTotal)}
+                              </div>
+                            </Table.Summary.Cell>
+                          );
+                        }
+                        if (isActions) return <Table.Summary.Cell key={key} index={idx} />;
+                        return <Table.Summary.Cell key={key} index={idx} />;
+                      })}
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                );
+              }}
+            />
           )}
         </div>
       </div>
@@ -1231,7 +1301,7 @@ function InvoiceInsights({ data, monthHeaders }: InvoiceInsightsProps) {
   const qData = useMemo(() => {
     const fyNum = parseInt(fiscalYear.replace('FY', ''));
     const quarters = [0, 1, 2, 3].map(q => {
-      const positions = [q * 3, q * 3 + 1, q * 3 + 2]; // positions within FY (0–11)
+      const positions = [q * 3, q * 3 + 1, q * 3 + 2];
       const mLabels = positions.map(pos => fyMonthLabel(fyNum, pos));
       const total = data.reduce((t, r) =>
         t + mLabels.reduce((s, lbl) => {
@@ -1247,6 +1317,19 @@ function InvoiceInsights({ data, monthHeaders }: InvoiceInsightsProps) {
     };
   }, [data, monthHeaders, fiscalYear]);
 
+  const monthlyData = useMemo(() => {
+    const fyNum = parseInt(fiscalYear.replace('FY', ''));
+    const months: { label: string; total: number; pct: number }[] = [];
+    for (let pos = 0; pos < 12; pos++) {
+      const lbl = fyMonthLabel(fyNum, pos);
+      const idx = monthHeaders.indexOf(lbl);
+      const total = idx !== -1 ? data.reduce((t, r) => t + (r.revenue[idx] || 0), 0) : 0;
+      months.push({ label: lbl, total, pct: 0 });
+    }
+    const max = Math.max(...months.map(m => m.total), 1);
+    return months.map(m => ({ ...m, pct: Math.round((m.total / max) * 100) }));
+  }, [data, monthHeaders, fiscalYear]);
+
   const yoyData = useMemo(() => {
     if (availableFYs.length < 2) return null;
     const calc = (fyLabel: string) => {
@@ -1260,8 +1343,6 @@ function InvoiceInsights({ data, monthHeaders }: InvoiceInsightsProps) {
     const fy1 = calc(availableFYs[0]), fy2 = calc(availableFYs[1]);
     return { fy1, fy2, pct: fy1 ? Math.round(((fy2 - fy1) / fy1) * 100) : 0, labels: [availableFYs[0], availableFYs[1]] };
   }, [data, availableFYs, monthHeaders]);
-
-  if (!data || !data.length) return <Empty description="Upload data to view insights" style={{ marginTop: 48 }} />;
 
   const qColors = ['#1890FF', '#52C41A', '#FFA940', '#FF7875'];
   const qPctColor = (p: number) => p >= 30 ? '#52C41A' : p >= 20 ? '#FFA940' : '#FF7875';
@@ -1286,70 +1367,59 @@ function InvoiceInsights({ data, monthHeaders }: InvoiceInsightsProps) {
     }
   };
 
+  if (!data || !data.length) return <Empty description="Upload data to view insights" style={{ marginTop: 48 }} />;
+
   return (
-    <Space direction="vertical" style={{ width: '100%' }} size="large">
-      <div ref={insightsRef} style={{ padding: '8px 0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div>
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: '#001529', marginBottom: 4 }}>Invoice Insights – {fiscalYear}</h2>
-            <p style={{ fontSize: '12px', color: '#8c8c8c', margin: 0 }}>Quarterly invoice amount breakdown</p>
-          </div>
-          <Space wrap>
-            {availableFYs.length > 0 && (
-              <Space size={4}>
-                <Text style={{ fontSize: '11px', color: '#8c8c8c' }}>FY:</Text>
-                <Select
-                  size="small"
-                  value={fiscalYear}
-                  onChange={v => setFiscalYear(v as string)}
-                  options={availableFYs.map(fy => ({ label: fy, value: fy }))}
-                  style={{ minWidth: 90, fontSize: '11px' }}
-                />
-              </Space>
+    <div style={{ width: '100%', position: 'relative' }}>
+      <div ref={insightsRef} style={{ padding: '4px 0 8px' }}>
+        {/* Filter bar: USD left, spacer, FY + download right */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+          {/* Currency – leftmost */}
+          <Space size={6}>
+            <Tooltip title={currency === 'INR' ? 'Switch to USD' : 'Switch to INR'} overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button size="small" icon={<DollarOutlined />}
+                type={currency === 'USD' ? 'primary' : 'default'}
+                onClick={() => setCurrency(c => c === 'INR' ? 'USD' : 'INR')}
+                style={{ fontSize: '11px' }}>
+                {currency}
+              </Button>
+            </Tooltip>
+            {currency === 'USD' && (
+              <Tooltip title="Exchange rate (INR → USD)" overlayInnerStyle={{ fontSize: '11px' }}>
+                <InputNumber size="small" value={exchangeRate}
+                  onChange={v => setExchangeRate(v || 0.013)}
+                  step={0.001} precision={4} min={0.0001}
+                  style={{ width: 80, fontSize: '11px' }} prefix="×" />
+              </Tooltip>
             )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Tooltip title={currency === 'INR' ? 'Switch to USD' : 'Switch to INR'} overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button
-                  size="small"
-                  icon={<DollarOutlined />}
-                  type={currency === 'USD' ? 'primary' : 'default'}
-                  onClick={() => setCurrency(c => c === 'INR' ? 'USD' : 'INR')}
-                  style={{ fontSize: '11px' }}
-                >
-                  {currency}
-                </Button>
-              </Tooltip>
-              {currency === 'USD' && (
-                <Tooltip title="Exchange rate (INR → USD)" overlayInnerStyle={{ fontSize: '11px' }}>
-                  <InputNumber
-                    size="small"
-                    value={exchangeRate}
-                    onChange={v => setExchangeRate(v || 0.013)}
-                    step={0.001}
-                    precision={4}
-                    min={0.0001}
-                    style={{ width: 80, fontSize: '11px' }}
-                    prefix="×"
-                  />
-                </Tooltip>
-              )}
-              <Tooltip title="Export as PNG" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button
-                  size="small"
-                  icon={<PictureOutlined />}
-                  loading={exporting}
-                  onClick={handleExportPNG}
-                  style={{ fontSize: '11px' }}
-                >
-                  Export PNG
-                </Button>
-              </Tooltip>
-            </div>
           </Space>
+
+          {/* Spacer pushes filters + download to right */}
+          <div style={{ flex: 1 }} />
+
+          {/* FY filter – right side */}
+          {availableFYs.length > 0 && (
+            <Space size={4}>
+              <Text style={{ fontSize: '11px', color: '#8c8c8c' }}>FY:</Text>
+              <Select size="small" value={fiscalYear}
+                onChange={v => setFiscalYear(v as string)}
+                options={availableFYs.map(fy => ({ label: fy, value: fy }))}
+                style={{ minWidth: 90, fontSize: '11px' }} />
+            </Space>
+          )}
+
+          {/* Download icon – aligned with filter row */}
+          <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
+            <Button size="small" type="text"
+              icon={<DownloadOutlined style={{ fontSize: 15, color: '#8c8c8c' }} />}
+              loading={exporting} onClick={handleExportPNG}
+              style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 0 }} />
+          </Tooltip>
         </div>
 
-        <div style={{ background: 'linear-gradient(135deg, #001529 0%, #002A4D 100%)', borderRadius: 8, padding: '16px 20px', color: '#fff' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 16 }}>
+        {/* Summary bar */}
+        <div style={{ background: 'linear-gradient(135deg, #001529 0%, #002A4D 100%)', borderRadius: 8, padding: '16px 20px', color: '#fff', marginBottom: 20 }}>
+          <div style={{ display: 'flex', gap: 40, flexWrap: 'wrap', alignItems: 'center' }}>
             <div>
               <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.7)' }}>Annual Invoice Amount ({currency})</div>
               <div style={{ fontSize: '22px', fontWeight: 700, color: '#FFA940', marginTop: 4 }}>{fmt(qData.grand)}</div>
@@ -1361,64 +1431,83 @@ function InvoiceInsights({ data, monthHeaders }: InvoiceInsightsProps) {
           </div>
         </div>
 
-        <Row gutter={[12, 12]}>
+        {/* Quarterly KPI cards */}
+        <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
           {qData.quarters.map((q, i) => (
             <Col key={q.label} xs={24} sm={12} md={6}>
               <Card style={{ border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8 }} hoverable>
-                <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: 2 }}>{q.label}</div>
+                <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: 2 }}>{q.label}</div>
                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>{q.months}</div>
-                <div style={{ fontSize: '20px', fontWeight: 700, color: qPctColor(q.pct), marginBottom: 4 }}>{fmt(q.total)}</div>
-                <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: 8 }}>{q.pct}% Annual</div>
-                <Progress percent={q.pct} strokeColor={qPctColor(q.pct)} format={() => ''} size="small" />
+                <div style={{ fontSize: '18px', fontWeight: 700, color: qPctColor(q.pct), marginBottom: 4 }}>{fmt(q.total)}</div>
+                <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: 6 }}>{q.pct}% of annual</div>
+                <Progress percent={q.pct} strokeColor={qColors[i]} format={() => ''} size="small" />
               </Card>
             </Col>
           ))}
         </Row>
 
-        <Card style={{ border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8 }}>
-          <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: 16 }}>Quarterly Comparison</h3>
-          <Row gutter={[24, 24]}>
-            {qData.quarters.map((q, i) => (
-              <Col key={q.label} xs={24} sm={12} md={6}>
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ width: 90, height: 90, borderRadius: '50%', background: qColors[i], margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '16px', fontWeight: 700 }}>
-                    {q.pct}%
+        {/* Monthly breakdown bar chart */}
+        <Card style={{ border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8, marginBottom: 16 }}>
+          <h3 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 16px' }}>Monthly Breakdown – {fiscalYear}</h3>
+          <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 140, width: '100%' }}>
+            {monthlyData.map((m, i) => {
+              const qIdx = Math.floor(i / 3);
+              const barColor = qColors[qIdx];
+              return (
+                <div key={m.label} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <Tooltip title={fmt(m.total)} overlayInnerStyle={{ fontSize: '11px' }}>
+                    <div style={{ width: '60%', height: 100, display: 'flex', alignItems: 'flex-end' }}>
+                      <div style={{
+                        width: '100%',
+                        height: `${Math.max(m.pct, 3)}%`,
+                        background: barColor,
+                        borderRadius: '3px 3px 0 0',
+                        transition: 'height 0.3s ease',
+                        cursor: 'default',
+                      }} />
+                    </div>
+                  </Tooltip>
+                  <div style={{ fontSize: '9px', color: '#8c8c8c', whiteSpace: 'nowrap', transform: 'rotate(-40deg)', transformOrigin: 'top center', marginTop: 6, lineHeight: 1 }}>
+                    {m.label}
                   </div>
-                  <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: 4 }}>{q.label}</div>
-                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>{q.months}</div>
-                  <div style={{ fontSize: '12px', color: '#8c8c8c' }}>{fmt(q.total)}</div>
                 </div>
-              </Col>
+              );
+            })}
+          </div>
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: 16, marginTop: 30, flexWrap: 'wrap' }}>
+            {['Q1 (Oct–Dec)', 'Q2 (Jan–Mar)', 'Q3 (Apr–Jun)', 'Q4 (Jul–Sep)'].map((q, i) => (
+              <span key={q} style={{ fontSize: '11px', color: '#595959', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: qColors[i] }} />
+                {q}
+              </span>
             ))}
-          </Row>
+          </div>
         </Card>
 
         {yoyData && (
           <Card style={{ border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.08)', borderRadius: 8 }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: 16 }}>Year-over-Year Comparison</h3>
+            <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: 16 }}>Year-over-Year Comparison</h3>
             <Row gutter={[16, 16]}>
               {[
                 { label: yoyData.labels[0], value: yoyData.fy1, color: '#1890FF' },
                 { label: yoyData.labels[1], value: yoyData.fy2, color: '#52C41A' },
               ].map(({ label, value, color }) => (
                 <Col key={label} xs={24} sm={12}>
-                  <div style={{ padding: 12, background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
-                    <div style={{ fontSize: '12px', fontWeight: 600, background: '#f5f5f5', padding: '6px 8px', borderRadius: 4, marginBottom: 8 }}>{label}</div>
-                    <div style={{ fontSize: '20px', fontWeight: 700, color, marginBottom: 4 }}>{fmt(value)}</div>
-                    <div style={{ fontSize: '11px', color: '#8c8c8c' }}>Total Invoice Amount</div>
+                  <div style={{ padding: 12, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#8c8c8c', marginBottom: 6 }}>{label}</div>
+                    <div style={{ fontSize: '20px', fontWeight: 700, color, marginBottom: 2 }}>{fmt(value)}</div>
+                    <div style={{ fontSize: '11px', color: '#bfbfbf' }}>Total Invoice Amount</div>
                   </div>
                 </Col>
               ))}
               <Col xs={24}>
-                <div style={{ padding: 12, background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
-                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>Year-over-Year Growth</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    <div style={{ fontSize: '24px', fontWeight: 700, color: yoyData.pct >= 0 ? '#52C41A' : '#FF7875' }}>
-                      {yoyData.pct >= 0 ? '+' : ''}{yoyData.pct}%
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
-                      {yoyData.pct >= 0 ? 'Growth' : 'Decline'} from {yoyData.labels[0]} to {yoyData.labels[1]}
-                    </div>
+                <div style={{ padding: '10px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <div style={{ fontSize: '22px', fontWeight: 700, color: yoyData.pct >= 0 ? '#52C41A' : '#FF7875' }}>
+                    {yoyData.pct >= 0 ? '+' : ''}{yoyData.pct}%
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
+                    {yoyData.pct >= 0 ? 'Growth' : 'Decline'} from {yoyData.labels[0]} to {yoyData.labels[1]}
                   </div>
                 </div>
               </Col>
@@ -1426,7 +1515,7 @@ function InvoiceInsights({ data, monthHeaders }: InvoiceInsightsProps) {
           </Card>
         )}
       </div>
-    </Space>
+    </div>
   );
 }
 
@@ -1461,7 +1550,7 @@ export function InvoiceManagement({ onNavigate: _onNavigate }: InvoiceManagement
         <Space direction="vertical" style={{ width: '100%' }} size={6}>
           <div>
             <Title level={4} style={{ marginBottom: 2 }}>Invoice Details</Title>
-            <Text type="secondary" style={{ fontSize: '12px' }}>Planned invoice amounts across projects and fiscal years</Text>
+            <Text type="secondary" style={{ fontSize: '12px' }}>Invoiced amounts across projects and fiscal years</Text>
           </div>
           <div style={{ background: '#fff', borderRadius: 8 }}>
             <Tabs items={items} size="small" defaultActiveKey="invoices" style={{ padding: '0 16px' }} />

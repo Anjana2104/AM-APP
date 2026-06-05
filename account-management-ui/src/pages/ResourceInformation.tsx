@@ -42,9 +42,15 @@ import {
   UnorderedListOutlined,
   CloudServerOutlined,
   SaveOutlined,
+  InboxOutlined,
+  FileTextOutlined,
+  FileExcelOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
+import * as XLSXStyle from 'xlsx-js-style';
+import html2canvas from 'html2canvas';
 import * as resourceApi from '../api/resourceApi';
+import { useConfig } from '../context/ConfigContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -76,6 +82,7 @@ export type ResourceRow = {
   totalWorkex: string;
   skills: string;
   engagement?: string;
+  allocationStatus?: string;
   allocationRequests?: Array<{
     id: string;
     clientName: string;
@@ -99,6 +106,7 @@ type FilterState = {
   skills: string;
   engagement: string;
   workexRange: [number, number];
+  allocationStatus: string;
 };
 
 const DEFAULT_FILTERS: FilterState = {
@@ -112,9 +120,10 @@ const DEFAULT_FILTERS: FilterState = {
   skills: '',
   engagement: '',
   workexRange: [0, 100],
+  allocationStatus: '',
 };
 
-const COLUMN_KEYS = ['sno', 'raId', 'empName', 'emailId', 'piwRole', 'roleOrDomain', 'previousWorkex', 'doj', 'totalWorkex', 'engagement', 'skills', 'action'] as const;
+const COLUMN_KEYS = ['sno', 'raId', 'empName', 'emailId', 'piwRole', 'roleOrDomain', 'previousWorkex', 'doj', 'totalWorkex', 'engagement', 'allocationStatus', 'skills', 'action'] as const;
 
 const COLUMN_LABELS: Record<string, string> = {
   sno: 'S.NO',
@@ -127,11 +136,132 @@ const COLUMN_LABELS: Record<string, string> = {
   doj: 'DOJ',
   totalWorkex: 'Total Workex',
   engagement: 'Current Engagement',
+  allocationStatus: 'Allocation Status',
   skills: 'Skills',
 };
 
+// ─── Helper ──────────────────────────────────────────────────────────────────
+function downloadFileFromBlob(file: File) {
+  const url = URL.createObjectURL(file);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = file.name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void }> = ({ onResourcesChange }) => {
+function todayStr() {
+  return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+// ─── Resumes Tab ─────────────────────────────────────────────────────────────
+function ResumesTab() {
+  const { getAppValue } = useConfig();
+  const spUrl = getAppValue('RESUME_STORAGE_URL') || '';
+  const [resumeList, setResumeList] = useState<{ key: string; file: File; uploadDate: string }[]>([]);
+
+  const downloadTemplate = () => {
+    // Empty template with just headers
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Name', 'Employee ID', 'Role', 'Skills', 'Total Experience', 'Email'],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Resume Template');
+    XLSX.writeFile(wb, 'Resume_Template.xlsx');
+  };
+
+  const handleFile = (file: File) => {
+    setResumeList(prev => [...prev, { key: `res_${Date.now()}`, file, uploadDate: todayStr() }]);
+    if (spUrl) {
+      message.success(
+        <span><strong>{file.name}</strong> added. Use <em>Save to SP ↗</em> to store in SharePoint.</span>,
+        5,
+      );
+    } else {
+      message.success(`${file.name} uploaded`);
+    }
+    return false;
+  };
+
+  const handleDelete = (key: string) => {
+    setResumeList(prev => prev.filter(r => r.key !== key));
+    message.success('Resume removed');
+  };
+
+  return (
+    <div style={{ padding: '16px 0' }}>
+      {/* SP banner */}
+      {spUrl && (
+        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
+          <span style={{ flex: 1 }}>📁 Resumes should also be saved to the configured SharePoint folder.</span>
+          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>Open SharePoint Folder ↗</a>
+        </div>
+      )}
+      {!spUrl && (
+        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
+          💡 Configure the <strong>RESUME_STORAGE_URL</strong> in App Configuration to link to your SharePoint folder for centralized resume storage.
+        </div>
+      )}
+
+      {/* Template download */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} style={{ fontSize: '11px', borderRadius: 6 }}>
+          Download Template
+        </Button>
+      </div>
+
+      {/* Upload dragger */}
+      <Upload.Dragger multiple beforeUpload={handleFile} showUploadList={false} style={{ borderRadius: 8, marginBottom: 20 }}>
+        <p className="ant-upload-drag-icon">
+          <InboxOutlined style={{ fontSize: 36, color: '#722ED1' }} />
+        </p>
+        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>Click or drag resume files to upload</p>
+        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
+          Supports PDF, Word, and all file types. Store centrally in the configured SharePoint folder.
+        </p>
+      </Upload.Dragger>
+
+      {/* List */}
+      {resumeList.length === 0 ? (
+        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '40px 0', textAlign: 'center' }}>
+          <FileTextOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 10, display: 'block' }} />
+          <Text type="secondary" style={{ fontSize: '12px' }}>No resumes uploaded yet in this session.</Text>
+        </div>
+      ) : (
+        <div>
+          <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
+            Uploaded Resumes ({resumeList.length})
+          </Text>
+          {resumeList.map(({ key, file, uploadDate }) => (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', borderLeft: '3px solid #722ED1', padding: '10px 14px', marginBottom: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+              <FileTextOutlined style={{ color: '#722ED1', fontSize: 20, flexShrink: 0 }} />
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: 2 }}>Uploaded: {uploadDate} &nbsp;·&nbsp; {(file.size / 1024).toFixed(1)} KB</div>
+              </div>
+              {spUrl && (
+                <Tooltip title="Downloads locally and opens SharePoint — drag the file into the SP folder" overlayInnerStyle={{ fontSize: '11px', maxWidth: 260 }}>
+                  <Button size="small" style={{ borderRadius: 6, fontSize: '10px', borderColor: '#722ED1', color: '#722ED1' }}
+                    onClick={() => { downloadFileFromBlob(file); window.open(spUrl, '_blank', 'noopener,noreferrer'); }}>
+                    Save to SP ↗
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFileFromBlob(file)} style={{ borderRadius: 6 }} />
+              </Tooltip>
+              <Tooltip title="Remove" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(key)} style={{ borderRadius: 6 }} />
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void; initialRoleFilter?: string; onFilterApplied?: () => void }> = ({ onResourcesChange, initialRoleFilter, onFilterApplied }) => {
   const [resources, setResources] = useState<ResourceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [fromServer, setFromServer] = useState(false);
@@ -157,6 +287,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
           totalWorkex: String((r as any).total_workex || r.totalWorkex || ''),
           skills: String((r as any).skills || r.skills || ''),
           engagement: String((r as any).engagement || r.engagement || ''),
+          allocationStatus: String((r as any).allocation_status ?? r.allocationStatus ?? ''),
         }));
         setResources(mapped);
         onResourcesChange?.(mapped);
@@ -183,8 +314,18 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   );
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
 
+  // Apply incoming role filter from navigation
+  useEffect(() => {
+    if (initialRoleFilter) {
+      setFilters(f => ({ ...f, roleOrDomain: initialRoleFilter }));
+      setViewMode('table');
+      setShowFilterPanel(true);
+      onFilterApplied?.();
+    }
+  }, [initialRoleFilter]);
+
   const filterPanelRef = useRef<HTMLDivElement>(null);
-  const isFilterApplied = filters.empName !== '' || filters.raId !== '' || filters.piwRole !== '' || filters.roleOrDomain !== '' || filters.skills !== '' || filters.engagement !== '' || filters.workexRange[0] !== 0 || filters.workexRange[1] !== 100;
+  const isFilterApplied = filters.empName !== '' || filters.raId !== '' || filters.piwRole !== '' || filters.roleOrDomain !== '' || filters.skills !== '' || filters.engagement !== '' || filters.allocationStatus !== '' || filters.workexRange[0] !== 0 || filters.workexRange[1] !== 100;
 
   useEffect(() => {
     if (!showFilterPanel) return;
@@ -227,6 +368,10 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             totalWorkex: String(row['Total Workex'] || row['Total Experience'] || '').trim(),
             skills: String(row['Skills'] || '').trim(),
             engagement: String(row['Current Engagement'] || row['Engagement'] || '').trim(),
+            allocationStatus: (() => {
+              const eng = String(row['Current Engagement'] || row['Engagement'] || '').trim();
+              return eng && eng.toLowerCase() !== 'bench' ? 'Joined' : 'Available';
+            })(),
           }));
 
         // Upsert into current state by raId (case-insensitive)
@@ -247,6 +392,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
             piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
             doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '', skills: r.skills,
+            allocationStatus: r.allocationStatus || '',
           }))).then(result => {
             if (result.ok) setFromServer(true);
           });
@@ -346,12 +492,12 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
           if (editingResource && editingResource.key) {
             updated = prev.map(r =>
               r.key === editingResource.key
-                ? { ...r, raId: String(values.raId || ''), empName: String(values.empName || ''), emailId: String(values.emailId || ''), piwRole: String(values.piwRole || ''), roleOrDomain: String(values.roleOrDomain || ''), previousWorkex: String(values.previousWorkex || ''), doj: String(values.doj || ''), totalWorkex: String(values.totalWorkex || ''), skills: String(values.skills || ''), engagement: String(values.engagement || '') }
+                ? { ...r, raId: String(values.raId || ''), empName: String(values.empName || ''), emailId: String(values.emailId || ''), piwRole: String(values.piwRole || ''), roleOrDomain: String(values.roleOrDomain || ''), previousWorkex: String(values.previousWorkex || ''), doj: String(values.doj || ''), totalWorkex: String(values.totalWorkex || ''), skills: String(values.skills || ''), engagement: String(values.engagement || ''), allocationStatus: r.allocationStatus }
                 : r
             );
           } else {
             const newKey = String(Date.now());
-            updated = [...prev, { key: newKey, sno: String(prev.length + 1), raId: String(values.raId || ''), empName: String(values.empName || ''), emailId: String(values.emailId || ''), piwRole: String(values.piwRole || ''), roleOrDomain: String(values.roleOrDomain || ''), previousWorkex: String(values.previousWorkex || ''), doj: String(values.doj || ''), totalWorkex: String(values.totalWorkex || ''), skills: String(values.skills || ''), engagement: String(values.engagement || '') }];
+            updated = [...prev, { key: newKey, sno: String(prev.length + 1), raId: String(values.raId || ''), empName: String(values.empName || ''), emailId: String(values.emailId || ''), piwRole: String(values.piwRole || ''), roleOrDomain: String(values.roleOrDomain || ''), previousWorkex: String(values.previousWorkex || ''), doj: String(values.doj || ''), totalWorkex: String(values.totalWorkex || ''), skills: String(values.skills || ''), engagement: String(values.engagement || ''), allocationStatus: '' }];
           }
           onResourcesChange?.(updated);
           // Save to API
@@ -359,6 +505,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
             piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
             doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '', skills: r.skills,
+            allocationStatus: r.allocationStatus || '',
           })));
           return updated;
         });
@@ -447,6 +594,18 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         }
       }
 
+      // Filter by Allocation Status
+      if (filters.allocationStatus) {
+        const as = String(r.allocationStatus || '').toLowerCase();
+        if (!as.includes(filters.allocationStatus.toLowerCase())) return false;
+      }
+
+      // Filter by Allocation Status
+      if (filters.allocationStatus) {
+        const as = String(r.allocationStatus || '').toLowerCase();
+        if (!as.includes(filters.allocationStatus.toLowerCase())) return false;
+      }
+
       // Filter by Total Workex (range)
       const totalWorkex = parseFloat(String(r.totalWorkex || '0').replace(/[^\d.-]/g, ''));
       if (!isNaN(totalWorkex)) {
@@ -487,6 +646,43 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     message.success('All resource data cleared');
   };
 
+  const handleExportExcel = () => {
+    const data = getFilteredResources();
+    if (!data.length) { message.warning('No data to export'); return; }
+    const headers = ['S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex', 'DOJ', 'Total Workex', 'Current Engagement', 'Skills'];
+    const aoa: any[][] = [headers];
+    data.forEach(r => {
+      aoa.push([r.sno, r.raId, r.empName, r.emailId, r.piwRole, r.roleOrDomain, r.previousWorkex, r.doj, r.totalWorkex, r.engagement || '', r.skills]);
+    });
+    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 28 }, { wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 36 }];
+    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
+    ws['!sheetViews'] = [{ showGridLines: false }];
+    const numCols = headers.length, numRows = aoa.length;
+    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
+    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
+    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
+    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
+    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
+    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
+    for (let R = 0; R < numRows; R++) {
+      for (let C = 0; C < numCols; C++) {
+        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
+        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
+        ws[addr].s = {
+          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
+          font: R === 0 ? hFont : { sz: 10 },
+          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
+          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
+        };
+      }
+    }
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, 'Resources');
+    XLSXStyle.writeFile(wb, `Resources_Export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    message.success('Export downloaded');
+  };
+
   const getUniqueValues = useCallback(
     (key: keyof ResourceRow): string[] => {
       const values = new Set<string>();
@@ -510,6 +706,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'sno',
         key: 'sno',
         width: 60,
+        fixed: 'left' as const,
         render: (value) => (
           <Tag color="blue" style={{ fontSize: '12px', fontWeight: 600 }}>
             {String(value || '').substring(0, 6)}
@@ -522,6 +719,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'raId',
         key: 'raId',
         width: 100,
+        fixed: 'left' as const,
         render: (value) => (
           <div style={{ fontWeight: 600, color: '#001529' }}>
             {String(value || '')}
@@ -533,6 +731,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'empName',
         key: 'empName',
         width: 150,
+        fixed: 'left' as const,
         render: (value) => (
           <div style={{ fontWeight: 600, color: '#001529' }}>
             {String(value || '')}
@@ -581,7 +780,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'totalWorkex',
         key: 'totalWorkex',
         width: 120,
-        align: 'right' as const,
+        align: 'center' as const,
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -592,24 +791,31 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
+        title: 'Allocation Status',
+        dataIndex: 'allocationStatus',
+        key: 'allocationStatus',
+        width: 130,
+        align: 'center' as const,
+        render: (value) => {
+          const v = String(value || '');
+          if (!v) return <span style={{ color: '#bbb', fontSize: '11px' }}>—</span>;
+          const colorMap: Record<string, string> = { Joined: '#52c41a', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff' };
+          return <Tag color={colorMap[v] || 'default'} style={{ fontSize: '10px', margin: 0 }}>{v}</Tag>;
+        },
+      },
+      {
         title: 'Skills',
         dataIndex: 'skills',
         key: 'skills',
-        width: 200,
+        width: 120,
         render: (value) => {
-          const skillsText = String(value || '');
+          const skillsArr = String(value || '').split(',').filter(s => s.trim());
           return (
-            <Tooltip title={skillsText} placement="topLeft">
-              <div
-                style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  width: '100%',
-                }}
-              >
-                {skillsText}
-              </div>
+            <Tooltip title={String(value || '')} placement="topLeft">
+              <span style={{ display: 'flex', flexWrap: 'wrap', gap: 2 }}>
+                {skillsArr.slice(0, 2).map((s, i) => <Tag key={i} color="blue" style={{ fontSize: '10px', margin: 0 }}>{s.trim()}</Tag>)}
+                {skillsArr.length > 2 && <Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>+{skillsArr.length - 2}</Tag>}
+              </span>
             </Tooltip>
           );
         },
@@ -658,6 +864,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   // ── Insights computations ──────────────────────────────────────
   const [insightView, setInsightView] = useState<'charts' | 'bars'>('charts');
   const [activeTab, setActiveTab] = useState<string>('resources');
+  const [exportingInsights, setExportingInsights] = useState(false);
+  const insightsRef = useRef<HTMLDivElement>(null);
 
   const handleInsightClick = (type: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket', name: string) => {
     if (type === 'expBucket') {
@@ -804,6 +1012,33 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         </div>
       ) : (
         <>
+          {/* Export toolbar */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <Tooltip title="Export Insights as PNG" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button
+                size="small"
+                icon={<DownloadOutlined />}
+                loading={exportingInsights}
+                onClick={async () => {
+                  if (!insightsRef.current) return;
+                  setExportingInsights(true);
+                  try {
+                    const canvas = await html2canvas(insightsRef.current, { scale: 2, useCORS: true, backgroundColor: '#ffffff' });
+                    const link = document.createElement('a');
+                    link.download = `resource-insights-${new Date().toISOString().slice(0, 10)}.png`;
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                  } finally {
+                    setExportingInsights(false);
+                  }
+                }}
+                style={{ fontSize: '11px' }}
+              >
+                Export PNG
+              </Button>
+            </Tooltip>
+          </div>
+          <div ref={insightsRef}>
           {/* KPIs */}
           <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
             {[
@@ -904,6 +1139,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
               </Row>
             </>
           )}
+          </div>
         </>
       )}
     </div>
@@ -986,6 +1222,9 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
                   <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
                 </Tooltip>
+                <Tooltip title="Export Formatted Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+                  <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportExcel} disabled={!resources.length} style={{ borderRadius: '6px', color: resources.length ? '#52c41a' : undefined }} />
+                </Tooltip>
                 <Button type="primary" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add New</Button>
               </Space>
             </div>
@@ -1030,6 +1269,10 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Engagement</div>
                         <Input size="small" placeholder="Search..." value={filters.engagement} onChange={e => setFilters({ ...filters, engagement: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
                       </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Allocation Status</div>
+                        <Select size="small" placeholder="All" allowClear value={filters.allocationStatus || undefined} onChange={(v) => setFilters({ ...filters, allocationStatus: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={[{ label: 'Joined', value: 'Joined' }, { label: 'Shortlisted', value: 'Shortlisted' }, { label: 'Offered', value: 'Offered' }, { label: 'Selected', value: 'Selected' }]} />
+                      </div>
                     </Space>
                   </div>
                 )}
@@ -1043,6 +1286,15 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       size="small"
                       style={{ background: '#fff', borderRadius: '8px' }}
                       locale={{ emptyText: 'No resources match your filters' }}
+                      onRow={(record) => ({
+                        onClick: (e) => {
+                          const target = e.target as HTMLElement;
+                          if (target.closest('button, .ant-tag, .ant-checkbox-wrapper')) return;
+                          setSelectedResource(record);
+                          setDetailDrawer(true);
+                        },
+                        style: { cursor: 'pointer' },
+                      })}
                     />
                   </div>
                 </div>
@@ -1079,6 +1331,10 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       <div>
                         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Engagement</div>
                         <Input size="small" placeholder="Search..." value={filters.engagement} onChange={e => setFilters({ ...filters, engagement: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Allocation Status</div>
+                        <Select size="small" placeholder="All" allowClear value={filters.allocationStatus || undefined} onChange={(v) => setFilters({ ...filters, allocationStatus: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={[{ label: 'Joined', value: 'Joined' }, { label: 'Shortlisted', value: 'Shortlisted' }, { label: 'Offered', value: 'Offered' }, { label: 'Selected', value: 'Selected' }]} />
                       </div>
                     </Space>
                   </div>
@@ -1145,6 +1401,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       {insightsContent}
                     </div>
                   ),
+                },
+                {
+                  key: 'resumes',
+                  label: <span style={{ fontSize: '12px' }}><FileTextOutlined /> Resumes</span>,
+                  children: <ResumesTab />,
                 },
               ]}
             />

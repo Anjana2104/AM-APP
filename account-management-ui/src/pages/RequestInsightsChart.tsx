@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
-import { Card, Row, Col, Statistic, Empty, Tag } from 'antd';
-import { CheckCircleOutlined, ClockCircleOutlined, PauseCircleOutlined } from '@ant-design/icons';
+import React, { useMemo, useRef, useState } from 'react';
+import { Card, Row, Col, Statistic, Empty, Tag, Button, Tooltip, message } from 'antd';
+import { CheckCircleOutlined, ClockCircleOutlined, DownloadOutlined } from '@ant-design/icons';
+import html2canvas from 'html2canvas';
 import dayjs from 'dayjs';
 
 interface ClientRequest {
@@ -21,6 +22,25 @@ interface RequestInsightsChartProps {
 }
 
 export function RequestInsightsChart({ requests }: RequestInsightsChartProps) {
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    if (!chartRef.current) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(chartRef.current, { backgroundColor: '#fff', scale: 2, useCORS: true });
+      const a = document.createElement('a');
+      a.href = canvas.toDataURL('image/png');
+      a.download = `Request_Insights_${new Date().toISOString().slice(0, 10)}.png`;
+      a.click();
+    } catch {
+      message.error('Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const stats = useMemo(() => {
     const byStatus: Record<string, number> = {};
     const byType: Record<string, number> = {};
@@ -46,7 +66,15 @@ export function RequestInsightsChart({ requests }: RequestInsightsChartProps) {
   const TYPE_LABELS: Record<string, string> = { resource_demand: 'Resource Demand', onboarding: 'Onboarding', offboarding: 'Offboarding' };
 
   return (
-    <div style={{ padding: '8px 0' }}>
+    <div style={{ position: 'relative' }}>
+      {/* Export icon */}
+      <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 10 }}>
+        <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
+          <Button size="small" type="text" icon={<DownloadOutlined style={{ fontSize: 15, color: '#8c8c8c' }} />}
+            loading={exporting} onClick={handleExport} />
+        </Tooltip>
+      </div>
+      <div ref={chartRef} style={{ padding: '8px 0' }}>
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={8}>
           <Card size="small" style={{ borderRadius: 8 }}>
@@ -114,6 +142,7 @@ export function RequestInsightsChart({ requests }: RequestInsightsChartProps) {
           </Col>
         </Row>
       )}
+      </div>
     </div>
   );
 }

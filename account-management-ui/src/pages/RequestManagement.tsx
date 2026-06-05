@@ -45,8 +45,11 @@ import {
   CloseOutlined,
   ColumnHeightOutlined,
   CloudServerOutlined,
+  FileExcelOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
+import * as XLSXStyle from 'xlsx-js-style';
 import dayjs from 'dayjs';
 import { RequestInsightsChart } from './RequestInsightsChart';
 import { useConfig } from '../context/ConfigContext';
@@ -124,6 +127,7 @@ export default function RequestManagement() {
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [viewDetailRecord, setViewDetailRecord] = useState<ClientRequest | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     sno: true,
     beelineId: true,
@@ -343,6 +347,42 @@ export default function RequestManagement() {
     message.success('All request data cleared');
   };
 
+  const handleExportExcel = () => {
+    if (!typeFilteredRequests.length) { message.warning('No data to export'); return; }
+    const headers = ['S.No', 'Beeline ID', 'Type', 'Description', 'Raised By', 'Processing Status', 'Overall Status', 'Account Anchor', 'Date Raised'];
+    const aoa: any[][] = [headers];
+    typeFilteredRequests.forEach(r => {
+      aoa.push([r.sno, r.beelineId, r.requestType || '', r.description || '', r.raisedBy, r.processingStatus || '', r.overallStatus || '', r.accountAnchor || '', r.dateRaised || '']);
+    });
+    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 16 }, { wch: 40 }, { wch: 20 }, { wch: 22 }, { wch: 18 }, { wch: 20 }, { wch: 14 }];
+    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
+    ws['!sheetViews'] = [{ showGridLines: false }];
+    const numCols = headers.length, numRows = aoa.length;
+    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
+    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
+    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
+    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
+    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
+    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
+    for (let R = 0; R < numRows; R++) {
+      for (let C = 0; C < numCols; C++) {
+        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
+        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
+        ws[addr].s = {
+          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
+          font: R === 0 ? hFont : { sz: 10 },
+          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
+          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
+        };
+      }
+    }
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, 'Client Requests');
+    XLSXStyle.writeFile(wb, `Client_Requests_Export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    message.success('Export downloaded');
+  };
+
   // Table columns
   const columns = [
     {
@@ -350,6 +390,7 @@ export default function RequestManagement() {
       dataIndex: 'sno',
       key: 'sno',
       width: 80,
+      fixed: 'left' as const,
       hidden: !visibleColumns.sno,
     },
     {
@@ -357,6 +398,7 @@ export default function RequestManagement() {
       dataIndex: 'beelineId',
       key: 'beelineId',
       width: 130,
+      fixed: 'left' as const,
       hidden: !visibleColumns.beelineId,
     },
     {
@@ -373,11 +415,13 @@ export default function RequestManagement() {
       title: 'Description',
       dataIndex: 'description',
       key: 'description',
+      width: 160,
+      ellipsis: true,
       hidden: !visibleColumns.description,
       render: (text: string) => (
         <Tooltip title={<span style={{ fontSize: '11px' }}>{text}</span>}>
-          <span style={{ maxWidth: '200px', display: 'inline-block', fontSize: '11px' }}>
-            {text ? (text.substring(0, 50) + (text.length > 50 ? '...' : '')) : '-'}
+          <span style={{ maxWidth: '150px', display: 'inline-block', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {text ? (text.substring(0, 40) + (text.length > 40 ? '...' : '')) : '-'}
           </span>
         </Tooltip>
       ),
@@ -435,6 +479,7 @@ export default function RequestManagement() {
       title: 'Actions',
       key: 'actions',
       width: 80,
+      fixed: 'right' as const,
       render: (_: any, record: ClientRequest) => (
         <Space size="small">
           <Button
@@ -619,6 +664,9 @@ export default function RequestManagement() {
                           <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
                           </Tooltip>
+                          <Tooltip title="Export Formatted Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportExcel} disabled={!typeFilteredRequests.length} style={{ borderRadius: '6px', color: typeFilteredRequests.length ? '#52c41a' : undefined }} />
+                          </Tooltip>
                           {requests.length > 0 && (
                             <Popconfirm
                               title="Delete all requests?"
@@ -749,7 +797,7 @@ export default function RequestManagement() {
                                 dataSource={typeFilteredRequests}
                                 columns={displayColumns}
                                 pagination={{ pageSize: 15, showSizeChanger: false }}
-                                scroll={{ x: 'max-content', y: 420 }}
+                                scroll={{ x: 'max-content' }}
                                 size="small"
                                 rowSelection={{
                                   selectedRowKeys,
@@ -757,6 +805,14 @@ export default function RequestManagement() {
                                   type: 'checkbox',
                                 }}
                                 rowKey="sno"
+                                onRow={(record) => ({
+                                  onClick: (e) => {
+                                    const target = e.target as HTMLElement;
+                                    if (target.closest('button, .ant-dropdown, .ant-checkbox-wrapper')) return;
+                                    setViewDetailRecord(record);
+                                  },
+                                  style: { cursor: 'pointer' },
+                                })}
                               />
                             </div>
                           </div>
@@ -923,6 +979,50 @@ export default function RequestManagement() {
           )}
           </div>
         </Space>
+
+        <Drawer
+          title={viewDetailRecord ? `${viewDetailRecord.beelineId} — Details` : 'Request Details'}
+          placement="right"
+          onClose={() => setViewDetailRecord(null)}
+          open={!!viewDetailRecord}
+          width={480}
+        >
+          {viewDetailRecord && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <Tag color={REQUEST_TYPE_COLOR[viewDetailRecord.requestType || ''] || 'default'} style={{ fontSize: '11px' }}>
+                  {REQUEST_TYPE_LABEL[viewDetailRecord.requestType || ''] || viewDetailRecord.requestType || 'No Type'}
+                </Tag>
+                <span style={{ backgroundColor: getOverallStatusBackgroundColor(viewDetailRecord.overallStatus), color: getOverallStatusColor(viewDetailRecord.overallStatus), padding: '2px 10px', borderRadius: 4, fontSize: '11px', fontWeight: 500 }}>
+                  {OVERALL_STATUS_DISPLAY_MAP[viewDetailRecord.overallStatus] || viewDetailRecord.overallStatus}
+                </span>
+              </div>
+              {[
+                { label: 'Beeline ID', value: viewDetailRecord.beelineId },
+                { label: 'Raised By', value: viewDetailRecord.raisedBy },
+                { label: 'Account Anchor', value: viewDetailRecord.accountAnchor },
+                { label: 'Processing Status', value: PROCESSING_STATUS_DISPLAY_MAP[viewDetailRecord.processingStatus] || viewDetailRecord.processingStatus },
+                { label: 'Date Raised', value: viewDetailRecord.dateRaised },
+                { label: 'Last Updated', value: viewDetailRecord.updatedOn },
+              ].map(({ label, value }) => value ? (
+                <div key={label} style={{ background: '#fafafa', borderRadius: 6, padding: '10px 14px', border: '1px solid #f0f0f0' }}>
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>{label}</div>
+                  <div style={{ fontSize: '13px', fontWeight: 500, color: '#262626' }}>{value}</div>
+                </div>
+              ) : null)}
+              {viewDetailRecord.description && (
+                <div style={{ background: '#fafafa', borderRadius: 6, padding: '10px 14px', border: '1px solid #f0f0f0' }}>
+                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Description</div>
+                  <div style={{ fontSize: '13px', color: '#262626', lineHeight: 1.6 }}>{viewDetailRecord.description}</div>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <Button size="small" icon={<EditOutlined />} onClick={() => { handleEdit(viewDetailRecord); setViewDetailRecord(null); }}>Edit</Button>
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { handleDelete(viewDetailRecord); setViewDetailRecord(null); }}>Delete</Button>
+              </div>
+            </div>
+          )}
+        </Drawer>
 
         <Drawer
           title="Column Visibility"

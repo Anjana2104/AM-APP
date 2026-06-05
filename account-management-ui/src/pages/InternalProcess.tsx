@@ -1117,6 +1117,113 @@ function SowTab({ onUpload, onDelete }: { onUpload: (file: File, processKey: str
   );
 }
 
+// --- PIW Tab ---
+function PiwTab() {
+  const { getAppValue } = useConfig();
+  const spUrl = getAppValue('PIW_STORAGE_URL') || '';
+  const [piwList, setPiwList] = useState<{ key: string; file: File; uploadDate: string }[]>([]);
+
+  const downloadTemplate = () => {
+    // Empty PIW template with just headers
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['PIW Number', 'SOW Reference', 'Start Date', 'Employee Name', 'Role', 'Salesforce ID', 'PROMS ID', 'Status', 'Comments'],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'PIW Template');
+    XLSX.writeFile(wb, 'PIW_Template.xlsx');
+  };
+
+  const handleFile = (file: File) => {
+    setPiwList(prev => [...prev, { key: `piw_${Date.now()}`, file, uploadDate: todayDateStr() }]);
+    if (spUrl) {
+      message.success(
+        <span><strong>{file.name}</strong> added. Use <em>Save to SP ↗</em> to store in SharePoint.</span>,
+        5,
+      );
+    } else {
+      message.success(`${file.name} uploaded`);
+    }
+    return false;
+  };
+
+  const handleDelete = (key: string) => {
+    setPiwList(prev => prev.filter(p => p.key !== key));
+    message.success('PIW document removed');
+  };
+
+  return (
+    <div>
+      {/* SP banner */}
+      {spUrl && (
+        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
+          <span style={{ flex: 1 }}>📁 PIW documents should also be saved to the configured SharePoint folder.</span>
+          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>Open SharePoint Folder ↗</a>
+        </div>
+      )}
+      {!spUrl && (
+        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
+          💡 Configure the <strong>PIW_STORAGE_URL</strong> in App Configuration to link to your SharePoint folder for centralized PIW document storage.
+        </div>
+      )}
+
+      {/* Template download */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} style={{ fontSize: '11px', borderRadius: 6 }}>
+          Download Template
+        </Button>
+      </div>
+
+      {/* Upload dragger */}
+      <Upload.Dragger multiple={false} beforeUpload={handleFile} showUploadList={false} style={{ borderRadius: 8, marginBottom: 20 }}>
+        <p className="ant-upload-drag-icon">
+          <InboxOutlined style={{ fontSize: 36, color: '#1890ff' }} />
+        </p>
+        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>Click or drag PIW document to upload</p>
+        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
+          Supports PDF, Word, Excel, and all file types. Store centrally in the configured SharePoint folder.
+        </p>
+      </Upload.Dragger>
+
+      {/* List */}
+      {piwList.length === 0 ? (
+        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '40px 0', textAlign: 'center' }}>
+          <IdcardOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 10, display: 'block' }} />
+          <Text type="secondary" style={{ fontSize: '12px' }}>No PIW documents uploaded yet.</Text>
+        </div>
+      ) : (
+        <div>
+          <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
+            Uploaded PIW Documents ({piwList.length})
+          </Text>
+          {piwList.map(({ key, file, uploadDate }) => (
+            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', borderLeft: '3px solid #1890ff', padding: '10px 14px', marginBottom: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+              <IdcardOutlined style={{ color: '#1890ff', fontSize: 20, flexShrink: 0 }} />
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: 2 }}>Uploaded: {uploadDate} &nbsp;·&nbsp; {(file.size / 1024).toFixed(1)} KB</div>
+              </div>
+              {spUrl && (
+                <Tooltip title="Downloads locally and opens SharePoint — drag the file into the SP folder" overlayInnerStyle={{ fontSize: '11px', maxWidth: 260 }}>
+                  <Button size="small" style={{ borderRadius: 6, fontSize: '10px', borderColor: '#1890ff', color: '#1890ff' }}
+                    onClick={() => { downloadFile(file); window.open(spUrl, '_blank', 'noopener,noreferrer'); }}>
+                    Save to SP ↗
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFile(file)} style={{ borderRadius: 6 }} />
+              </Tooltip>
+              <Tooltip title="Remove" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(key)} style={{ borderRadius: 6 }} />
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InternalProcess() {
   const [processRows, setProcessRows] = useState<ProcessRow[]>([]);
   const [fromServer, setFromServer] = useState(false);
@@ -1206,7 +1313,7 @@ export function InternalProcess() {
                     {
                       key: 'piw',
                       label: <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}><IdcardOutlined /> PIW</span>,
-                      children: <ComingSoon label="PIW (Person in Waiting)" />,
+                      children: <PiwTab />,
                     },
                   ]}
                 />

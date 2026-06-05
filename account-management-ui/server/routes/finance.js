@@ -46,11 +46,16 @@ router.get("/projects", async (req, res) => {
 
     const revMap = {};
     revenues.forEach(r => {
-      if (!revMap[r.project_id]) revMap[r.project_id] = {};
-      revMap[r.project_id][r.month] = r.amount;
+      if (!revMap[r.project_id]) revMap[r.project_id] = { amounts: {}, types: {} };
+      revMap[r.project_id].amounts[r.month] = r.amount;
+      revMap[r.project_id].types[r.month] = r.milestone_type || 'booked';
     });
 
-    const result = projects.map(p => ({ ...p, revenue: revMap[p.id] || {} }));
+    const result = projects.map(p => ({
+      ...p,
+      revenue: revMap[p.id]?.amounts || {},
+      milestoneTypes: revMap[p.id]?.types || {},
+    }));
     res.json({ projects: result });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -82,8 +87,8 @@ router.post("/projects/bulk", async (req, res) => {
         if (existing) {
           projectId = existing.id;
           db.run(
-            "UPDATE finance_projects SET project=?, company=?, code=?, space=?, owner=?, status=?, active=?, updated_at=? WHERE id=?",
-            [p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, new Date().toISOString(), projectId]
+            "UPDATE finance_projects SET project=?, company=?, code=?, space=?, owner=?, status=?, active=?, comments=?, updated_at=? WHERE id=?",
+            [p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, p.comments || "", new Date().toISOString(), projectId]
           );
           updated++;
         }
@@ -98,8 +103,8 @@ router.post("/projects/bulk", async (req, res) => {
         if (existing) {
           projectId = existing.id;
           db.run(
-            "UPDATE finance_projects SET project=?, company=?, code=?, space=?, owner=?, status=?, active=?, updated_at=? WHERE id=?",
-            [p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, new Date().toISOString(), projectId]
+            "UPDATE finance_projects SET project=?, company=?, code=?, space=?, owner=?, status=?, active=?, comments=?, updated_at=? WHERE id=?",
+            [p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, p.comments || "", new Date().toISOString(), projectId]
           );
           updated++;
         }
@@ -110,21 +115,22 @@ router.post("/projects/bulk", async (req, res) => {
         const maxRow = db.get("SELECT MAX(sno) as m FROM finance_projects");
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
         db.run(
-          "INSERT INTO finance_projects (sno, project, company, code, space, owner, status, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-          [p.sno || sno, p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal]
+          "INSERT INTO finance_projects (sno, project, company, code, space, owner, status, active, comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          [p.sno || sno, p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, p.comments || ""]
         );
         projectId = db.lastId();
         inserted++;
       }
 
-      // Upsert revenue rows
+      // Upsert revenue rows with milestone_type
       months.forEach((month, idx) => {
         const amount = Array.isArray(p.revenue)
           ? (p.revenue[idx] || 0)
           : (p.revenue ? (p.revenue[month] || 0) : 0);
+        const milestoneType = (p.milestoneTypes && p.milestoneTypes[month]) === 'anticipated' ? 'anticipated' : 'booked';
         db.run(
-          "INSERT OR REPLACE INTO finance_revenue (project_id, month, amount) VALUES (?, ?, ?)",
-          [projectId, month, amount]
+          "INSERT OR REPLACE INTO finance_revenue (project_id, month, amount, milestone_type) VALUES (?, ?, ?, ?)",
+          [projectId, month, amount, milestoneType]
         );
       });
     }
@@ -142,7 +148,7 @@ router.post("/projects/bulk", async (req, res) => {
 
 // POST /api/finance/projects
 router.post("/projects", async (req, res) => {
-  const { project, company, code, space, owner, status, revenue, monthHeaders } = req.body;
+  const { project, company, code, space, owner, status, revenue, monthHeaders, comments } = req.body;
   try {
     const db = await getDb();
     const countRow = db.get("SELECT COUNT(*) as c FROM finance_projects");
@@ -150,8 +156,8 @@ router.post("/projects", async (req, res) => {
     const statusVal = status === 'Inactive' ? 'Inactive' : 'Active';
 
     db.run(
-      "INSERT INTO finance_projects (sno, project, company, code, space, owner, status, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-      [sno, project || "", company || "", code || "", space || "", owner || "", statusVal, statusVal === 'Active' ? 1 : 0]
+      "INSERT INTO finance_projects (sno, project, company, code, space, owner, status, active, comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [sno, project || "", company || "", code || "", space || "", owner || "", statusVal, statusVal === 'Active' ? 1 : 0, comments || ""]
     );
     const projectId = db.lastId();
 
@@ -177,7 +183,7 @@ router.post("/projects", async (req, res) => {
 // Only updates fields that are present in the request body — safe for partial updates (e.g. status-only toggle)
 router.put("/projects/:id", async (req, res) => {
   const { id } = req.params;
-  const { project, company, code, space, owner, status, revenue, monthHeaders } = req.body;
+  const { project, company, code, space, owner, status, revenue, monthHeaders, comments, milestoneTypes } = req.body;
   try {
     const db = await getDb();
     const fields = [];
@@ -187,6 +193,7 @@ router.put("/projects/:id", async (req, res) => {
     if (code !== undefined)    { fields.push("code=?");    vals.push(code || ""); }
     if (space !== undefined)   { fields.push("space=?");   vals.push(space || ""); }
     if (owner !== undefined)   { fields.push("owner=?");   vals.push(owner || ""); }
+    if (comments !== undefined){ fields.push("comments=?"); vals.push(comments || ""); }
     if (status !== undefined) {
       const statusVal = status === 'Inactive' ? 'Inactive' : 'Active';
       fields.push("status=?");  vals.push(statusVal);
@@ -199,13 +206,62 @@ router.put("/projects/:id", async (req, res) => {
     if (revenue !== undefined && monthHeaders) {
       monthHeaders.forEach((month, idx) => {
         const amount = Array.isArray(revenue) ? (revenue[idx] || 0) : (revenue[month] || 0);
+        const milestoneType = (milestoneTypes && milestoneTypes[month]) === 'anticipated' ? 'anticipated' : 'booked';
         db.run(
-          "INSERT OR REPLACE INTO finance_revenue (project_id, month, amount) VALUES (?, ?, ?)",
-          [id, month, amount]
+          "INSERT OR REPLACE INTO finance_revenue (project_id, month, amount, milestone_type) VALUES (?, ?, ?, ?)",
+          [id, month, amount, milestoneType]
         );
       });
+    } else if (milestoneTypes && typeof milestoneTypes === 'object') {
+      // milestone-type-only update (no revenue change) — upsert so 0-value rows are created
+      for (const [month, type] of Object.entries(milestoneTypes)) {
+        const milestoneType = type === 'anticipated' ? 'anticipated' : 'booked';
+        const existing = db.get(
+          "SELECT id FROM finance_revenue WHERE project_id=? AND month=?",
+          [id, month]
+        );
+        if (existing) {
+          db.run("UPDATE finance_revenue SET milestone_type=? WHERE project_id=? AND month=?", [milestoneType, id, month]);
+        } else {
+          db.run("INSERT INTO finance_revenue (project_id, month, amount, milestone_type) VALUES (?, ?, 0, ?)", [id, month, milestoneType]);
+        }
+      }
     }
 
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/finance/projects/:id/milestone-types  — upsert milestone types without changing amounts
+router.put("/projects/:id/milestone-types", async (req, res) => {
+  const { id } = req.params;
+  const { types } = req.body;
+  if (!types || typeof types !== 'object') {
+    return res.status(400).json({ error: 'types object required' });
+  }
+  try {
+    const db = await getDb();
+    for (const [month, type] of Object.entries(types)) {
+      const milestoneType = type === 'anticipated' ? 'anticipated' : 'booked';
+      // Use INSERT OR REPLACE so rows with amount=0 (never inserted before) are also persisted
+      const existing = db.get(
+        "SELECT id, amount FROM finance_revenue WHERE project_id=? AND month=?",
+        [id, month]
+      );
+      if (existing) {
+        db.run(
+          "UPDATE finance_revenue SET milestone_type=? WHERE project_id=? AND month=?",
+          [milestoneType, id, month]
+        );
+      } else {
+        db.run(
+          "INSERT INTO finance_revenue (project_id, month, amount, milestone_type) VALUES (?, ?, 0, ?)",
+          [id, month, milestoneType]
+        );
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

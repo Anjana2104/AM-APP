@@ -20,19 +20,20 @@ export interface ResourcePayload {
   totalWorkex: string;
   engagement: string;
   skills: string;
+  allocationStatus?: string;
 }
 
 let _serverAvailable: boolean | null = null;
 
 async function isServerAvailable(): Promise<boolean> {
-  if (_serverAvailable !== null) return _serverAvailable;
+  if (_serverAvailable === true) return true; // only cache success
   try {
-    const res = await fetch('/api/health', { signal: AbortSignal.timeout(2000) });
-    _serverAvailable = res.ok;
+    const res = await fetch('/api/health', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) { _serverAvailable = true; return true; }
+    return false;
   } catch {
-    _serverAvailable = false;
+    return false;
   }
-  return _serverAvailable;
 }
 
 export function resetServerCache() {

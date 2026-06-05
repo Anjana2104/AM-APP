@@ -34,17 +34,23 @@ async function migrate() {
   // Backfill active from status for consistency
   db.run(`UPDATE finance_projects SET active = 1 WHERE active IS NULL`);
   db.run(`UPDATE finance_projects SET active = CASE WHEN status = 'Inactive' THEN 0 ELSE 1 END WHERE status IS NOT NULL`);
-
+  // Add 'company' column if missing (idempotent)
+  try { db.run(`ALTER TABLE finance_projects ADD COLUMN company TEXT DEFAULT ''`); } catch (_) {}
+  // Add 'comments' column for per-project notes (idempotent)
+  try { db.run(`ALTER TABLE finance_projects ADD COLUMN comments TEXT DEFAULT ''`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS finance_revenue (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL,
-      month      TEXT NOT NULL,
-      amount     REAL DEFAULT 0,
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id     INTEGER NOT NULL,
+      month          TEXT NOT NULL,
+      amount         REAL DEFAULT 0,
+      milestone_type TEXT DEFAULT 'booked',
       UNIQUE(project_id, month)
     )
   `);
+  // Add 'milestone_type' to existing finance_revenue rows (idempotent)
+  try { db.run(`ALTER TABLE finance_revenue ADD COLUMN milestone_type TEXT DEFAULT 'booked'`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS client_requests (
@@ -78,10 +84,16 @@ async function migrate() {
       total_workex     TEXT DEFAULT "",
       engagement       TEXT DEFAULT "",
       skills           TEXT DEFAULT "",
+      allocation_status TEXT DEFAULT "",
       created_at       TEXT,
       updated_at       TEXT
     )
   `);
+  // Add allocation_status to existing tables (idempotent)
+  try { db.run(`ALTER TABLE resources ADD COLUMN allocation_status TEXT DEFAULT ''`); } catch (_) {}
+  // Backfill: active resources → 'Joined', bench → 'Available'
+  db.run(`UPDATE resources SET allocation_status = 'Joined' WHERE (allocation_status IS NULL OR allocation_status = '') AND LOWER(TRIM(engagement)) != 'bench' AND engagement != ''`);
+  db.run(`UPDATE resources SET allocation_status = 'Available' WHERE (allocation_status IS NULL OR allocation_status = '') AND (LOWER(TRIM(engagement)) = 'bench' OR engagement = '')`);
 
   db.run(`
     CREATE TABLE IF NOT EXISTS ra_process (

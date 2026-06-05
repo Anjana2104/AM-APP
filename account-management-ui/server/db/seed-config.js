@@ -26,6 +26,13 @@ async function seedConfig() {
       built_in: 1,
       linked_to: JSON.stringify(['request_overall_status_field']),
     },
+    {
+      type_id: 'resource_allocation_status',
+      name: 'Resource Allocation Status',
+      description: 'Allocation pipeline stages for the engagement workflow (Shortlisted → Offered → Selected → Joined). Configurable — add/remove/rename stages here.',
+      built_in: 1,
+      linked_to: JSON.stringify(['resource_allocation_status_field']),
+    },
   ];
 
   for (const t of types) {
@@ -95,6 +102,29 @@ async function seedConfig() {
     }
   });
   console.log('Seeded request_overall_status items');
+
+  // ── Items for resource_allocation_status ─────────────────────────────
+  const allocStatusItems = [
+    { item_value: 'Shortlisted', label: 'Shortlisted', color: 'cyan' },
+    { item_value: 'Offered',     label: 'Offered',     color: 'orange' },
+    { item_value: 'Selected',    label: 'Selected',    color: 'green' },
+    { item_value: 'Joined',      label: 'Joined',      color: 'success' },
+  ];
+
+  allocStatusItems.forEach((item, idx) => {
+    const existing = db.get(
+      'SELECT id FROM app_config_items WHERE type_id = ? AND item_value = ?',
+      ['resource_allocation_status', item.item_value]
+    );
+    if (!existing) {
+      db.run(
+        `INSERT INTO app_config_items (type_id, item_value, label, color, sort_order, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        ['resource_allocation_status', item.item_value, item.label, item.color, idx, now, now]
+      );
+    }
+  });
+  console.log('Seeded resource_allocation_status items');
 
   // ── Default app value ─────────────────────────────────────────────────
   const existingVal = db.get('SELECT id FROM app_values WHERE key = ?', ['SOW_STORAGE_URL']);

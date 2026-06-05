@@ -44,22 +44,27 @@ router.post("/bulk", async (req, res) => {
       if (existing) {
         db.run(
           `UPDATE resources SET sno=?, emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
-           previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?, updated_at=? WHERE id=?`,
+           previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?,
+           allocation_status=?, updated_at=? WHERE id=?`,
           [r.sno || existing.sno, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
            r.totalWorkex || "", r.engagement || "", r.skills || "",
+           r.allocationStatus !== undefined ? r.allocationStatus : (r.allocation_status || ""),
            new Date().toISOString(), existing.id]
         );
         updated++;
       } else {
         const maxRow = db.get("SELECT MAX(sno) as m FROM resources");
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
+        const engLower = (r.engagement || "").toLowerCase().trim();
+        const defaultAllocStatus = r.allocationStatus !== undefined ? r.allocationStatus
+          : (engLower === 'bench' || engLower === '' ? 'Available' : 'Joined');
         db.run(
           `INSERT INTO resources (sno, ra_id, emp_name, email_id, piw_role, role_or_domain,
-           previous_workex, doj, total_workex, engagement, skills) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+           previous_workex, doj, total_workex, engagement, skills, allocation_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
           [r.sno || sno, raId, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
-           r.totalWorkex || "", r.engagement || "", r.skills || ""]
+           r.totalWorkex || "", r.engagement || "", r.skills || "", defaultAllocStatus]
         );
         inserted++;
       }
@@ -79,12 +84,15 @@ router.post("/", async (req, res) => {
     const db = await getDb();
     const maxRow = db.get("SELECT MAX(sno) as m FROM resources");
     const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
+    const engLower = (r.engagement || "").toLowerCase().trim();
+    const allocStatus = r.allocationStatus !== undefined ? r.allocationStatus
+      : (engLower === 'bench' || engLower === '' ? 'Available' : 'Joined');
     db.run(
       `INSERT INTO resources (sno, ra_id, emp_name, email_id, piw_role, role_or_domain,
-       previous_workex, doj, total_workex, engagement, skills) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+       previous_workex, doj, total_workex, engagement, skills, allocation_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       [sno, r.raId || "", r.empName || "", r.emailId || "", r.piwRole || "",
        r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
-       r.totalWorkex || "", r.engagement || "", r.skills || ""]
+       r.totalWorkex || "", r.engagement || "", r.skills || "", allocStatus]
     );
     res.json({ ok: true, id: db.lastId() });
   } catch (err) {
@@ -100,10 +108,13 @@ router.put("/:id", async (req, res) => {
     const db = await getDb();
     db.run(
       `UPDATE resources SET emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
-       previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?, updated_at=? WHERE id=?`,
+       previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?,
+       allocation_status=?, updated_at=? WHERE id=?`,
       [r.empName || "", r.emailId || "", r.piwRole || "", r.roleOrDomain || "",
        r.previousWorkex || "", r.doj || "", r.totalWorkex || "",
-       r.engagement || "", r.skills || "", new Date().toISOString(), id]
+       r.engagement || "", r.skills || "",
+       r.allocationStatus !== undefined ? r.allocationStatus : (r.allocation_status || ""),
+       new Date().toISOString(), id]
     );
     res.json({ ok: true });
   } catch (err) {
