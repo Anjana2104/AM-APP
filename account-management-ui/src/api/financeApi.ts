@@ -11,13 +11,19 @@ const BASE = '/api/finance';
 
 export interface FinanceProject {
   id?: number;
-  sno: number;
+  sno?: number;
   project: string;
+  company?: string;
   code: string;
   space: string;
   owner: string;
+  /** 'Active' | 'Inactive' — driven from backend DB status field */
+  status?: 'Active' | 'Inactive';
+  /** @deprecated use status instead; kept for backward compat with existing DB rows */
+  active?: number | boolean;
   /** keyed by month label e.g. "Oct'25" → number */
   revenue: Record<string, number>;
+  monthHeaders?: string[];
 }
 
 let _serverAvailable: boolean | null = null;
@@ -54,20 +60,34 @@ export async function getProjects(): Promise<{ projects: FinanceProject[]; month
 }
 
 // ── Bulk save (full replace) ──────────────────────────────────────────────────
-export async function bulkSave(projects: FinanceProject[], monthHeaders: string[]): Promise<boolean> {
+export async function bulkSave(projects: FinanceProject[], monthHeaders: string[]): Promise<{ ok: boolean; error?: string }> {
   const online = await isServerAvailable();
-  if (!online) return false;
+  if (!online) return { ok: false };
   const res = await fetch(`${BASE}/projects/bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ projects, monthHeaders }),
   });
   const data = await res.json();
-  return data.ok === true;
+  if (!res.ok) return { ok: false, error: data.error || 'Server error' };
+  return { ok: data.ok === true };
+}
+
+// ── Create one project ────────────────────────────────────────────────────────
+export async function createProject(payload: FinanceProject): Promise<{ ok: boolean; id?: number }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false };
+  const res = await fetch(`${BASE}/projects`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  return data;
 }
 
 // ── Update one project ────────────────────────────────────────────────────────
-export async function updateProject(id: number, payload: Partial<FinanceProject> & { monthHeaders?: string[] }): Promise<boolean> {
+export async function updateProject(id: number, payload: Partial<FinanceProject> & { status?: 'Active' | 'Inactive'; monthHeaders?: string[] }): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
   const res = await fetch(`${BASE}/projects/${id}`, {

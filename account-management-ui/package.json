@@ -16,7 +16,9 @@
   "dependencies": {
     "@ant-design/icons": "^6.2.3",
     "antd": "^6.4.3",
+    "html2canvas": "^1.4.1",
     "recharts": "^3.8.1",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "xlsx-js-style": "^1.2.0"
   }
 }

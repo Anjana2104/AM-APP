@@ -62,6 +62,10 @@ export const AVAILABLE_LINK_TARGETS: LinkTarget[] = [
   { id: 'resource_skill_field', label: 'Resource Skill dropdown', module: 'Resource Details' },
   { id: 'resource_designation_field', label: 'Resource Designation dropdown', module: 'Resource Details' },
   { id: 'request_type_field', label: 'Request Type dropdown', module: 'Request Management' },
+  { id: 'finance_company_field', label: 'Company dropdown', module: 'Finance – Revenue Details' },
+  { id: 'finance_space_field', label: 'Space dropdown', module: 'Finance – Revenue Details' },
+  { id: 'finance_owner_field', label: 'Owner / Account Anchor dropdown', module: 'Finance – Revenue Details' },
+  { id: 'invoice_company_field', label: 'Company dropdown', module: 'Invoice Details' },
 ];
 
 const DEFAULT_CONFIGS: ConfigType[] = [

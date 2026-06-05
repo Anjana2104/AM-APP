@@ -1,6 +1,9 @@
 import { Tooltip } from 'antd';
 import { useState, useEffect } from 'react';
 import { FinanceManagement } from './pages/FinanceManagement';
+import { InvoiceManagement } from './pages/InvoiceManagement';
+import { FinanceSummary } from './pages/FinanceSummary';
+import { AccountSummary } from './pages/AccountSummary';
 import ResourceInformation from './pages/ResourceInformation';
 import { EngagementMapping } from './pages/EngagementMapping';
 import RequestManagement from './pages/RequestManagement';
@@ -20,6 +23,8 @@ import {
 import type { ResourceRow } from './pages/ResourceInformation';
 
 type EAMPage =
+  | 'account_summary'
+  | 'executive_summary'
   | 'executive_revenue'
   | 'executive_invoicing'
   | 'resources_info'
@@ -33,10 +38,12 @@ type EAMPage =
   | 'information_codeguide'
   | 'configuration';
 
-type EAMSection = 'executive' | 'resources' | 'clientmgmt' | 'information' | 'configuration';
+type EAMSection = 'account' | 'executive' | 'resources' | 'clientmgmt' | 'information' | 'configuration';
 
 
 const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
+  account_summary: 'account',
+  executive_summary: 'executive',
   executive_revenue: 'executive',
   executive_invoicing: 'executive',
   resources_info: 'resources',
@@ -55,12 +62,12 @@ const ALL_PAGES = Object.keys(PAGE_SECTION_MAP) as EAMPage[];
 
 function parseHash(): { module: 'home' | 'eam'; page: EAMPage } {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  if (hash === '' || hash === 'home') return { module: 'home', page: 'executive_revenue' };
+  if (hash === '' || hash === 'home') return { module: 'home', page: 'account_summary' };
   if (hash.startsWith('eam/')) {
     const page = hash.slice(4) as EAMPage;
     if (ALL_PAGES.includes(page)) return { module: 'eam', page };
   }
-  return { module: 'home', page: 'executive_revenue' };
+  return { module: 'home', page: 'account_summary' };
 }
 
 function toHash(module: 'home' | 'eam', page?: EAMPage) {
@@ -149,9 +156,7 @@ export default function App() {
   const initial = parseHash();
   const [activeModule, setActiveModule] = useState<'home' | 'eam'>(initial.module);
   const [activePage, setActivePage] = useState<EAMPage>(initial.page);
-  const [expandedSections, setExpandedSections] = useState<Set<EAMSection>>(
-    new Set(initial.module === 'eam' ? [PAGE_SECTION_MAP[initial.page]] : ['executive'])
-  );
+  const [expandedSections, setExpandedSections] = useState<Set<EAMSection>>(new Set<EAMSection>());
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [resources, setResources] = useState<ResourceRow[]>([]);
 
@@ -195,8 +200,10 @@ export default function App() {
 
     const renderContent = () => {
       switch (activePage) {
+        case 'account_summary':      return <AccountSummary onNavigate={page => navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage])} />;
+        case 'executive_summary':    return <FinanceSummary onNavigate={page => navigateTo(page, 'executive')} />;
         case 'executive_revenue':     return <FinanceManagement />;
-        case 'executive_invoicing':   return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Invoicing Details — Coming Soon</div>;
+        case 'executive_invoicing':   return <InvoiceManagement />;
         case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} />;
         case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} />;
         case 'resources_upskilling':  return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Upskilling — Coming Soon</div>;
@@ -266,7 +273,8 @@ export default function App() {
               /* Collapsed: icons only */
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {[
-                  { icon: <DollarOutlined />, label: 'Finance Management', action: () => navigateTo('executive_revenue', 'executive'), active: activePage.startsWith('executive') },
+                  { icon: <EyeOutlined />, label: 'Account Summary', action: () => navigateTo('account_summary', 'account'), active: activePage === 'account_summary' },
+                  { icon: <DollarOutlined />, label: 'Finance Management', action: () => navigateTo('executive_summary', 'executive'), active: activePage.startsWith('executive') },
                   { icon: <ThunderboltOutlined />, label: 'Resources', action: () => navigateTo('resources_info', 'resources'), active: activePage.startsWith('resources') },
                   { icon: <UserOutlined />, label: 'Request Management', action: () => navigateTo('clientmgmt_requests', 'clientmgmt'), active: activePage.startsWith('clientmgmt') },
                   { icon: <NodeIndexOutlined />, label: 'Internal Process', action: () => navigateTo('clientmgmt_connects', 'clientmgmt'), active: activePage === 'clientmgmt_connects' },
@@ -289,6 +297,14 @@ export default function App() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
 
+                {/* ── ACCOUNT SUMMARY ── */}
+                <SideNavItem
+                  icon={<EyeOutlined />} label="Account Summary"
+                  active={activePage === 'account_summary'}
+                  onClick={() => navigateTo('account_summary', 'account')}
+                  showArrow
+                />
+
                 {/* ── ACCOUNT OPERATIONS section ── */}
                 <SectionLabel label="Account Operations" />
 
@@ -299,6 +315,7 @@ export default function App() {
                   expanded={isExp('executive')}
                   onToggle={() => toggleSection('executive')}
                 >
+                  <SubNavItem label="Summary" active={activePage === 'executive_summary'} onClick={() => { setActivePage('executive_summary'); setActiveModule('eam'); }} />
                   <SubNavItem label="Revenue Details" active={activePage === 'executive_revenue'} onClick={() => { setActivePage('executive_revenue'); setActiveModule('eam'); }} />
                   <SubNavItem label="Invoicing Details" active={activePage === 'executive_invoicing'} onClick={() => { setActivePage('executive_invoicing'); setActiveModule('eam'); }} />
                 </SideNavGroup>
@@ -376,8 +393,8 @@ export default function App() {
         </div>
 
         {/* ─── Main Content ────────────────────────────────────── */}
-        <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
-          <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
+          <div style={{ flex: 1, overflowY: 'auto', minWidth: 0 }}>
             {renderContent()}
           </div>
         </div>
@@ -507,7 +524,7 @@ export default function App() {
 
         {/* Explore button */}
         <button
-          onClick={() => navigateTo('executive_revenue', 'executive')}
+          onClick={() => { navigateTo('account_summary', 'account'); setSidebarCollapsed(true); }}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 12,
             background: '#0a1e4a',

@@ -17,10 +17,24 @@ async function migrate() {
       code       TEXT DEFAULT "",
       space      TEXT DEFAULT "",
       owner      TEXT DEFAULT "",
+      status     TEXT NOT NULL DEFAULT "Active",
+      active     INTEGER DEFAULT 1,
       created_at TEXT,
       updated_at TEXT
     )
   `);
+
+  // Safely add 'active' column to existing tables (idempotent)
+  try { db.run(`ALTER TABLE finance_projects ADD COLUMN active INTEGER DEFAULT 1`); } catch (_) {}
+  // Add 'status' column to existing tables (idempotent)
+  try { db.run(`ALTER TABLE finance_projects ADD COLUMN status TEXT DEFAULT 'Active'`); } catch (_) {}
+  // Backfill: set status from active if null, default all nulls to Active
+  db.run(`UPDATE finance_projects SET status = 'Active' WHERE status IS NULL AND (active IS NULL OR active = 1)`);
+  db.run(`UPDATE finance_projects SET status = 'Inactive' WHERE status IS NULL AND active = 0`);
+  // Backfill active from status for consistency
+  db.run(`UPDATE finance_projects SET active = 1 WHERE active IS NULL`);
+  db.run(`UPDATE finance_projects SET active = CASE WHEN status = 'Inactive' THEN 0 ELSE 1 END WHERE status IS NOT NULL`);
+
 
   db.run(`
     CREATE TABLE IF NOT EXISTS finance_revenue (

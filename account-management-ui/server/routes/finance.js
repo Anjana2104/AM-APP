@@ -58,9 +58,6 @@ router.get("/projects", async (req, res) => {
 });
 
 // POST /api/finance/projects/bulk
-// Upsert by project name:
-//   - Existing project (same name) → update fields + revenue rows
-//   - New project → append
 router.post("/projects/bulk", async (req, res) => {
   const { projects, monthHeaders } = req.body;
   if (!Array.isArray(projects)) {
@@ -74,36 +71,53 @@ router.post("/projects/bulk", async (req, res) => {
     for (let i = 0; i < projects.length; i++) {
       const p = projects[i];
       const months = monthHeaders || [];
-
-      // Check if project already exists by name (case-insensitive)
-      const existing = db.get(
-        "SELECT id FROM finance_projects WHERE LOWER(project) = LOWER(?)",
-        [p.project || ""]
-      );
+      const statusVal = p.status === 'Inactive' ? 'Inactive' : 'Active';
+      const activeVal = statusVal === 'Active' ? 1 : 0;
 
       let projectId;
 
-      if (existing) {
-        // Update existing project fields
-        projectId = existing.id;
-        db.run(
-          "UPDATE finance_projects SET code=?, space=?, owner=?, updated_at=? WHERE id=?",
-          [p.code || "", p.space || "", p.owner || "", new Date().toISOString(), projectId]
+      if (p.id) {
+        // Prefer match by DB id — handles project name renames correctly
+        const existing = db.get("SELECT id FROM finance_projects WHERE id=?", [p.id]);
+        if (existing) {
+          projectId = existing.id;
+          db.run(
+            "UPDATE finance_projects SET project=?, company=?, code=?, space=?, owner=?, status=?, active=?, updated_at=? WHERE id=?",
+            [p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, new Date().toISOString(), projectId]
+          );
+          updated++;
+        }
+      }
+
+      if (!projectId) {
+        // Fall back to name match for records without an id
+        const existing = db.get(
+          "SELECT id FROM finance_projects WHERE LOWER(project) = LOWER(?)",
+          [p.project || ""]
         );
-        updated++;
-      } else {
-        // Insert new project — sno = current max + 1
+        if (existing) {
+          projectId = existing.id;
+          db.run(
+            "UPDATE finance_projects SET project=?, company=?, code=?, space=?, owner=?, status=?, active=?, updated_at=? WHERE id=?",
+            [p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal, new Date().toISOString(), projectId]
+          );
+          updated++;
+        }
+      }
+
+      if (!projectId) {
+        // Insert new project
         const maxRow = db.get("SELECT MAX(sno) as m FROM finance_projects");
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
         db.run(
-          "INSERT INTO finance_projects (sno, project, code, space, owner) VALUES (?, ?, ?, ?, ?)",
-          [p.sno || sno, p.project || "", p.code || "", p.space || "", p.owner || ""]
+          "INSERT INTO finance_projects (sno, project, company, code, space, owner, status, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          [p.sno || sno, p.project || "", p.company || "", p.code || "", p.space || "", p.owner || "", statusVal, activeVal]
         );
         projectId = db.lastId();
         inserted++;
       }
 
-      // Upsert revenue rows (INSERT OR REPLACE on UNIQUE project_id+month)
+      // Upsert revenue rows
       months.forEach((month, idx) => {
         const amount = Array.isArray(p.revenue)
           ? (p.revenue[idx] || 0)
@@ -118,21 +132,26 @@ router.post("/projects/bulk", async (req, res) => {
     res.json({ ok: true, inserted, updated });
   } catch (err) {
     console.error("Upsert error:", err);
+    const msg = err.message || '';
+    if (msg.includes('UNIQUE') || msg.includes('unique')) {
+      return res.status(409).json({ error: 'Duplicate project code detected. Each project must have a unique code (derived from project name). Fix the file and re-upload.', detail: msg });
+    }
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/finance/projects
 router.post("/projects", async (req, res) => {
-  const { project, code, space, owner, revenue, monthHeaders } = req.body;
+  const { project, company, code, space, owner, status, revenue, monthHeaders } = req.body;
   try {
     const db = await getDb();
     const countRow = db.get("SELECT COUNT(*) as c FROM finance_projects");
     const sno = (countRow ? countRow.c : 0) + 1;
+    const statusVal = status === 'Inactive' ? 'Inactive' : 'Active';
 
     db.run(
-      "INSERT INTO finance_projects (sno, project, code, space, owner) VALUES (?, ?, ?, ?, ?)",
-      [sno, project || "", code || "", space || "", owner || ""]
+      "INSERT INTO finance_projects (sno, project, company, code, space, owner, status, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [sno, project || "", company || "", code || "", space || "", owner || "", statusVal, statusVal === 'Active' ? 1 : 0]
     );
     const projectId = db.lastId();
 
@@ -155,15 +174,27 @@ router.post("/projects", async (req, res) => {
 });
 
 // PUT /api/finance/projects/:id
+// Only updates fields that are present in the request body — safe for partial updates (e.g. status-only toggle)
 router.put("/projects/:id", async (req, res) => {
   const { id } = req.params;
-  const { project, code, space, owner, revenue, monthHeaders } = req.body;
+  const { project, company, code, space, owner, status, revenue, monthHeaders } = req.body;
   try {
     const db = await getDb();
-    db.run(
-      "UPDATE finance_projects SET project=?, code=?, space=?, owner=?, updated_at=? WHERE id=?",
-      [project || "", code || "", space || "", owner || "", new Date().toISOString(), id]
-    );
+    const fields = [];
+    const vals = [];
+    if (project !== undefined) { fields.push("project=?"); vals.push(project || ""); }
+    if (company !== undefined) { fields.push("company=?"); vals.push(company || ""); }
+    if (code !== undefined)    { fields.push("code=?");    vals.push(code || ""); }
+    if (space !== undefined)   { fields.push("space=?");   vals.push(space || ""); }
+    if (owner !== undefined)   { fields.push("owner=?");   vals.push(owner || ""); }
+    if (status !== undefined) {
+      const statusVal = status === 'Inactive' ? 'Inactive' : 'Active';
+      fields.push("status=?");  vals.push(statusVal);
+      fields.push("active=?");  vals.push(statusVal === 'Active' ? 1 : 0);
+    }
+    fields.push("updated_at=?"); vals.push(new Date().toISOString());
+    vals.push(id);
+    if (fields.length > 1) db.run(`UPDATE finance_projects SET ${fields.join(",")} WHERE id=?`, vals);
 
     if (revenue !== undefined && monthHeaders) {
       monthHeaders.forEach((month, idx) => {

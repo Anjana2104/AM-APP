@@ -41,7 +41,21 @@ export async function getRequests(): Promise<{ requests: RequestPayload[]; fromS
   if (online) {
     const res = await fetch(BASE);
     const data = await res.json();
-    return { requests: data.requests || [], fromServer: true };
+    // Map snake_case DB columns → camelCase to match RequestPayload interface
+    const requests: RequestPayload[] = (data.requests || []).map((r: Record<string, unknown>) => ({
+      id:               r.id as number,
+      sno:              r.sno as number,
+      beelineId:        String(r.beeline_id   ?? r.beelineId   ?? ''),
+      description:      String(r.description  ?? ''),
+      raisedBy:         String(r.raised_by    ?? r.raisedBy    ?? ''),
+      processingStatus: String(r.processing_status ?? r.processingStatus ?? ''),
+      overallStatus:    String(r.overall_status    ?? r.overallStatus    ?? ''),
+      accountAnchor:    String(r.account_anchor    ?? r.accountAnchor    ?? ''),
+      dateRaised:       String(r.date_raised       ?? r.dateRaised       ?? ''),
+      requestType:      String(r.request_type      ?? r.requestType      ?? ''),
+      updatedOn:        String(r.updated_on         ?? r.updatedOn        ?? ''),
+    }));
+    return { requests, fromServer: true };
   }
   return { requests: [], fromServer: false };
 }
