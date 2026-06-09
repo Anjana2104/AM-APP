@@ -1,5 +1,5 @@
 ﻿import { useState, useMemo, useEffect, useRef } from 'react';
-import { Button, Space, Card, Row, Col, Tag, Upload, Tooltip, message, Typography, Drawer, Input, Select, Collapse, Empty, Slider, Table, Tabs, Statistic, Progress, Checkbox } from 'antd';
+import { Button, Space, Card, Row, Col, Tag, Upload, Tooltip, message, Typography, Drawer, Input, Select, Collapse, Empty, Slider, Table, Tabs, Statistic, Progress, Checkbox, Modal } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { UploadOutlined, DownloadOutlined, FilterOutlined, EyeOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ProjectOutlined, FileExcelOutlined } from '@ant-design/icons';
 import { DndContext, DragOverlay, useDroppable, useDraggable, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -8,8 +8,10 @@ import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import * as configApi from '../api/configApi';
+import { useConfig } from '../context/ConfigContext';
 import type { ResourceRow } from './ResourceMgmt';
 import * as resourceApi from '../api/resourceApi';
+import { useAuth } from '../context/AuthContext';
 
 const { Text } = Typography;
 
@@ -126,6 +128,13 @@ function KanbanColumnComp({ id, title, color, bgColor, resources, selectedSNOs, 
 }
 
 export function EngagementMapping({ resources = [], onUpdateResources, onNavigate }: ResourceUtilizationProps) {
+  const { getConfig, getConfigByLink } = useConfig();
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('resources_utilization', 'edit');
+  const projectEngagementOptions = useMemo(() => {
+    const cfg = getConfigByLink('engagement_field');
+    return cfg ? cfg.items.map(i => ({ label: i.label, value: i.value })) : [];
+  }, [getConfigByLink]);
   const [viewMode, setViewMode] = useState<'list' | 'card'>('card');
   const [allocationDrawer, setAllocationDrawer] = useState(false);
   const [savingAllocation, setSavingAllocation] = useState(false);
@@ -292,7 +301,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
       width: 110,
       render: (v: string) => {
         if (!v) return <span style={{ fontSize: '10px', color: '#aaa' }}> - </span>;
-        const colorMap: Record<string, string> = { Shortlisted: 'cyan', Offered: 'orange', Selected: 'green', Joined: 'success' };
+        const colorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
         return <Tag color={colorMap[v] || 'default'} style={{ fontSize: '10px' }}>{v}</Tag>;
       },
     },
@@ -324,7 +333,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
               <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => { setSelectedDetailResource(record); setDetailsModalOpen(true); }} />
             </Tooltip>
             {!status && record.engagement === 'Bench' && (
-              <Button type="primary" size="small" style={{ fontSize: '10px' }} onClick={() => handleAllocateResource(record)}>Allocate</Button>
+              <Button type="primary" size="small" style={{ fontSize: '10px' }} onClick={() => handleAllocateResource(record)} disabled={!canEdit}>Allocate</Button>
             )}
             {status === 'Shortlisted' && (
               <>
@@ -350,51 +359,176 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     },
   ];
 
-  const handleBenchUpload = (file: File) => {
+  // ── Deployment Pool: download template ──────────────────────────────────
+  const downloadDeploymentPoolTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['RA ID', 'Current Engagement', 'Allocation Status'],
+      ['RA001', 'ZS Associates - Project Alpha', 'Joined'],
+      ['RA002', 'Bench', 'Available'],
+    ]);
+    ws['!cols'] = [{ wch: 14 }, { wch: 32 }, { wch: 20 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Deployment Pool Update');
+    XLSX.writeFile(wb, 'Deployment_Pool_Update_Template.xlsx');
+    message.success('Template downloaded');
+  };
+
+  // ── Deployment Pool: upload tracker ─────────────────────────────────────
+  const handleDeploymentPoolUpload = (file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheet = workbook.Sheets[workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json(sheet) as any[];
+        const wb = XLSX.read(data, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
 
-        if (!rows || rows.length === 0) {
-          message.warning('No data found in file');
+        // ── Header validation ──────────────────────────────────────────
+        const headerRow: string[] = (XLSX.utils.sheet_to_json(ws, { header: 1 })[0] as string[]) || [];
+        const uploadedHeaders = headerRow.map(h => String(h || '').trim());
+        const required = ['RA ID', 'Current Engagement', 'Allocation Status'];
+        const missing = required.filter(h => !uploadedHeaders.includes(h));
+        if (missing.length > 0) {
+          Modal.error({
+            title: 'Invalid Template',
+            content: (
+              <div>
+                <p style={{ marginBottom: 8 }}>Missing required columns:</p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {missing.map(h => <li key={h} style={{ color: '#f5222d', fontSize: '13px' }}>{h}</li>)}
+                </ul>
+                <p style={{ marginTop: 10, fontSize: '12px', color: '#8c8c8c' }}>
+                  Please download the template using the <strong>Download Template</strong> button.
+                </p>
+              </div>
+            ),
+          });
           return false;
         }
 
-        const raidColumn = Object.keys(rows[0])[0];
-        const uploadedRAIDs = rows.map(row => String(row[raidColumn] || '').trim()).filter(Boolean);
+        const rows: any[] = XLSX.utils.sheet_to_json(ws);
+        if (!rows.length) { message.warning('No data found in file'); return false; }
 
-        const updated = (cachedResources || []).map(resource => {
-          if (uploadedRAIDs.includes(resource?.raId || '')) {
-            return { ...resource, engagement: 'Bench' };
+        const totalRows = rows.filter(row => String(row['RA ID'] || '').trim()).length;
+
+        // Valid allocation status values from config
+        const validStatuses = allocStages.map(s => s.value.toLowerCase());
+
+        const notFoundRAIDs: string[] = [];
+        const invalidStatusErrors: { raId: string; providedStatus: string }[] = [];
+        let updatedCount = 0;
+
+        const resourceMap = new Map(
+          (cachedResources || []).map(r => [r.raId.toLowerCase(), r])
+        );
+
+        const updatedResources = [...(cachedResources || [])];
+
+        rows.forEach(row => {
+          const raId = String(row['RA ID'] || '').trim();
+          const engagement = String(row['Current Engagement'] || '').trim();
+          const allocStatus = String(row['Allocation Status'] || '').trim();
+          if (!raId) return;
+
+          const existing = resourceMap.get(raId.toLowerCase());
+          if (!existing) {
+            notFoundRAIDs.push(raId);
+            return;
           }
-          return resource;
+
+          if (allocStatus && !validStatuses.includes(allocStatus.toLowerCase())) {
+            invalidStatusErrors.push({ raId, providedStatus: allocStatus });
+            return;
+          }
+
+          const idx = updatedResources.findIndex(r => r.raId.toLowerCase() === raId.toLowerCase());
+          if (idx >= 0) {
+            updatedResources[idx] = {
+              ...updatedResources[idx],
+              ...(engagement ? { engagement } : {}),
+              ...(allocStatus ? { allocationStatus: allocStatus } : {}),
+            };
+            updatedCount++;
+          }
         });
 
-        const matchedCount = uploadedRAIDs.filter(raid =>
-          (cachedResources || []).some(r => r?.raId === raid)
-        ).length;
+        const errorCount = notFoundRAIDs.length + invalidStatusErrors.length;
 
-        setCachedResources(updated);
-        onUpdateResources(updated);
-
-        // Persist bench status to DB for matched resources
-        const benchedResources = updated.filter(r => uploadedRAIDs.includes(r?.raId || ''));
-        if (benchedResources.length > 0) {
-          resourceApi.bulkSave(benchedResources.map(r => ({
-            raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
-            piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
-            doj: r.doj, totalWorkex: r.totalWorkex, engagement: 'Bench', skills: r.skills,
-          }))).catch(() => {/* server offline  -  in-memory update still applied */});
+        // Show errors if any
+        if (errorCount > 0) {
+          Modal.warning({
+            title: `Upload Result: ${updatedCount} of ${totalRows} rows processed successfully`,
+            width: 580,
+            content: (
+              <div>
+                {/* Summary bar */}
+                <div style={{ display: 'flex', gap: 12, marginBottom: 14, padding: '10px 14px', background: '#fafafa', borderRadius: 6, border: '1px solid #f0f0f0' }}>
+                  <span style={{ fontSize: '13px' }}>
+                    <span style={{ color: '#52c41a', fontWeight: 600 }}>✓ {updatedCount} updated</span>
+                    <span style={{ color: '#bbb', margin: '0 8px' }}>|</span>
+                    <span style={{ color: '#f5222d', fontWeight: 600 }}>✗ {errorCount} failed</span>
+                    <span style={{ color: '#bbb', margin: '0 8px' }}>|</span>
+                    <span style={{ color: '#8c8c8c' }}>Total: {totalRows} rows</span>
+                  </span>
+                </div>
+                {notFoundRAIDs.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <p style={{ fontWeight: 600, color: '#f5222d', marginBottom: 6 }}>
+                      RA IDs not found in system ({notFoundRAIDs.length}):
+                    </p>
+                    <p style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: 6 }}>
+                      These RA IDs do not exist — please verify the IDs in your tracker match the system records.
+                    </p>
+                    <div style={{ background: '#fff1f0', border: '1px solid #ffa39e', borderRadius: 6, padding: '8px 12px', maxHeight: 130, overflowY: 'auto' }}>
+                      {notFoundRAIDs.map(id => (
+                        <Tag key={id} color="red" style={{ marginBottom: 4 }}>{id}</Tag>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {invalidStatusErrors.length > 0 && (
+                  <div>
+                    <p style={{ fontWeight: 600, color: '#fa8c16', marginBottom: 6 }}>
+                      Invalid Allocation Status ({invalidStatusErrors.length}):
+                    </p>
+                    <p style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: 6 }}>
+                      Accepted values: <em style={{ color: '#555' }}>{allocStages.map(s => s.value).join(', ')}</em>
+                    </p>
+                    <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 6, padding: '8px 12px', maxHeight: 130, overflowY: 'auto' }}>
+                      {invalidStatusErrors.map(({ raId, providedStatus }) => (
+                        <div key={raId} style={{ fontSize: '12px', marginBottom: 4 }}>
+                          <Tag color="orange">{raId}</Tag>
+                          <span style={{ color: '#8c8c8c' }}>provided: </span>
+                          <Tag color="red">{providedStatus}</Tag>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ),
+          });
         }
 
-        message.success(` Matched ${matchedCount} resources to Bench`);
-      } catch (error) {
-        message.error('Error processing file');
-        console.error(error);
+        if (updatedCount === 0) {
+          if (errorCount === 0) message.warning('No matching RA IDs found in the file');
+          return false;
+        }
+
+        // Persist to DB
+        await resourceApi.bulkSave(updatedResources.map(r => ({
+          raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
+          piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
+          doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '',
+          skills: r.skills, allocationStatus: r.allocationStatus || '',
+        }))).catch(() => {/* server offline — in-memory update still applied */});
+
+        setCachedResources(updatedResources);
+        onUpdateResources(updatedResources);
+        if (notFoundRAIDs.length === 0 && invalidStatusErrors.length === 0) {
+          message.success(`Updated ${updatedCount} resource(s) successfully`);
+        }
+      } catch (err) {
+        message.error('Failed to parse file');
       }
     };
     reader.readAsArrayBuffer(file);
@@ -527,46 +661,45 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     const resource = (active.data.current as any)?.resource as ResourceRow;
     if (!resource) return;
     const targetCol = String(over.id);
-    const currentStatus = resource.allocationStatus || '';
-    const isAvailable = (!currentStatus || currentStatus === 'Available') && resource.engagement === 'Bench';
-    const currentCol = isAvailable ? 'available' : currentStatus.toLowerCase();
+    const currentStatus = resource.allocationStatus || 'Available';
+    // Normalise current column id
+    const currentCol = currentStatus === 'Available' ? 'available' : currentStatus.toLowerCase();
     if (currentCol === targetCol) return;
 
-    // If dragged tile is selected, move all selected; otherwise just the one tile
+    // Allowed transitions matrix
+    const allowed: Record<string, string[]> = {
+      available:    ['shortlisted'],
+      shortlisted:  ['available', 'offered'],
+      offered:      ['available', 'shortlisted', 'selected'],
+      selected:     ['available', 'shortlisted', 'offered'],
+    };
+    const colToStatus: Record<string, string> = {
+      available: 'Available', shortlisted: 'Shortlisted',
+      offered: 'Offered', selected: 'Selected',
+    };
+
+    const allowed4current = allowed[currentCol] || [];
+    if (!allowed4current.includes(targetCol)) {
+      message.warning({ content: `Cannot move from ${currentStatus} to ${colToStatus[targetCol] || targetCol} - step-by-step workflow only`, duration: 3 });
+      return;
+    }
+
     const allPipeline = [...filteredBenchResources, ...shortlistedResources, ...offeredResources, ...selectedResources];
     const resourcesToMove = selectedSNOs.has(resource.sno)
       ? allPipeline.filter(r => selectedSNOs.has(r.sno))
       : [resource];
 
-    if (targetCol === 'available') {
-      handleBulkUpdateStatus(resourcesToMove, 'Available');
-      message.info({ content: resourcesToMove.length === 1 ? `${resourcesToMove[0].empName} returned to bench` : `${resourcesToMove.length} resources returned to bench`, duration: 3 });
-    } else if (targetCol === 'shortlisted') {
-      if (currentStatus === 'Offered') {
-        handleBulkUpdateStatus(resourcesToMove, 'Shortlisted');
-        message.success({ content: `Moved back to Shortlisted`, duration: 3 });
-      } else {
-        setPendingTargetStatus('Shortlisted');
-        setPendingAllocResources(resourcesToMove);
-        setAllocationDrawer(true);
-      }
-    } else if (targetCol === 'offered') {
-      if (isAvailable) {
-        setPendingTargetStatus('Offered');
-        setPendingAllocResources(resourcesToMove);
-        setAllocationDrawer(true);
-      } else {
-        handleBulkUpdateStatus(resourcesToMove, 'Offered');
-        message.success({ content: resourcesToMove.length === 1 ? `${resourcesToMove[0].empName} moved to Offered` : `${resourcesToMove.length} resources moved to Offered`, duration: 3 });
-      }
-    } else if (targetCol === 'selected') {
-      // 4th column = Joined -> Projects
-      handleBulkUpdateStatus(resourcesToMove, 'Joined');
-      message.success({ content: resourcesToMove.length === 1 ? `${resourcesToMove[0].empName} marked as Joined - moved to Projects` : `${resourcesToMove.length} resources marked as Joined`, duration: 4 });
-    } else if (targetCol === 'projects') {
-      // Drag to "Move to Projects" column  -  mark Joined and set engagement
-      handleBulkUpdateStatus(resourcesToMove, 'Joined');
-      message.success({ content: resourcesToMove.length === 1 ? `${resourcesToMove[0].empName} marked as Joined  -  moved to Projects` : `${resourcesToMove.length} resources marked as Joined`, duration: 4 });
+    const newStatus = colToStatus[targetCol];
+
+    if (targetCol === 'shortlisted' && currentCol === 'available') {
+      // Available -> Shortlisted: open allocation drawer to capture engagement name
+      setPendingTargetStatus('Shortlisted');
+      setPendingAllocResources(resourcesToMove);
+      setAllocationDrawer(true);
+    } else {
+      handleBulkUpdateStatus(resourcesToMove, newStatus);
+      const label = resourcesToMove.length === 1 ? resourcesToMove[0].empName : `${resourcesToMove.length} resources`;
+      message.success({ content: `${label} moved to ${newStatus}`, duration: 3 });
     }
     clearSelection();
   };
@@ -752,7 +885,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end', marginTop: 6 }}>
           {isAvailable && (
-            <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }}>Allocate</Button>
+            <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }} disabled={!canEdit}>Allocate</Button>
           )}
           {status === 'Shortlisted' && (
             <>
@@ -847,7 +980,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                 </div>
                 <div style={{ flex: 1 }} />
                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 6 }}>
-                  <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }}>Allocate</Button>
+                  <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }} disabled={!canEdit}>Allocate</Button>
                 </div>
               </div>
             );
@@ -880,13 +1013,13 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
   // â”€â”€â”€ Tab data sets â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   // Pipeline stages: Shortlisted + Offered are shown in Bench tab, Selected in Projects tab
-  const pipelineStages = new Set(['Shortlisted', 'Offered']);
+  const pipelineStages = new Set(['Shortlisted', 'Offered', 'Selected']);
   const projectResources = useMemo(() =>
-    allFilteredResources.filter(r => r?.engagement && r.engagement !== 'Bench' && !pipelineStages.has(r?.allocationStatus || '')),
+    allFilteredResources.filter(r => r?.engagement && r.engagement !== 'Bench' && r?.allocationStatus === 'Joined'),
     [allFilteredResources]
   );
   const selectedResources = useMemo(() =>
-    allFilteredResources.filter(r => r?.allocationStatus === 'DISABLED_NO_SELECTED_STAGE'),
+    allFilteredResources.filter(r => r?.allocationStatus === 'Selected'),
     [allFilteredResources]
   );
   const filteredBenchResources = useMemo(() =>
@@ -930,9 +1063,6 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '10px' }}>
                         <Space size={8}>
-                          <Text style={{ fontSize: '12px', color: '#666' }}>
-                            <strong>{filteredBenchResources.length}</strong> available  |  <strong>{shortlistedResources.length}</strong> shortlisted  |  <strong>{offeredResources.length}</strong> offered  |  <strong>{selectedResources.length}</strong> selected
-                          </Text>
                           {selectedSNOs.size > 0 && (
                             <Tag color="blue" style={{ fontSize: '11px', cursor: 'pointer' }} onClick={clearSelection}>
                               {selectedSNOs.size} selected - drag any to move all | click to clear
@@ -946,11 +1076,16 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                           <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
                           </Tooltip>
-                          <Tooltip title="Upload Bench RAID (Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Upload accept=".xlsx,.xls" beforeUpload={handleBenchUpload} showUploadList={false}>
+                          <Tooltip title="Download Deployment Pool Template" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<DownloadOutlined />} size="small" onClick={downloadDeploymentPoolTemplate} style={{ borderRadius: '6px' }} />
+                          </Tooltip>
+                          {canEdit && (
+                          <Tooltip title="Upload Deployment Pool Tracker (RA ID + Engagement + Allocation Status)" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Upload accept=".xlsx,.xls" beforeUpload={handleDeploymentPoolUpload} showUploadList={false}>
                               <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
                             </Upload>
                           </Tooltip>
+                          )}
                           <Tooltip title="Export Bench (Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" disabled={!filteredBenchResources.length} onClick={() => handleExportListTable(filteredBenchResources, `Bench_Export_${new Date().toISOString().slice(0,10)}.xlsx`)} style={{ borderRadius: '6px', color: filteredBenchResources.length ? '#52c41a' : undefined }} />
                           </Tooltip>
@@ -984,6 +1119,10 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                 <Input size="small" placeholder="Search..." value={unifiedFilters.roleOrDomain} onChange={e => setUnifiedFilters(prev => ({ ...prev, roleOrDomain: e.target.value }))} allowClear style={{ fontSize: '11px' }} />
                               </div>
                               <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Current Engagement</div>
+                                <Select size="small" placeholder="All" allowClear value={unifiedFilters.engagement || undefined} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, engagement: value || '' }))} options={engagementOptions.map(eng => ({ label: eng, value: eng }))} style={{ width: '100%', fontSize: '11px' }} />
+                              </div>
+                              <div>
                                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Experience: {unifiedFilters.workexRange[0]}-{unifiedFilters.workexRange[1]} yrs</div>
                                 <Slider range min={0} max={50} value={unifiedFilters.workexRange} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, workexRange: value as [number, number] }))} />
                               </div>
@@ -1011,7 +1150,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                   onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
                                   onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
                                 />
-                                <KanbanColumnComp id="selected" title="Joined → Projects" color="#52c41a" bgColor="#f6ffed"
+                                <KanbanColumnComp id="selected" title="Selected" color="#1890ff" bgColor="#e6f4ff"
                                   resources={selectedResources} selectedSNOs={selectedSNOs}
                                   onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
                                   onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
@@ -1023,6 +1162,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                        >Mark All Joined</Button>
                                      </Tooltip>
                                    ) : undefined}/>
+                                
                               </div>
                               <DragOverlay>
                                 {draggingResource && (
@@ -1047,7 +1187,12 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                 },
                 {
                   key: 'projects',
-                  label: <span style={{ fontSize: '11px' }}><ProjectOutlined /> Projects</span>,
+                  label: (
+                    <span style={{ fontSize: '11px' }}>
+                      <ProjectOutlined /> Projects
+                      {projectResources.length > 0 && <Tag color="blue" style={{ marginLeft: 6, fontSize: '10px' }}>{projectResources.length}</Tag>}
+                    </span>
+                  ),
                   children: (
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '12px' }}>
@@ -1076,14 +1221,6 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                           <Tooltip title="Export Formatted Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" disabled={!projectResources.length} onClick={() => handleExportListTable(projectResources, `Projects_Export_${new Date().toISOString().slice(0,10)}.xlsx`)} style={{ borderRadius: '6px', color: projectResources.length ? '#52c41a' : undefined }} />
                           </Tooltip>
-                          <Tooltip title="Download Engagement Update Template" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Button icon={<DownloadOutlined />} size="small" onClick={downloadEngagementTemplate} style={{ borderRadius: '6px' }} />
-                          </Tooltip>
-                          <Tooltip title="Upload Engagement Updates (RA ID + Current Engagement)" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Upload accept=".xlsx,.xls" beforeUpload={handleEngagementUpload} showUploadList={false}>
-                              <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
-                            </Upload>
-                          </Tooltip>
                         </Space>
                       </div>
                       <div style={{ display: 'flex', gap: '12px' }}>
@@ -1109,6 +1246,10 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                               <div>
                                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Project / Engagement</div>
                                 <Select size="small" placeholder="All" allowClear value={unifiedFilters.engagement || undefined} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, engagement: value || '' }))} options={engagementOptions.filter(e => e !== 'Bench').map(eng => ({ label: eng, value: eng }))} style={{ width: '100%', fontSize: '11px' }} />
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Current Engagement</div>
+                                <Select size="small" placeholder="All" allowClear value={unifiedFilters.engagement || undefined} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, engagement: value || '' }))} options={engagementOptions.map(eng => ({ label: eng, value: eng }))} style={{ width: '100%', fontSize: '11px' }} />
                               </div>
                               <div>
                                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Experience: {unifiedFilters.workexRange[0]}-{unifiedFilters.workexRange[1]} yrs</div>
@@ -1160,7 +1301,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                         <Empty description="No resource data. Upload resources in the Information tab first." style={{ marginTop: 48 }} />
                       ) : (
                         <>
-                          {/* Summary KPIs */}
+                          {/* KPI cards — add pipeline counts */}
                           <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
                             <Col xs={24} sm={12} md={6}>
                               <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #e6f7ff' }}>
@@ -1168,13 +1309,13 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                               </Card>
                             </Col>
                             <Col xs={24} sm={12} md={6}>
-                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #f6ffed' }}>
-                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>On Projects</span>} value={activeCount} valueStyle={{ color: '#52c41a', fontSize: '28px', fontWeight: 700 }} />
+                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #fffbe6' }}>
+                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>Available (Bench)</span>} value={filteredBenchResources.length} valueStyle={{ color: '#faad14', fontSize: '28px', fontWeight: 700 }} />
                               </Card>
                             </Col>
                             <Col xs={24} sm={12} md={6}>
-                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #fffbe6' }}>
-                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>On Bench</span>} value={benchCount} valueStyle={{ color: '#faad14', fontSize: '28px', fontWeight: 700 }} />
+                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #e6fffb' }}>
+                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>In Pipeline</span>} value={shortlistedResources.length + offeredResources.length + selectedResources.length} valueStyle={{ color: '#13c2c2', fontSize: '28px', fontWeight: 700 }} />
                               </Card>
                             </Col>
                             <Col xs={24} sm={12} md={6}>
@@ -1227,6 +1368,38 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                   </div>
                                 );
                               })}
+                            </Space>
+                          </Card>
+
+                          {/* Breakdown by Allocation Status */}
+                          <Card style={{ borderRadius: 8, marginBottom: 16 }} bodyStyle={{ padding: '16px 20px' }}>
+                            <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 16 }}>Breakdown by Allocation Status</Text>
+                            <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                              {(() => {
+                                const statusColorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
+                                const statusMap: Record<string, number> = {};
+                                (cachedResources || []).forEach(r => {
+                                  const s = r?.allocationStatus || 'Available';
+                                  statusMap[s] = (statusMap[s] || 0) + 1;
+                                });
+                                const order = ['Available', 'Shortlisted', 'Offered', 'Selected', 'Joined'];
+                                const entries = order.filter(s => statusMap[s]).map(s => [s, statusMap[s]] as [string, number]);
+                                // add any unexpected statuses
+                                Object.entries(statusMap).forEach(([s, c]) => { if (!order.includes(s)) entries.push([s, c]); });
+                                return entries.map(([status, count]) => {
+                                  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                                  const color = statusColorMap[status] || '#8c8c8c';
+                                  return (
+                                    <div key={status}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                                        <span style={{ fontSize: '12px', color, fontWeight: 600 }}>{status}</span>
+                                        <Text style={{ fontSize: '12px', color: '#666' }}>{count} ({pct}%)</Text>
+                                      </div>
+                                      <Progress percent={pct} size="small" strokeColor={color} showInfo={false} style={{ margin: 0 }} />
+                                    </div>
+                                  );
+                                });
+                              })()}
                             </Space>
                           </Card>
 
@@ -1312,10 +1485,15 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
           <div>
             <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Engagement / Project Name *</label>
-            <Input
-              placeholder="Enter engagement or project name"
-              value={allocationForm.engagementName}
-              onChange={(e) => setAllocationForm({ ...allocationForm, engagementName: e.target.value })}
+            <Select
+              showSearch
+              placeholder="Select engagement or project"
+              value={allocationForm.engagementName || undefined}
+              onChange={(v) => setAllocationForm({ ...allocationForm, engagementName: v })}
+              style={{ width: '100%' }}
+              options={projectEngagementOptions}
+              filterOption={(input, option) => String(option?.label || '').toLowerCase().includes(input.toLowerCase())}
+              allowClear
             />
           </div>
 
@@ -1354,7 +1532,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
       {selectedDetailResource && (
         <Drawer
-          title="Resource Details"
+          title={`${selectedDetailResource.raId} - ${selectedDetailResource.empName}`}
           placement="right"
           onClose={() => {
             setDetailsModalOpen(false);
@@ -1364,63 +1542,87 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
           width={500}
         >
           <Space direction="vertical" style={{ width: '100%' }} size="large">
-            <div>
-              <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>Employee Name</div>
-              <div style={{ fontSize: '16px', fontWeight: 700 }}>{selectedDetailResource.empName}</div>
-            </div>
-
-            <div>
-              <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>RAID ID</div>
-              <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedDetailResource.raId}</div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>PIW Role</div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedDetailResource.piwRole || ' - '}</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>Domain</div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedDetailResource.roleOrDomain || ' - '}</div>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div>
-                <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>Total Experience</div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>{selectedDetailResource.totalWorkex || ' - '} years</div>
-              </div>
-              <div>
-                <div style={{ fontSize: '11px', color: '#999', marginBottom: 4 }}>Status</div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>
-                  <Tag color={selectedDetailResource.engagement === 'Bench' ? 'warning' : 'blue'}>{selectedDetailResource.engagement || 'Bench'}</Tag>
+            {/* Identity */}
+            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>S.No</Text>
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>{String(selectedDetailResource.sno || '—')}</div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>RA ID</Text>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#1890ff' }}>{String(selectedDetailResource.raId || '—')}</div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Email</Text>
+                  <div style={{ fontSize: '14px' }}>{String(selectedDetailResource.emailId || '—')}</div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>PIW Role</Text>
+                  <div style={{ fontSize: '14px' }}>{String(selectedDetailResource.piwRole || '—')}</div>
                 </div>
               </div>
             </div>
 
-            {selectedDetailResource.skills && (
-              <div>
-                <div style={{ fontSize: '11px', color: '#999', marginBottom: 8 }}>Skills</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {selectedDetailResource.skills.split(',').map((skill, idx) => (
-                    <Tag key={idx} color="default">{skill.trim()}</Tag>
-                  ))}
+            {/* Professional Info */}
+            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Professional Information</Text>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Role / Domain</Text>
+                  <div style={{ marginTop: 4 }}>
+                    <Tag color="cyan">{String(selectedDetailResource.roleOrDomain || '—')}</Tag>
+                  </div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Previous Experience</Text>
+                  <div style={{ fontSize: '14px', fontWeight: 600 }}>{String(selectedDetailResource.previousWorkex || '—')}</div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Date of Joining</Text>
+                  <div style={{ fontSize: '14px' }}>{String(selectedDetailResource.doj || '—')}</div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Total Experience</Text>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#1890ff' }}>{String(selectedDetailResource.totalWorkex || '—')}</div>
                 </div>
               </div>
-            )}
+            </div>
 
-            <Button
-              type="primary"
-              block
-              size="large"
-              onClick={() => {
-                handleAllocateResource(selectedDetailResource);
-                setDetailsModalOpen(false);
-                setSelectedDetailResource(null);
-              }}
-            >
-              Allocate This Resource
-            </Button>
+            {/* Skills */}
+            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Technical Skills</Text>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {String(selectedDetailResource.skills || '').split(',').filter(s => s.trim()).map((skill, idx) => (
+                  <Tag key={idx} color="blue">{skill.trim()}</Tag>
+                ))}
+              </div>
+            </div>
+
+            {/* Engagement & Allocation Status */}
+            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Current Engagement</Text>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Engagement</Text>
+                  <div style={{ fontSize: '14px', marginTop: 4 }}>
+                    <Tag color={selectedDetailResource.engagement === 'Bench' ? 'warning' : 'blue'}>
+                      {String(selectedDetailResource.engagement || '—')}
+                    </Tag>
+                  </div>
+                </div>
+                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>Allocation Status</Text>
+                  <div style={{ marginTop: 4 }}>
+                    {(() => {
+                      const colorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
+                      const s = selectedDetailResource.allocationStatus || '';
+                      return <span style={{ fontWeight: 600, color: colorMap[s] || '#595959' }}>{s || '—'}</span>;
+                    })()}
+                  </div>
+                </div>
+              </div>
+            </div>
           </Space>
         </Drawer>
       )}

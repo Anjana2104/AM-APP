@@ -1,7 +1,7 @@
 /**
  * FinanceSummary.tsx
  *
- * Executive-level Finance Summary — compares planned revenue (Revenue Details)
+ * Executive-level Finance Summary — compares planned revenue (SOW Details)
  * vs actual invoiced amounts (Invoicing Details) across projects, companies, FYs.
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -415,7 +415,7 @@ export function FinanceSummary({ onNavigate }: FinanceSummaryProps) {
             <span>
               No data found for {filterFY ? `FY${filterFY}` : 'selected filters'}.
               <br />
-              <span style={{ fontSize: '12px', color: '#aaa' }}>Upload data in Revenue Details and Invoicing Details first.</span>
+              <span style={{ fontSize: '12px', color: '#aaa' }}>Upload data in SOW Details and Invoicing Details first.</span>
             </span>
           }
           style={{ marginTop: 60 }}
@@ -433,7 +433,7 @@ export function FinanceSummary({ onNavigate }: FinanceSummaryProps) {
                   sub={`${revProjects.length} projects · click to view`}
                   color={PLAN_COLOR}
                   badge={<FileExcelOutlined style={{ fontSize: 18, color: PLAN_COLOR }} />}
-                  tooltip="Go to Revenue Details"
+                  tooltip="Go to SOW Details"
                 />
               </div>
             </Col>

@@ -29,9 +29,16 @@ async function seedConfig() {
     {
       type_id: 'resource_allocation_status',
       name: 'Resource Allocation Status',
-      description: 'Allocation pipeline stages for the engagement workflow (Shortlisted → Offered → Selected → Joined). Configurable — add/remove/rename stages here.',
+      description: 'Allocation pipeline stages for the engagement workflow (Available → Shortlisted → Offered → Selected → Joined). Link to "Allocation Status dropdown" via Manage Links to drive the filter.',
       built_in: 1,
-      linked_to: JSON.stringify(['resource_allocation_status_field']),
+      linked_to: JSON.stringify([]),
+    },
+    {
+      type_id: 'project_engagement',
+      name: 'Project / Engagement Names',
+      description: 'List of project and engagement names. Link to "Engagement / Project Name dropdown" via Manage Links to drive the engagement dropdowns.',
+      built_in: 1,
+      linked_to: JSON.stringify([]),
     },
   ];
 
@@ -45,7 +52,12 @@ async function seedConfig() {
       );
       console.log('Inserted type:', t.type_id);
     } else {
-      console.log('Type already exists:', t.type_id);
+      // Always update linked_to so new link targets are applied
+      db.run(
+        `UPDATE app_config_types SET linked_to = ?, description = ?, updated_at = ? WHERE type_id = ?`,
+        [t.linked_to, t.description, now, t.type_id]
+      );
+      console.log('Updated type linked_to:', t.type_id);
     }
   }
 
@@ -104,10 +116,13 @@ async function seedConfig() {
   console.log('Seeded request_overall_status items');
 
   // ── Items for resource_allocation_status ─────────────────────────────
+  // These are the canonical workflow status values the system uses internally.
+  // User can manage these via Configuration UI; seed only ensures defaults exist.
   const allocStatusItems = [
+    { item_value: 'Available',   label: 'Available',   color: 'warning' },
     { item_value: 'Shortlisted', label: 'Shortlisted', color: 'cyan' },
-    { item_value: 'Offered',     label: 'Offered',     color: 'orange' },
-    { item_value: 'Selected',    label: 'Selected',    color: 'green' },
+    { item_value: 'Offered',     label: 'Offered',     color: 'purple' },
+    { item_value: 'Selected',    label: 'Selected',    color: 'blue' },
     { item_value: 'Joined',      label: 'Joined',      color: 'success' },
   ];
 
@@ -125,6 +140,18 @@ async function seedConfig() {
     }
   });
   console.log('Seeded resource_allocation_status items');
+
+  // ── Items for project_engagement ─────────────────────────────────────
+  // NO hardcoded items — user adds their own values via Configuration > Manage Links.
+  // Delete any previously seeded defaults so they don't persist.
+  const oldEngagementDefaults = ['Bench', 'ZS', 'ExxonMobil', 'Chevron', 'Shell', 'Internal'];
+  oldEngagementDefaults.forEach(v => {
+    db.run(
+      'DELETE FROM app_config_items WHERE type_id = ? AND item_value = ?',
+      ['project_engagement', v]
+    );
+  });
+  console.log('Cleared old project_engagement default items (user manages these via Configuration UI)');
 
   // ── Default app value ─────────────────────────────────────────────────
   const existingVal = db.get('SELECT id FROM app_values WHERE key = ?', ['SOW_STORAGE_URL']);

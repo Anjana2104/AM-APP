@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+﻿import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   Upload,
   Table,
@@ -51,6 +51,7 @@ import * as XLSXStyle from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import * as resourceApi from '../api/resourceApi';
 import { useConfig } from '../context/ConfigContext';
+import { useAuth } from '../context/AuthContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartTooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -119,7 +120,7 @@ const DEFAULT_FILTERS: FilterState = {
   totalWorkex: '',
   skills: '',
   engagement: '',
-  workexRange: [0, 100],
+  workexRange: [0, 70],
   allocationStatus: '',
 };
 
@@ -157,6 +158,8 @@ function todayStr() {
 // ─── Resumes Tab ─────────────────────────────────────────────────────────────
 function ResumesTab() {
   const { getAppValue } = useConfig();
+  const { hasPermission } = useAuth();
+  const canDeleteResume = hasPermission('resources_info', 'delete');
   const spUrl = getAppValue('RESUME_STORAGE_URL') || '';
   const [resumeList, setResumeList] = useState<{ key: string; file: File; uploadDate: string }[]>([]);
 
@@ -184,6 +187,11 @@ function ResumesTab() {
   };
 
   const handleDelete = (key: string) => {
+    // Permission guard at function level
+    if (!canDeleteResume) {
+      message.error('You do not have permission to remove resumes.');
+      return;
+    }
     setResumeList(prev => prev.filter(r => r.key !== key));
     message.success('Resume removed');
   };
@@ -250,9 +258,11 @@ function ResumesTab() {
               <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
                 <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFileFromBlob(file)} style={{ borderRadius: 6 }} />
               </Tooltip>
+              {canDeleteResume && (
               <Tooltip title="Remove" overlayInnerStyle={{ fontSize: '11px' }}>
                 <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(key)} style={{ borderRadius: 6 }} />
               </Tooltip>
+              )}
             </div>
           ))}
         </div>
@@ -262,6 +272,10 @@ function ResumesTab() {
 }
 
 const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void; initialRoleFilter?: string; onFilterApplied?: () => void }> = ({ onResourcesChange, initialRoleFilter, onFilterApplied }) => {
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('resources_info', 'edit');
+  const canDelete = hasPermission('resources_info', 'delete');
+
   const [resources, setResources] = useState<ResourceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [fromServer, setFromServer] = useState(false);
@@ -314,6 +328,17 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   );
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
 
+  const { getConfig, getConfigByLink } = useConfig();
+  const engagementOptions = useMemo(() => {
+    const cfg = getConfigByLink('engagement_field');
+    return cfg ? cfg.items.map(i => ({ label: i.label, value: i.value })) : [];
+  }, [getConfigByLink]);
+
+  const allocationStatusOptions = useMemo(() => {
+    const cfg = getConfigByLink('allocation_status_field');
+    return cfg ? cfg.items.map(i => ({ label: i.label, value: i.value })) : [];
+  }, [getConfigByLink]);
+
   // Apply incoming role filter from navigation
   useEffect(() => {
     if (initialRoleFilter) {
@@ -325,12 +350,15 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   }, [initialRoleFilter]);
 
   const filterPanelRef = useRef<HTMLDivElement>(null);
-  const isFilterApplied = filters.empName !== '' || filters.raId !== '' || filters.piwRole !== '' || filters.roleOrDomain !== '' || filters.skills !== '' || filters.engagement !== '' || filters.allocationStatus !== '' || filters.workexRange[0] !== 0 || filters.workexRange[1] !== 100;
+  const isFilterApplied = filters.empName !== '' || filters.raId !== '' || filters.piwRole !== '' || filters.roleOrDomain !== '' || filters.skills !== '' || filters.engagement !== '' || filters.allocationStatus !== '' || filters.workexRange[0] !== 0 || filters.workexRange[1] !== 70;
 
   useEffect(() => {
     if (!showFilterPanel) return;
     const handleMouseDown = (e: MouseEvent) => {
-      if (filterPanelRef.current && !filterPanelRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      // Ignore clicks inside Ant Design portals (Select dropdowns, Tooltip popups, etc.)
+      const isInsideAntPopup = !!(target as Element)?.closest?.('.ant-select-dropdown, .ant-picker-dropdown, .ant-tooltip, .ant-popover, .ant-dropdown');
+      if (filterPanelRef.current && !filterPanelRef.current.contains(target) && !isInsideAntPopup) {
         setShowFilterPanel(false);
       }
     };
@@ -342,6 +370,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     if (e.key === 'Enter') setShowFilterPanel(false);
   };
 
+  const REQUIRED_UPLOAD_HEADERS = ['S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex', 'DOJ', 'Total Workex', 'Current Engagement', 'Skills'];
+
   const handleUpload = useCallback((file: File) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
@@ -350,57 +380,187 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         if (!data) { message.error('Failed to read file'); return; }
         const workbook = XLSX.read(data, { type: 'binary' });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+        // ── Template validation ──────────────────────────────────────────
+        // Read raw header row (first row of the sheet)
+        const headerRow: string[] = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || [];
+        const uploadedHeaders = headerRow.map((h: string) => String(h || '').trim());
+        const missingHeaders = REQUIRED_UPLOAD_HEADERS.filter(h => !uploadedHeaders.includes(h));
+        if (missingHeaders.length > 0) {
+          Modal.error({
+            title: 'Invalid Template',
+            content: (
+              <div>
+                <p style={{ marginBottom: 8 }}>The uploaded file does not match the required template. Missing columns:</p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {missingHeaders.map(h => <li key={h} style={{ color: '#f5222d', fontSize: '13px' }}>{h}</li>)}
+                </ul>
+                <p style={{ marginTop: 12, color: '#8c8c8c', fontSize: '12px' }}>
+                  Please download the template using the <strong>Download Template</strong> button and fill data in the correct format.
+                </p>
+              </div>
+            ),
+            okText: 'OK',
+          });
+          return;
+        }
+        // ────────────────────────────────────────────────────────────────
+
         const jsonData: ExcelRow[] = XLSX.utils.sheet_to_json(worksheet);
         if (!jsonData.length) { message.error('No data found in file'); return; }
 
-        const uploaded: ResourceRow[] = jsonData
-          .filter(row => String(row['RA ID'] || row['Ra ID'] || '').trim())
-          .map((row, idx) => ({
-            key: String(row['RA ID'] || row['Ra ID'] || idx),
+        const totalRows = jsonData.length;
+        const skippedRows: { rowNum: number; reason: string; detail?: string }[] = [];
+
+        // First pass: detect duplicates within the file itself
+        const raIdCountInFile = new Map<string, number[]>();
+        jsonData.forEach((row, idx) => {
+          const raId = String(row['RA ID'] || row['Ra ID'] || '').trim().toLowerCase();
+          if (raId) {
+            const arr = raIdCountInFile.get(raId) || [];
+            arr.push(idx + 2);
+            raIdCountInFile.set(raId, arr);
+          }
+        });
+
+        const uploaded: ResourceRow[] = [];
+        const seenRaIds = new Set<string>();
+        jsonData.forEach((row, idx) => {
+          const rowNum = idx + 2; // +2: 1-based + header row
+          const raId = String(row['RA ID'] || row['Ra ID'] || '').trim();
+          const empName = String(row['Employee Name'] || row['Emp Name'] || '').trim();
+          const totalWorkexRaw = String(row['Total Workex'] || row['Total Experience'] || '').trim();
+
+          if (!raId) {
+            skippedRows.push({ rowNum, reason: 'Missing RA ID', detail: empName ? `Employee: ${empName}` : undefined });
+            return;
+          }
+          if (!empName) {
+            skippedRows.push({ rowNum, reason: 'Missing Employee Name', detail: `RA ID: ${raId}` });
+            return;
+          }
+          // Duplicate RA ID within the file
+          if (seenRaIds.has(raId.toLowerCase())) {
+            const dupeRows = raIdCountInFile.get(raId.toLowerCase()) || [];
+            skippedRows.push({ rowNum, reason: 'Duplicate RA ID in file', detail: `RA ID: ${raId} — also appears at row(s): ${dupeRows.filter(r => r !== rowNum).join(', ')}` });
+            return;
+          }
+          seenRaIds.add(raId.toLowerCase());
+          // Validate Total Workex
+          if (totalWorkexRaw) {
+            const parsed = parseFloat(totalWorkexRaw.replace(/[^\d.-]/g, ''));
+            if (!isNaN(parsed) && parsed > 70) {
+              skippedRows.push({ rowNum, reason: `Invalid Total Workex (${parsed} years > 70 years max)`, detail: `RA ID: ${raId}, Employee: ${empName}` });
+              return;
+            }
+          }
+
+          uploaded.push({
+            key: String(raId),
             sno: String(row['S.NO'] || idx + 1),
-            raId: String(row['RA ID'] || row['Ra ID'] || '').trim(),
-            empName: String(row['Emp Name'] || row['Employee Name'] || '').trim(),
-            emailId: String(row['Email Id'] || row['Email ID'] || '').trim(),
+            raId,
+            empName,
+            emailId: String(row['Email'] || row['Email Id'] || row['Email ID'] || '').trim(),
             piwRole: String(row['PIW Role'] || row['Role'] || '').trim(),
             roleOrDomain: String(row['Role/Domain'] || row['Domain'] || '').trim(),
             previousWorkex: String(row['Previous Workex'] || row['Prev Workex'] || '').trim(),
             doj: String(row['DOJ'] || row['Date of Joining'] || '').trim(),
-            totalWorkex: String(row['Total Workex'] || row['Total Experience'] || '').trim(),
+            totalWorkex: totalWorkexRaw,
             skills: String(row['Skills'] || '').trim(),
             engagement: String(row['Current Engagement'] || row['Engagement'] || '').trim(),
             allocationStatus: (() => {
               const eng = String(row['Current Engagement'] || row['Engagement'] || '').trim();
               return eng && eng.toLowerCase() !== 'bench' ? 'Joined' : 'Available';
             })(),
-          }));
-
-        // Upsert into current state by raId (case-insensitive)
-        let uploadSummary = { newCount: 0, updCount: 0 };
-        let mergedRows: ResourceRow[] = [];
-        setResources(prev => {
-          const existingMap = new Map(prev.map(r => [r.raId.toLowerCase(), r]));
-          let newCount = 0, updCount = 0;
-          uploaded.forEach(u => {
-            const key = u.raId.toLowerCase();
-            if (existingMap.has(key)) { existingMap.set(key, { ...existingMap.get(key)!, ...u }); updCount++; }
-            else { existingMap.set(key, u); newCount++; }
           });
-          uploadSummary = { newCount, updCount };
-          mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: String(i + 1) }));
-          // Save to API
-          resourceApi.bulkSave(mergedRows.map(r => ({
+        });
+
+        // Build merged list using current resources snapshot (read from state via functional update)
+        const currentResources = await new Promise<ResourceRow[]>(resolve => {
+          setResources(prev => { resolve(prev); return prev; });
+        });
+
+        const existingMap = new Map(currentResources.map(r => [r.raId.toLowerCase(), r]));
+        let newCount = 0, updCount = 0;
+        uploaded.forEach(u => {
+          const key = u.raId.toLowerCase();
+          if (existingMap.has(key)) {
+            const existing = existingMap.get(key)!;
+            existingMap.set(key, { ...existing, ...u, allocationStatus: existing.allocationStatus || u.allocationStatus });
+            updCount++;
+          } else {
+            existingMap.set(key, u);
+            newCount++;
+          }
+        });
+        const mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: String(i + 1) }));
+
+        // 1. Update UI state
+        setResources(mergedRows);
+        onResourcesChange?.(mergedRows);
+
+        // 2. Save to database
+        const loadingKey = message.loading('Saving to database...', 0);
+        let serverOk = false;
+        try {
+          const result = await resourceApi.bulkSave(mergedRows.map(r => ({
             raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
             piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
             doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '', skills: r.skills,
             allocationStatus: r.allocationStatus || '',
-          }))).then(result => {
-            if (result.ok) setFromServer(true);
+          })));
+          (loadingKey as any)();
+          serverOk = !!result.ok;
+          if (!result.ok) {
+            message.warning(`Loaded locally — server offline, changes not persisted`);
+          }
+        } catch {
+          (loadingKey as any)();
+          message.warning(`Loaded locally (server unreachable). Re-upload when server is available.`);
+        }
+
+        // 3. Show result summary (with skipped rows if any)
+        if (skippedRows.length > 0) {
+          Modal.warning({
+            title: `Upload Result: ${uploaded.length} of ${totalRows} rows processed`,
+            width: 560,
+            content: (
+              <div>
+                <div style={{ display: 'flex', gap: 12, marginBottom: 14, padding: '10px 14px', background: '#fafafa', borderRadius: 6, border: '1px solid #f0f0f0' }}>
+                  <span style={{ fontSize: '13px' }}>
+                    <span style={{ color: '#52c41a', fontWeight: 600 }}>✓ {newCount} new &nbsp;·&nbsp; {updCount} updated</span>
+                    <span style={{ color: '#bbb', margin: '0 8px' }}>|</span>
+                    <span style={{ color: '#f5222d', fontWeight: 600 }}>✗ {skippedRows.length} skipped</span>
+                    <span style={{ color: '#bbb', margin: '0 8px' }}>|</span>
+                    <span style={{ color: '#8c8c8c' }}>Total: {totalRows} rows</span>
+                  </span>
+                </div>
+                <p style={{ fontWeight: 600, color: '#f5222d', marginBottom: 6 }}>
+                  Skipped rows ({skippedRows.length}):
+                </p>
+                <p style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: 8 }}>
+                  Fix these rows in the file and re-upload to include them.
+                </p>
+                <div style={{ background: '#fff1f0', border: '1px solid #ffa39e', borderRadius: 6, padding: '8px 12px', maxHeight: 200, overflowY: 'auto' }}>
+                  {skippedRows.map(({ rowNum, reason, detail }) => (
+                    <div key={rowNum} style={{ fontSize: '12px', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Tag color="red" style={{ minWidth: 60, textAlign: 'center' }}>Row {rowNum}</Tag>
+                      <span style={{ color: '#f5222d', fontWeight: 500 }}>{reason}</span>
+                      {detail && <span style={{ color: '#8c8c8c' }}>— {detail}</span>}
+                    </div>
+                  ))}
+                </div>
+                {serverOk && (
+                  <p style={{ marginTop: 10, fontSize: '12px', color: '#52c41a' }}>
+                    ✓ Successfully saved to database.
+                  </p>
+                )}
+              </div>
+            ),
           });
-          return mergedRows;
-        });
-        // Notify parent so EngagementMapping and other tabs get fresh data
-        setTimeout(() => { if (mergedRows.length) onResourcesChange?.(mergedRows); }, 0);
-        message.success(`Upload complete: ${uploadSummary.newCount} new, ${uploadSummary.updCount} updated`);
+        } else if (serverOk) {
+          message.success(`Upload complete: ${newCount} new, ${updCount} updated (total ${mergedRows.length} records)`);
+        }
       } catch (error) {
         message.error(error instanceof Error ? error.message : 'Error parsing file');
       }
@@ -416,8 +576,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         {
           'S.NO': '1',
           'RA ID': 'RA001',
-          'Emp Name': 'John Doe',
-          'Email Id': 'john.doe@example.com',
+          'Employee Name': 'John Doe',
+          'Email': 'john.doe@example.com',
           'PIW Role': 'Developer',
           'Role/Domain': 'Full Stack',
           'Previous Workex': '2 years',
@@ -462,6 +622,12 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   const handleEdit = useCallback((resource: ResourceRow | null) => {
     if (!resource) return;
 
+    // Permission guard at function level
+    if (!canEdit) {
+      message.error('You do not have permission to edit resources.');
+      return;
+    }
+
     setEditingResource(resource);
     form.setFieldsValue({
       sno: resource.sno || '',
@@ -477,7 +643,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
       engagement: resource.engagement || '',
     });
     setEditDrawer(true);
-  }, [form]);
+  }, [form, canEdit]);
 
   const handleSaveEdit = useCallback(
     async (values: any) => {
@@ -487,29 +653,84 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
           return;
         }
 
-        setResources(prev => {
-          let updated: ResourceRow[];
-          if (editingResource && editingResource.key) {
-            updated = prev.map(r =>
-              r.key === editingResource.key
-                ? { ...r, raId: String(values.raId || ''), empName: String(values.empName || ''), emailId: String(values.emailId || ''), piwRole: String(values.piwRole || ''), roleOrDomain: String(values.roleOrDomain || ''), previousWorkex: String(values.previousWorkex || ''), doj: String(values.doj || ''), totalWorkex: String(values.totalWorkex || ''), skills: String(values.skills || ''), engagement: String(values.engagement || ''), allocationStatus: r.allocationStatus }
-                : r
-            );
-          } else {
-            const newKey = String(Date.now());
-            updated = [...prev, { key: newKey, sno: String(prev.length + 1), raId: String(values.raId || ''), empName: String(values.empName || ''), emailId: String(values.emailId || ''), piwRole: String(values.piwRole || ''), roleOrDomain: String(values.roleOrDomain || ''), previousWorkex: String(values.previousWorkex || ''), doj: String(values.doj || ''), totalWorkex: String(values.totalWorkex || ''), skills: String(values.skills || ''), engagement: String(values.engagement || ''), allocationStatus: '' }];
+        const newEngagement = String(values.engagement || '').trim();
+        const isEdit = !!(editingResource && editingResource.key);
+
+        if (isEdit) {
+          // EDIT: compute new allocationStatus — bench→Available, else preserve existing
+          const newAllocStatus = newEngagement.toLowerCase() === 'bench'
+            ? 'Available'
+            : (editingResource!.allocationStatus || 'Joined');
+
+          const updatedRow: ResourceRow = {
+            ...editingResource!,
+            raId: String(values.raId || ''),
+            empName: String(values.empName || ''),
+            emailId: String(values.emailId || ''),
+            piwRole: String(values.piwRole || ''),
+            roleOrDomain: String(values.roleOrDomain || ''),
+            previousWorkex: String(values.previousWorkex || ''),
+            doj: String(values.doj || ''),
+            totalWorkex: String(values.totalWorkex || ''),
+            skills: String(values.skills || ''),
+            engagement: newEngagement,
+            allocationStatus: newAllocStatus,
+          };
+
+          setResources(prev => {
+            const updated = prev.map(r => r.key === editingResource!.key ? updatedRow : r);
+            onResourcesChange?.(updated);
+            return updated;
+          });
+
+          // Use PUT /:id so the server applies bench→Available logic correctly
+          if (updatedRow.id) {
+            await resourceApi.updateResource(updatedRow.id, {
+              raId: updatedRow.raId, empName: updatedRow.empName, emailId: updatedRow.emailId,
+              piwRole: updatedRow.piwRole, roleOrDomain: updatedRow.roleOrDomain,
+              previousWorkex: updatedRow.previousWorkex, doj: updatedRow.doj,
+              totalWorkex: updatedRow.totalWorkex, engagement: updatedRow.engagement,
+              skills: updatedRow.skills,
+            });
           }
-          onResourcesChange?.(updated);
-          // Save to API
-          resourceApi.bulkSave(updated.map(r => ({
-            raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
-            piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
-            doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '', skills: r.skills,
-            allocationStatus: r.allocationStatus || '',
-          })));
-          return updated;
-        });
-        message.success(editingResource ? 'Resource updated successfully' : 'Resource added successfully');
+        } else {
+          // ADD NEW: compute allocationStatus from engagement
+          const newAllocStatus = newEngagement.toLowerCase() === 'bench' ? 'Available' : 'Joined';
+          const newKey = String(Date.now());
+
+          const newRow: ResourceRow = {
+            key: newKey, sno: '',
+            raId: String(values.raId || ''),
+            empName: String(values.empName || ''),
+            emailId: String(values.emailId || ''),
+            piwRole: String(values.piwRole || ''),
+            roleOrDomain: String(values.roleOrDomain || ''),
+            previousWorkex: String(values.previousWorkex || ''),
+            doj: String(values.doj || ''),
+            totalWorkex: String(values.totalWorkex || ''),
+            skills: String(values.skills || ''),
+            engagement: newEngagement,
+            allocationStatus: newAllocStatus,
+          };
+
+          let updatedList: ResourceRow[] = [];
+          setResources(prev => {
+            updatedList = [...prev, { ...newRow, sno: String(prev.length + 1) }];
+            onResourcesChange?.(updatedList);
+            return updatedList;
+          });
+
+          // Use bulkSave for INSERT — it will set allocation_status based on engagement
+          await resourceApi.bulkSave([{
+            raId: newRow.raId, sno: 0, empName: newRow.empName, emailId: newRow.emailId,
+            piwRole: newRow.piwRole, roleOrDomain: newRow.roleOrDomain,
+            previousWorkex: newRow.previousWorkex, doj: newRow.doj,
+            totalWorkex: newRow.totalWorkex, engagement: newRow.engagement,
+            skills: newRow.skills, allocationStatus: newAllocStatus,
+          }]);
+        }
+
+        message.success(isEdit ? 'Resource updated successfully' : 'Resource added successfully');
         setEditDrawer(false);
         form.resetFields();
         setEditingResource(null);
@@ -523,6 +744,12 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
 
   const handleDelete = useCallback((resource: ResourceRow | null) => {
     if (!resource || !resource.key) return;
+
+    // Permission guard — enforced at function level regardless of UI state
+    if (!canDelete) {
+      message.error('You do not have permission to delete resources.');
+      return;
+    }
 
     Modal.confirm({
       title: 'Delete Resource',
@@ -542,7 +769,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         setEditDrawer(false);
       },
     });
-  }, [onResourcesChange]);
+  }, [onResourcesChange, canDelete]);
 
   const getFilteredResources = useCallback((): ResourceRow[] => {
     return resources.filter((r) => {
@@ -600,12 +827,6 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         if (!as.includes(filters.allocationStatus.toLowerCase())) return false;
       }
 
-      // Filter by Allocation Status
-      if (filters.allocationStatus) {
-        const as = String(r.allocationStatus || '').toLowerCase();
-        if (!as.includes(filters.allocationStatus.toLowerCase())) return false;
-      }
-
       // Filter by Total Workex (range)
       const totalWorkex = parseFloat(String(r.totalWorkex || '0').replace(/[^\d.-]/g, ''));
       if (!isNaN(totalWorkex)) {
@@ -639,6 +860,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   }, []);
 
   const handleClearAll = async () => {
+    // Permission guard at function level
+    if (!canDelete) {
+      message.error('You do not have permission to delete resources.');
+      return;
+    }
     await resourceApi.clearAll();
     setResources([]);
     onResourcesChange?.([]);
@@ -703,16 +929,14 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     () => [
       {
         title: 'S.NO',
-        dataIndex: 'sno',
         key: 'sno',
         width: 60,
         fixed: 'left' as const,
-        render: (value) => (
+        render: (_: unknown, __: ResourceRow, index: number) => (
           <Tag color="blue" style={{ fontSize: '12px', fontWeight: 600 }}>
-            {String(value || '').substring(0, 6)}
+            {index + 1}
           </Tag>
         ),
-        sorter: (a, b) => (Number(a?.sno || 0) - Number(b?.sno || 0)),
       },
       {
         title: 'RA ID',
@@ -720,6 +944,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         key: 'raId',
         width: 100,
         fixed: 'left' as const,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.raId || '').localeCompare(b.raId || ''),
         render: (value) => (
           <div style={{ fontWeight: 600, color: '#001529' }}>
             {String(value || '')}
@@ -732,6 +957,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         key: 'empName',
         width: 150,
         fixed: 'left' as const,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.empName || '').localeCompare(b.empName || ''),
         render: (value) => (
           <div style={{ fontWeight: 600, color: '#001529' }}>
             {String(value || '')}
@@ -744,6 +970,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         key: 'emailId',
         width: 200,
         ellipsis: true,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.emailId || '').localeCompare(b.emailId || ''),
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -751,6 +978,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'piwRole',
         key: 'piwRole',
         width: 120,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.piwRole || '').localeCompare(b.piwRole || ''),
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -758,6 +986,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'roleOrDomain',
         key: 'roleOrDomain',
         width: 150,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.roleOrDomain || '').localeCompare(b.roleOrDomain || ''),
         render: (value) => <Tag color="cyan">{String(value || '')}</Tag>,
       },
       {
@@ -766,6 +995,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         key: 'previousWorkex',
         width: 130,
         align: 'center' as const,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.previousWorkex || '').localeCompare(b.previousWorkex || ''),
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -773,6 +1003,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'doj',
         key: 'doj',
         width: 120,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.doj || '').localeCompare(b.doj || ''),
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -781,6 +1012,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         key: 'totalWorkex',
         width: 120,
         align: 'center' as const,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.totalWorkex || '').localeCompare(b.totalWorkex || ''),
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -788,6 +1020,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         dataIndex: 'engagement',
         key: 'engagement',
         width: 120,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.engagement || '').localeCompare(b.engagement || ''),
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
@@ -796,10 +1029,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         key: 'allocationStatus',
         width: 130,
         align: 'center' as const,
+        sorter: (a: ResourceRow, b: ResourceRow) => (a.allocationStatus || '').localeCompare(b.allocationStatus || ''),
         render: (value) => {
           const v = String(value || '');
           if (!v) return <span style={{ color: '#bbb', fontSize: '11px' }}>—</span>;
-          const colorMap: Record<string, string> = { Joined: '#52c41a', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff' };
+          const colorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
           return <Tag color={colorMap[v] || 'default'} style={{ fontSize: '10px', margin: 0 }}>{v}</Tag>;
         },
       },
@@ -829,6 +1063,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
           if (!record) return null;
           return (
             <Space size="small">
+              {canEdit && (
               <Button
                 type="text"
                 size="small"
@@ -837,6 +1072,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 style={{ color: '#1890FF' }}
                 title="Edit"
               />
+              )}
+              {canDelete && (
               <Button
                 type="text"
                 size="small"
@@ -845,6 +1082,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 style={{ color: '#ff4d4f' }}
                 title="Delete"
               />
+              )}
             </Space>
           );
         },
@@ -871,7 +1109,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     if (type === 'expBucket') {
       const bucket = EXP_BUCKETS.find(b => b.label === name);
       if (bucket) {
-        setFilters(prev => ({ ...prev, workexRange: [bucket.min, bucket.max === Infinity ? 100 : bucket.max] }));
+        setFilters(prev => ({ ...prev, workexRange: [bucket.min, bucket.max === Infinity ? 70 : bucket.max] }));
       }
     } else {
       setFilters(prev => ({ ...prev, [type]: name }));
@@ -1168,7 +1406,12 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
               items={[
                 {
                   key: 'resources',
-                  label: <span style={{ fontSize: '12px' }}>Resources</span>,
+                  label: (
+                    <span style={{ fontSize: '12px' }}>
+                      Resources
+                      {resources.length > 0 && <Tag color="blue" style={{ marginLeft: 6, fontSize: '10px', lineHeight: '16px', padding: '0 5px' }}>{resources.length}</Tag>}
+                    </span>
+                  ),
                   children: (
                     <div style={{ padding: '16px 0 16px 0' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '16px' }}>
@@ -1186,7 +1429,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 {isFilterApplied && (
                   <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={handleClearFilters}>✕ Clear Filters</Button>
                 )}
-                {resources.length > 0 && (
+                {resources.length > 0 && canDelete && (
                   <Popconfirm
                     title="Delete all resource data?"
                     description="This will permanently remove all resources from the database."
@@ -1214,18 +1457,22 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                     <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: '6px' }} />
                   </Tooltip>
                 )}
+                {canEdit && (
                 <Tooltip title="Upload Resources from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                   <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
                     <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
                   </Upload>
                 </Tooltip>
+                )}
                 <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
                   <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
                 </Tooltip>
                 <Tooltip title="Export Formatted Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                   <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportExcel} disabled={!resources.length} style={{ borderRadius: '6px', color: resources.length ? '#52c41a' : undefined }} />
                 </Tooltip>
+                {canEdit && (
                 <Button type="primary" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add New</Button>
+                )}
               </Space>
             </div>
 
@@ -1267,11 +1514,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       </div>
                       <div>
                         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Engagement</div>
-                        <Input size="small" placeholder="Search..." value={filters.engagement} onChange={e => setFilters({ ...filters, engagement: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                        <Select size="small" placeholder="All" allowClear value={filters.engagement || undefined} onChange={(v) => setFilters({ ...filters, engagement: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={engagementOptions} />
                       </div>
                       <div>
                         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Allocation Status</div>
-                        <Select size="small" placeholder="All" allowClear value={filters.allocationStatus || undefined} onChange={(v) => setFilters({ ...filters, allocationStatus: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={[{ label: 'Joined', value: 'Joined' }, { label: 'Shortlisted', value: 'Shortlisted' }, { label: 'Offered', value: 'Offered' }, { label: 'Selected', value: 'Selected' }]} />
+                        <Select size="small" placeholder="All" allowClear value={filters.allocationStatus || undefined} onChange={(v) => setFilters({ ...filters, allocationStatus: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={allocationStatusOptions} />
                       </div>
                     </Space>
                   </div>
@@ -1330,11 +1577,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       </div>
                       <div>
                         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Engagement</div>
-                        <Input size="small" placeholder="Search..." value={filters.engagement} onChange={e => setFilters({ ...filters, engagement: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
+                        <Select size="small" placeholder="All" allowClear value={filters.engagement || undefined} onChange={(v) => setFilters({ ...filters, engagement: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={engagementOptions} />
                       </div>
                       <div>
                         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Allocation Status</div>
-                        <Select size="small" placeholder="All" allowClear value={filters.allocationStatus || undefined} onChange={(v) => setFilters({ ...filters, allocationStatus: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={[{ label: 'Joined', value: 'Joined' }, { label: 'Shortlisted', value: 'Shortlisted' }, { label: 'Offered', value: 'Offered' }, { label: 'Selected', value: 'Selected' }]} />
+                        <Select size="small" placeholder="All" allowClear value={filters.allocationStatus || undefined} onChange={(v) => setFilters({ ...filters, allocationStatus: v || '' })} style={{ width: '100%', fontSize: '11px' }} options={allocationStatusOptions} />
                       </div>
                     </Space>
                   </div>
@@ -1355,10 +1602,17 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                           borderLeft: isBench ? '4px solid #faad14' : '1px solid #f0f0f0',
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-                            <Text strong style={{ fontSize: '13px' }}>{String(resource.empName || 'N/A')}</Text>
+                            <div>
+                              <Text strong style={{ fontSize: '13px' }}>{String(resource.empName || 'N/A')}</Text>
+                              {resource.allocationStatus && (() => {
+                                const colorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
+                                const c = colorMap[resource.allocationStatus] || '#8c8c8c';
+                                return <span style={{ fontSize: '10px', color: c, fontWeight: 600, marginLeft: 6 }}>{resource.allocationStatus}</span>;
+                              })()}
+                            </div>
                             <Dropdown menu={{ items: [
-                              { key: 'edit', label: <span style={{ fontSize: '11px' }}>Edit</span>, icon: <EditOutlined style={{ fontSize: '11px' }} />, onClick: () => handleEdit(resource) },
-                              { key: 'delete', label: <span style={{ fontSize: '11px' }}>Delete</span>, icon: <DeleteOutlined style={{ fontSize: '11px' }} />, danger: true, onClick: () => handleDelete(resource) },
+                              ...(canEdit ? [{ key: 'edit', label: <span style={{ fontSize: '11px' }}>Edit</span>, icon: <EditOutlined style={{ fontSize: '11px' }} />, onClick: () => handleEdit(resource) }] : []),
+                              ...(canDelete ? [{ key: 'delete', label: <span style={{ fontSize: '11px' }}>Delete</span>, icon: <DeleteOutlined style={{ fontSize: '11px' }} />, danger: true, onClick: () => handleDelete(resource) }] : []),
                             ]}} trigger={['click']}>
                               <Button type="text" size="small" icon={<MoreOutlined />} style={{ padding: 0 }} />
                             </Dropdown>
@@ -1394,6 +1648,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                   ),
                 },
                 {
+                  key: 'resumes',
+                  label: <span style={{ fontSize: '12px' }}><FileTextOutlined /> Resumes</span>,
+                  children: <ResumesTab />,
+                },
+                {
                   key: 'insights',
                   label: <span style={{ fontSize: '12px' }}><BarChartOutlined /> Insights</span>,
                   children: (
@@ -1401,11 +1660,6 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       {insightsContent}
                     </div>
                   ),
-                },
-                {
-                  key: 'resumes',
-                  label: <span style={{ fontSize: '12px' }}><FileTextOutlined /> Resumes</span>,
-                  children: <ResumesTab />,
                 },
               ]}
             />
@@ -1507,7 +1761,14 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             label="Current Engagement"
             name="engagement"
           >
-            <Input placeholder="e.g., Full-time, Contract, Part-time" />
+            <Select
+              showSearch
+              placeholder="Select engagement or project"
+              disabled={!!editingResource}
+              options={engagementOptions}
+              filterOption={(input, option) => String(option?.label || '').toLowerCase().includes(input.toLowerCase())}
+              allowClear
+            />
           </Form.Item>
 
           <Form.Item
@@ -1535,6 +1796,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         extra={
           selectedResource && (
             <Space>
+              {canEdit && (
               <Button
                 type="text"
                 icon={<EditOutlined />}
@@ -1544,6 +1806,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 }}
                 title="Edit"
               />
+              )}
+              {canDelete && (
               <Button
                 type="text"
                 danger
@@ -1551,6 +1815,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 onClick={() => handleDelete(selectedResource)}
                 title="Delete"
               />
+              )}
             </Space>
           )
         }

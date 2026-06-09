@@ -42,15 +42,27 @@ router.post("/bulk", async (req, res) => {
       const existing = db.get("SELECT id FROM resources WHERE LOWER(ra_id) = LOWER(?)", [raId]);
 
       if (existing) {
+        // On UPDATE via bulk: if allocationStatus is explicitly provided in payload, use it
+        // (workflow drag-and-drop sends it explicitly); otherwise preserve existing
+        const existingFull = db.get("SELECT allocation_status, engagement FROM resources WHERE id=?", [existing.id]);
+        const newEng = (r.engagement || "").toLowerCase().trim();
+        let allocStatus;
+        if (r.allocationStatus !== undefined) {
+          // Explicit workflow update — use the provided value
+          allocStatus = r.allocationStatus;
+        } else if (newEng === "bench") {
+          allocStatus = "Available";
+        } else {
+          allocStatus = existingFull ? (existingFull.allocation_status || "") : "";
+        }
         db.run(
           `UPDATE resources SET sno=?, emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
-           previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?,
-           allocation_status=?, updated_at=? WHERE id=?`,
+           previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?, allocation_status=?,
+           updated_at=? WHERE id=?`,
           [r.sno || existing.sno, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
            r.totalWorkex || "", r.engagement || "", r.skills || "",
-           r.allocationStatus !== undefined ? r.allocationStatus : (r.allocation_status || ""),
-           new Date().toISOString(), existing.id]
+           allocStatus, new Date().toISOString(), existing.id]
         );
         updated++;
       } else {
@@ -106,6 +118,21 @@ router.put("/:id", async (req, res) => {
   const r = req.body;
   try {
     const db = await getDb();
+    // On explicit edit/update:
+    // - If allocationStatus is explicitly provided in body (workflow update) → use it
+    // - If engagement changes to Bench → set Available
+    // - Otherwise preserve existing allocation_status
+    const newEng = (r.engagement || "").toLowerCase().trim();
+    const existing = db.get("SELECT allocation_status FROM resources WHERE id=?", [id]);
+    const currentAllocStatus = existing ? (existing.allocation_status || "") : "";
+    let updatedAllocStatus;
+    if (r.allocationStatus !== undefined) {
+      updatedAllocStatus = r.allocationStatus; // explicit workflow update
+    } else if (newEng === "bench") {
+      updatedAllocStatus = "Available";
+    } else {
+      updatedAllocStatus = currentAllocStatus; // preserve for regular edits
+    }
     db.run(
       `UPDATE resources SET emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
        previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?,
@@ -113,8 +140,7 @@ router.put("/:id", async (req, res) => {
       [r.empName || "", r.emailId || "", r.piwRole || "", r.roleOrDomain || "",
        r.previousWorkex || "", r.doj || "", r.totalWorkex || "",
        r.engagement || "", r.skills || "",
-       r.allocationStatus !== undefined ? r.allocationStatus : (r.allocation_status || ""),
-       new Date().toISOString(), id]
+       updatedAllocStatus, new Date().toISOString(), id]
     );
     res.json({ ok: true });
   } catch (err) {

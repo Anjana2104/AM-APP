@@ -760,7 +760,7 @@ export function AccountSummary({ onNavigate }: AccountSummaryProps) {
                 icon: <DollarOutlined />,
                 color: '#60a5fa',
                 text: (() => {
-                  if (!financeMetrics.totalPlanned) return 'No revenue data for this FY. Upload data in Revenue Details.';
+                  if (!financeMetrics.totalPlanned) return 'No revenue data for this FY. Upload data in SOW Details.';
                   const gap = financeMetrics.totalPlanned - financeMetrics.totalInvoiced;
                   const fyTag = `FY${String(selectedFY).slice(-2)}`;
                   if (financeMetrics.coverage >= 90) return `Excellent billing health — ${financeMetrics.coverage}% of planned ${fmtM(toUSD(financeMetrics.totalPlanned))} already invoiced in ${fyTag}. On course to close the year strong.`;

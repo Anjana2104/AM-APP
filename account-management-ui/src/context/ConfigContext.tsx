@@ -72,58 +72,32 @@ export interface ConfigType {
 export interface LinkTarget {
   id: string;
   label: string;
-  module: string;
+  module: string;     // Sub-page label (e.g., "SOW Details")
+  section: string;    // Top-level section (e.g., "Finance Management")
+  description?: string;
 }
 
 export const AVAILABLE_LINK_TARGETS: LinkTarget[] = [
-  { id: 'request_processing_status_field', label: 'Processing Status dropdown', module: 'Request Management' },
-  { id: 'request_overall_status_field', label: 'Overall Status dropdown', module: 'Request Management' },
-  { id: 'ra_process_account_anchor_field', label: 'Account Anchor allocation', module: 'RA Process' },
-  { id: 'resource_skill_field', label: 'Resource Skill dropdown', module: 'Resource Details' },
-  { id: 'resource_designation_field', label: 'Resource Designation dropdown', module: 'Resource Details' },
-  { id: 'request_type_field', label: 'Request Type dropdown', module: 'Request Management' },
-  { id: 'finance_company_field', label: 'Company dropdown', module: 'Finance – Revenue Details' },
-  { id: 'finance_space_field', label: 'Space dropdown', module: 'Finance – Revenue Details' },
-  { id: 'finance_owner_field', label: 'Owner / Account Anchor dropdown', module: 'Finance – Revenue Details' },
-  { id: 'invoice_company_field', label: 'Company dropdown', module: 'Invoice Details' },
+  // ── Finance Management → SOW Details ──────────────────────────────
+  { id: 'finance_company_field',  label: 'Company dropdown',                section: 'Finance Management', module: 'SOW Details',          description: 'Inline edit + Add/Edit modal' },
+  { id: 'finance_space_field',    label: 'Space dropdown',                  section: 'Finance Management', module: 'SOW Details',          description: 'Inline edit + Add/Edit modal' },
+  { id: 'finance_owner_field',    label: 'Owner / Account Anchor dropdown', section: 'Finance Management', module: 'SOW Details',          description: 'Inline edit + Add/Edit modal' },
+  // ── Finance Management → Invoice Details ──────────────────────────
+  { id: 'invoice_company_field',  label: 'Company dropdown',                section: 'Finance Management', module: 'Invoice Details',      description: 'Inline edit + Add/Edit modal' },
+  // ── Resources → Resource Information ──────────────────────────────
+  { id: 'resource_piwrole_field',       label: 'PIW Role dropdown',         section: 'Resources',          module: 'Resource Information', description: 'Edit modal + filter' },
+  { id: 'resource_roledomain_field',    label: 'Role / Domain dropdown',    section: 'Resources',          module: 'Resource Information', description: 'Edit modal + filter' },
+  { id: 'engagement_field',             label: 'Current Engagement dropdown', section: 'Resources',        module: 'Resource Information', description: 'Inline edit + edit modal + Engagement Mapping' },
+  { id: 'allocation_status_field',      label: 'Allocation Status dropdown', section: 'Resources',         module: 'Resource Information', description: 'Inline edit + edit modal' },
+  // ── Request Management ─────────────────────────────────────────────
+  { id: 'request_type_field',           label: 'Request Type dropdown',     section: 'Request Management', module: 'Request Management',   description: 'Type tabs + edit modal + filters' },
+  { id: 'request_processing_status_field', label: 'Processing Status dropdown', section: 'Request Management', module: 'Request Management', description: 'Inline edit + filters' },
+  { id: 'request_overall_status_field', label: 'Overall Status dropdown',   section: 'Request Management', module: 'Request Management',   description: 'Inline edit + filters' },
+  // ── Internal Process ───────────────────────────────────────────────
+  { id: 'ra_process_account_anchor_field', label: 'Account Anchor dropdown', section: 'Internal Process', module: 'Internal Process',     description: 'Inline allocation edit' },
 ];
 
-const DEFAULT_CONFIGS: ConfigType[] = [
-  {
-    id: 'request_processing_status',
-    name: 'Request Processing Status',
-    description: 'Status values used in the Request Management processing pipeline.',
-    builtIn: true,
-    linkedTo: ['request_processing_status_field'],
-    items: [
-      { value: 'accepted_staffing', label: 'Accepted by Staffing Team', color: 'blue' },
-      { value: 'resource_shortlisted', label: 'Resource Shortlisted', color: 'cyan' },
-      { value: 'uploaded_profile_beeline', label: 'Uploaded Profile on Beeline', color: 'geekblue' },
-      { value: 'resource_assessment_scheduled', label: 'Resource Assessment Scheduled', color: 'purple' },
-      { value: 'resource_assessment_completed', label: 'Resource Assessment Completed', color: 'gold' },
-      { value: 'resource_selected', label: 'Resource Selected', color: 'green' },
-      { value: 'resource_rejected', label: 'Resource Rejected', color: 'red' },
-      { value: 'zs_onboarding_initiated', label: 'ZS Onboarding Initiated', color: 'lime' },
-      { value: 'onboarded_in_zs', label: 'Onboarded in ZS', color: 'success' },
-      { value: 'zs_offboarding_initiated', label: 'ZS Offboarding Initiated', color: 'orange' },
-      { value: 'resource_offboarded', label: 'Resource Offboarded', color: 'default' },
-    ],
-  },
-  {
-    id: 'request_overall_status',
-    name: 'Request Overall Status',
-    description: 'High-level status values for requests (e.g. Not Started, In Progress).',
-    builtIn: true,
-    linkedTo: ['request_overall_status_field'],
-    items: [
-      { value: 'not_started', label: 'Not Started', color: 'blue' },
-      { value: 'in_progress', label: 'In Progress', color: 'gold' },
-      { value: 'completed', label: 'Completed', color: 'green' },
-      { value: 'blocked', label: 'Blocked', color: 'red' },
-      { value: 'cancelled', label: 'Cancelled', color: 'default' },
-    ],
-  },
-];
+const DEFAULT_CONFIGS: ConfigType[] = [];
 
 const STORAGE_KEY = 'eam_app_configs';
 
@@ -131,12 +105,7 @@ function loadFromStorage(): ConfigType[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as ConfigType[];
-      // Merge: ensure built-in configs always have their linkedTo set
-      return parsed.map(c => {
-        const def = DEFAULT_CONFIGS.find(d => d.id === c.id);
-        return def ? { ...c, linkedTo: c.linkedTo ?? def.linkedTo } : c;
-      });
+      return JSON.parse(raw) as ConfigType[];
     }
   } catch { /* ignore */ }
   return DEFAULT_CONFIGS;
@@ -149,6 +118,8 @@ function saveToStorage(configs: ConfigType[]) {
 interface ConfigContextValue {
   configs: ConfigType[];
   getConfig: (id: string) => ConfigType | undefined;
+  /** Find the config type linked to a given link-target ID (e.g. 'engagement_field') */
+  getConfigByLink: (linkTargetId: string) => ConfigType | undefined;
   addConfigType: (name: string, description: string) => void;
   renameConfigType: (id: string, newName: string) => void;
   deleteConfigType: (id: string) => void;
@@ -215,6 +186,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getConfig = useCallback((id: string) => configs.find(c => c.id === id), [configs]);
+  const getConfigByLink = useCallback((linkTargetId: string) => configs.find(c => c.linkedTo?.includes(linkTargetId)), [configs]);
 
   const addConfigType = useCallback((name: string, description: string) => {
     const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_' + Date.now();
@@ -229,7 +201,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, [configs, persist]);
 
   const deleteConfigType = useCallback((id: string) => {
-    persist(configs.filter(c => c.id !== id || !!c.builtIn));
+    persist(configs.filter(c => c.id !== id));
     configApi.deleteType(id);
   }, [configs, persist]);
 
@@ -250,8 +222,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
       values.forEach(val => {
         const valTrim = val.trim();
         if (valTrim && !target!.items.some(i => i.label.toLowerCase() === valTrim.toLowerCase())) {
-          const value = valTrim.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-          target!.items.push({ value, label: valTrim, color: 'default' });
+          target!.items.push({ value: valTrim, label: valTrim, color: 'default' }); // use exact label as value
           added++;
         }
       });
@@ -263,7 +234,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, [configs, persist]);
 
   const addItem = useCallback((configId: string, label: string, color?: string) => {
-    const value = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '_' + Date.now();
+    const value = label.trim(); // use exact label as value — no transformation or random suffix
     persist(configs.map(c =>
       c.id === configId ? { ...c, items: [...c.items, { value, label, color: color || 'default' }] } : c
     ));
@@ -297,10 +268,9 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   }, [configs, persist]);
 
   const clearAllConfigs = useCallback(() => {
-    const builtIns = configs.filter(c => !!c.builtIn);
-    persist(builtIns);
+    persist([]);
     configApi.deleteAllTypes();
-  }, [configs, persist]);
+  }, [persist]);
 
   // ── App Values ──────────────────────────────────────────────────────
   const persistValues = useCallback((next: AppValue[]) => {
@@ -338,7 +308,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <ConfigContext.Provider value={{
-      configs, getConfig, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs,
+      configs, getConfig, getConfigByLink, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs,
       addItem, removeItem, editItem, reorderItems, updateLinks, clearAllConfigs,
       appValues, getAppValue, setAppValue, addAppValue, removeAppValue, clearAllValues,
     }}>

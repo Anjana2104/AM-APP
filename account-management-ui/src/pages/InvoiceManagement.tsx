@@ -10,12 +10,16 @@ import {
   FileExcelOutlined, BarChartOutlined, CloudServerOutlined, SaveOutlined, DeleteOutlined,
   EditOutlined, CalendarOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined,
   WarningOutlined, EllipsisOutlined, DollarOutlined, PictureOutlined, FileTextOutlined,
+  EyeOutlined, ClockCircleOutlined, MessageOutlined, FullscreenOutlined, FullscreenExitOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import * as invoiceApi from '../api/invoiceApi';
+import * as auditApi from '../api/auditApi';
+import type { AuditEntry } from '../api/auditApi';
 import { useConfig } from '../context/ConfigContext';
+import { useAuth } from '../context/AuthContext';
 
 const { Title, Text } = Typography;
 
@@ -29,6 +33,7 @@ type InvRow = {
   company: string;
   code: string;
   status: 'Active' | 'Inactive';
+  comments: string;
   revenue: number[];
 };
 
@@ -87,6 +92,18 @@ function downloadTemplate() {
   XLSX.writeFile(workbook, 'FY26_FY27_Invoice_Template.xlsx');
 }
 
+// Comment date formatting helpers
+function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd'];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function formatCommentDate(date: Date): string {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${ordinal(date.getDate())} ${months[date.getMonth()]} ${String(date.getFullYear()).slice(-2)}`;
+}
+
 interface InvoiceListProps {
   onDataChange?: (data: InvRow[]) => void;
   onMonthsChange?: (months: string[]) => void;
@@ -94,6 +111,9 @@ interface InvoiceListProps {
 
 function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const { configs } = useConfig();
+  const { hasPermission, currentUser } = useAuth();
+  const canEdit = hasPermission('executive_invoicing', 'edit');
+  const canDelete = hasPermission('executive_invoicing', 'delete');
 
   const companyOptions = configs.find(c => c.linkedTo?.includes('invoice_company_field'))?.items.map(i => ({ value: i.label, label: i.label })) ?? [];
 
@@ -106,7 +126,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
-    new Set(['sno', 'project', 'company', 'code', 'total'])
+    new Set(['sno', 'project', 'company', 'code', 'total', 'comments'])
   );
   const [filters, setFilters] = useState<{
     project: string; company: string; fy: string | null; status: string | null;
@@ -126,6 +146,17 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const [uploadError, setUploadError] = useState<string[] | null>(null);
   const [uploadErrorType, setUploadErrorType] = useState<'template' | 'duplicate' | 'server'>('duplicate');
 
+  // Detail drawer state
+  const [detailDrawer, setDetailDrawer] = useState(false);
+  const [selectedDetailRow, setSelectedDetailRow] = useState<InvRow | null>(null);
+  const [detailDrawerExpanded, setDetailDrawerExpanded] = useState(false);
+  const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [newComment, setNewComment] = useState('');
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditFieldFilter, setAuditFieldFilter] = useState<string | null>(null);
+  const [auditByFilter, setAuditByFilter] = useState<string | null>(null);
+
   useEffect(() => {
     setLoading(true);
     invoiceApi.getInvoiceProjects().then(({ projects, months, fromServer: online }) => {
@@ -138,6 +169,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
           company: p.company || '',
           code: p.code || deriveCode(p.project),
           status: (p.status === 'Inactive' ? 'Inactive' : 'Active') as 'Active' | 'Inactive',
+          comments: (p as any).comments || '',
           revenue: months.map(m => p.revenue[m] || 0),
         }));
         setRows(mapped);
@@ -161,6 +193,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
           company: p.company || '',
           code: p.code || deriveCode(p.project),
           status: (p.status === 'Inactive' ? 'Inactive' : 'Active') as 'Active' | 'Inactive',
+          comments: (p as any).comments || '',
           revenue: months.map(m => p.revenue[m] || 0),
         }));
         setRows(mapped);
@@ -199,7 +232,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       .map(([fy, startIdx]) => ({ label: `FY${fy}`, value: startIdx }));
   }, [monthHeaders]);
 
-  const handleFieldChange = (key: string, field: 'project' | 'company', value: string) => {
+  const handleFieldChange = (key: string, field: 'project' | 'company' | 'comments', value: string) => {
     setDirty(true);
     setRows(prev => {
       const updated = prev.map(r => {
@@ -323,7 +356,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
 
   const openEdit = (r: InvRow) => {
     setEditingRow(r);
-    editForm.setFieldsValue({ project: r.project, company: r.company, status: r.status });
+    editForm.setFieldsValue({ project: r.project, company: r.company, status: r.status, comments: r.comments || '' });
     setEditModalOpen(true);
   };
 
@@ -346,8 +379,9 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
 
     if (editingRow.id) {
       const ok = await invoiceApi.updateInvoiceProject(editingRow.id, {
-        project: newProject, code: newCode, company: values.company?.trim() || '', status: values.status,
-      });
+        project: newProject, code: newCode, company: values.company?.trim() || '', status: values.status, comments: values.comments || '',
+        changedBy: currentUser?.username,
+      } as any);
       if (ok) {
         message.success('Row updated');
         await reloadFromServer();
@@ -357,7 +391,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
 
     const updated = rows.map(r =>
       r.key === editingRow.key
-        ? { ...r, project: newProject, code: newCode, key: newProject, company: values.company?.trim() || '', status: values.status as 'Active' | 'Inactive' }
+        ? { ...r, project: newProject, code: newCode, key: newProject, company: values.company?.trim() || '', status: values.status as 'Active' | 'Inactive', comments: values.comments || '' }
         : r
     );
     setRows(updated);
@@ -371,7 +405,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
 
     if (r.id) {
       setRows(prev => prev.map(x => x.key === r.key ? { ...x, status: newStatus } : x));
-      const ok = await invoiceApi.updateInvoiceProject(r.id, { status: newStatus });
+      const ok = await invoiceApi.updateInvoiceProject(r.id, { status: newStatus, changedBy: currentUser?.username } as any);
       if (ok) {
         await reloadFromServer();
         message.success(`Project marked as ${newStatus}`);
@@ -410,6 +444,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       company: values.company?.trim() || '',
       code,
       status: 'Active',
+      comments: values.comments?.trim() || '',
       revenue: monthHeaders.map(() => 0),
     };
     const updated = [...rows, newRow];
@@ -422,9 +457,10 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       company: newRow.company,
       code: newRow.code,
       status: 'Active',
+      comments: newRow.comments,
       revenue: Object.fromEntries(monthHeaders.map((m, i) => [m, 0])),
       monthHeaders,
-    });
+    }, currentUser?.username);
     if (result.ok && result.id) {
       setRows(prev => prev.map(r => r.key === newRow.key ? { ...r, id: result.id } : r));
       message.success('Project added and saved to database');
@@ -440,8 +476,55 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     setRows(updated);
     onDataChange?.(updated);
     setDirty(true);
-    if (r.id) invoiceApi.deleteInvoiceProject(r.id);
+    if (r.id) invoiceApi.deleteInvoiceProject(r.id, currentUser?.username);
     message.success('Row deleted');
+  };
+
+  /** Auto-save comments on blur if the row has a DB id */
+  const handleCommentBlur = async (key: string) => {
+    const row = rows.find(r => r.key === key);
+    if (!row?.id) return;
+    await invoiceApi.updateInvoiceProject(row.id, { comments: row.comments || '', changedBy: currentUser?.username } as any);
+  };
+
+  /** Load audit log for a given invoice record id */
+  const loadAuditLog = async (id: number) => {
+    setAuditLoading(true);
+    const entries = await auditApi.getAuditLog('invoice', id);
+    setAuditLog(entries);
+    setAuditLoading(false);
+  };
+
+  /** Open detail side panel */
+  const openDetailDrawer = (r: InvRow) => {
+    setSelectedDetailRow(r);
+    setNewComment('');
+    setAuditLog([]);
+    setAuditSearch('');
+    setAuditFieldFilter(null);
+    setAuditByFilter(null);
+    setDetailDrawer(true);
+    if (r.id) loadAuditLog(r.id);
+  };
+
+  /** Append a new prefixed comment and save */
+  const handleAddComment = async () => {
+    if (!newComment.trim() || !selectedDetailRow) return;
+    const username = currentUser?.username || 'Unknown';
+    const dateStr = formatCommentDate(new Date());
+    const entry = `${username} : ${dateStr} : ${newComment.trim()}`;
+    const existing = selectedDetailRow.comments || '';
+    const updated = existing ? `${existing}\n${entry}` : entry;
+
+    setRows(prev => prev.map(r => r.key === selectedDetailRow.key ? { ...r, comments: updated } : r));
+    setSelectedDetailRow(prev => prev ? { ...prev, comments: updated } : prev);
+    setNewComment('');
+
+    if (selectedDetailRow.id) {
+      await invoiceApi.updateInvoiceProject(selectedDetailRow.id, { comments: updated, changedBy: username } as any);
+      await loadAuditLog(selectedDetailRow.id);
+    }
+    message.success('Comment added');
   };
 
   const handleUpload = async (file: File) => {
@@ -608,14 +691,16 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     };
 
     const base: ColumnType<InvRow>[] = [
-      { title: 'S.No.', dataIndex: 'sno', key: 'sno', width: 42, fixed: 'left' as const, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
+      { title: 'S.No.', key: 'sno', width: 42, fixed: 'left' as const, render: (_: unknown, __: InvRow, index: number) => index + 1, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
       {
         title: 'OA Project Code', dataIndex: 'project', key: 'project', width: 280, fixed: 'left' as const,
+        sorter: (a: InvRow, b: InvRow) => (a.project || '').localeCompare(b.project || ''),
         render: (v: string, r: InvRow) => (
           <Tooltip title={v} overlayInnerStyle={{ fontSize: '11px' }}>
             <Input
               value={v}
-              onChange={e => handleFieldChange(r.key, 'project', e.target.value)}
+              readOnly={!canEdit}
+              onChange={canEdit ? e => handleFieldChange(r.key, 'project', e.target.value) : undefined}
               style={{ border: 'none', background: 'transparent', fontSize: '11px', fontWeight: 500 }}
             />
           </Tooltip>
@@ -624,7 +709,22 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       },
       {
         title: 'Company', dataIndex: 'company', key: 'company', width: 110,
-        render: (v: string, r: InvRow) => <Input value={v} onChange={e => handleFieldChange(r.key, 'company', e.target.value)} style={{ border: 'none', background: 'transparent', fontSize: '11px' }} />,
+        sorter: (a: InvRow, b: InvRow) => (a.company || '').localeCompare(b.company || ''),
+        render: (v: string, r: InvRow) => companyOptions.length > 0 ? (
+          <Select
+            value={v || undefined}
+            onChange={val => handleFieldChange(r.key, 'company', val ?? '')}
+            options={companyOptions}
+            showSearch allowClear size="small"
+            placeholder="Select…"
+            style={{ width: '100%', fontSize: '11px' }}
+            variant="borderless"
+            popupMatchSelectWidth={false}
+            disabled={!canEdit}
+          />
+        ) : (
+          <Input value={v} onChange={e => handleFieldChange(r.key, 'company', e.target.value)} readOnly={!canEdit} style={{ border: 'none', background: 'transparent', fontSize: '11px' }} />
+        ),
         onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
       },
       {
@@ -636,6 +736,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       },
       {
         title: 'Status', dataIndex: 'status', key: 'status', width: 70,
+        sorter: (a: InvRow, b: InvRow) => (a.status || '').localeCompare(b.status || ''),
         render: (status: string) => (
           <Tag color={status === 'Active' ? 'success' : 'default'} style={{ fontSize: '10px', padding: '0 4px' }}>
             {status || 'Active'}
@@ -644,12 +745,33 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
       },
       {
-        title: '', key: 'actions', width: 72, fixed: 'right' as const,
+        title: 'Comments', dataIndex: 'comments', key: 'comments', width: 180,
+        render: (v: string, r: InvRow) => (
+          <Tooltip title={v || 'Open record to add comment'} overlayInnerStyle={{ fontSize: '11px', whiteSpace: 'pre-wrap', maxWidth: 320 }}>
+            <Input
+              value={v}
+              readOnly
+              placeholder="Open to add comment"
+              onClick={() => openDetailDrawer(r)}
+              style={{ border: 'none', background: 'transparent', fontSize: '11px', cursor: 'pointer' }}
+            />
+          </Tooltip>
+        ),
+        onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
+      },
+      {
+        title: '', key: 'actions', width: 88, fixed: 'right' as const,
         render: (_: any, r: InvRow) => (
           <Space size={2}>
+            <Tooltip title="View Details" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button type="text" size="small" icon={<EyeOutlined style={{ color: '#1890ff' }} />} onClick={() => openDetailDrawer(r)} />
+            </Tooltip>
+            {canEdit && (
             <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}>
               <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)} style={{ color: '#595959' }} />
             </Tooltip>
+            )}
+            {canEdit && (
             <Tooltip title={r.status === 'Active' ? 'Mark Inactive' : 'Mark Active'} overlayInnerStyle={{ fontSize: '11px' }}>
               <Button
                 type="text" size="small"
@@ -657,6 +779,8 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
                 onClick={() => handleToggleActive(r)}
               />
             </Tooltip>
+            )}
+            {canDelete && (
             <Popconfirm
               title="Delete this row?"
               description="This will permanently remove this project from the database."
@@ -668,6 +792,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
                 <Button type="text" size="small" danger icon={<DeleteOutlined />} />
               </Tooltip>
             </Popconfirm>
+            )}
           </Space>
         ),
         onHeaderCell: () => ({ style: hs }),
@@ -683,7 +808,8 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
             ? <span style={{ fontSize: '11px', color: '#595959' }}>{fmtRev(r.revenue[ai] || 0)}</span>
             : <InputNumber
                 value={r.revenue[ai] || 0}
-                onChange={v => handleRevChange(r.key, ai, String(v ?? 0))}
+                readOnly={!canEdit}
+                onChange={canEdit ? v => handleRevChange(r.key, ai, String(v ?? 0)) : undefined}
                 formatter={v => `₹ ${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
                 parser={v => Number(String(v ?? '').replace(/₹\s?|,/g, '')) as 0}
                 controls={false}
@@ -719,10 +845,11 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       if (col.key === 'total') return true;
       if (col.key === 'actions') return true;
       if (col.key === 'status') return true;
+      if (col.key === 'comments') return true;
       if (monthCols.find(c => c.key === col.key)) return true;
       return visibleColumns.has(col.key as string);
     });
-  }, [filteredMonthHeaders, rows, filters, visibleColumns, currency, exchangeRate]);
+  }, [filteredMonthHeaders, rows, filters, visibleColumns, currency, exchangeRate, handleCommentBlur, openDetailDrawer, canEdit, canDelete]);
 
   const displayRows = useMemo(() => rows.filter(r => {
     if (filters.project && !r.project.toLowerCase().includes(filters.project.toLowerCase())) return false;
@@ -749,9 +876,10 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         company: r.company || '',
         code: deriveCode(r.project),
         status: r.status || 'Active',
+        comments: r.comments || '',
         revenue: Object.fromEntries(monthHeaders.map((m, i) => [m, r.revenue[i] || 0])),
       }));
-      const saveResult = await invoiceApi.bulkSaveInvoices(apiProjects, monthHeaders);
+      const saveResult = await invoiceApi.bulkSaveInvoices(apiProjects, monthHeaders, currentUser?.username);
       if (saveResult.ok) {
         setDirty(false);
         setFromServer(true);
@@ -770,7 +898,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   };
 
   const handleClearAll = async () => {
-    await invoiceApi.clearAllInvoices();
+    await invoiceApi.clearAllInvoices(currentUser?.username);
     setRows([]);
     setMonthHeaders([]);
     setDirty(false);
@@ -909,7 +1037,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               />
             </Tooltip>
           )}
-          {dirty && (
+          {dirty && canEdit && (
             <Tooltip title="Save all changes to database" overlayInnerStyle={{ fontSize: '11px' }}>
               <Button icon={<SaveOutlined />} size="small" type="primary" loading={saving} onClick={handleSave} style={{ fontSize: '11px' }}>
                 Save Changes
@@ -925,20 +1053,24 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
           <Tooltip title="Column Settings" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} />
           </Tooltip>
+          {canEdit && (
           <Tooltip title="Upload Excel" overlayInnerStyle={{ fontSize: '11px' }}>
             <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
               <Button icon={<UploadOutlined />} size="small" />
             </Upload>
           </Tooltip>
+          )}
           <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} />
           </Tooltip>
           <Tooltip title="Export Data (formatted Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<FileExcelOutlined />} size="small" onClick={handleExport} disabled={!rows.length} />
           </Tooltip>
+          {(canEdit || canDelete) && (
           <Tooltip title="More Actions" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<EllipsisOutlined />} size="small" onClick={() => setMoreActionsOpen(true)} />
           </Tooltip>
+          )}
         </Space>
       </div>
 
@@ -1118,6 +1250,188 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         </Space>
       </Drawer>
 
+      {/* Detail Side Panel */}
+      <Drawer
+        title={
+          <Space>
+            <EyeOutlined style={{ color: '#1890ff' }} />
+            <span style={{ fontSize: '13px' }}>{selectedDetailRow?.project || 'Record Details'}</span>
+          </Space>
+        }
+        placement="right"
+        width={detailDrawerExpanded ? '90vw' : 520}
+        open={detailDrawer}
+        onClose={() => { setDetailDrawer(false); setSelectedDetailRow(null); setAuditLog([]); setNewComment(''); setDetailDrawerExpanded(false); setAuditSearch(''); setAuditFieldFilter(null); setAuditByFilter(null); }}
+        extra={
+          <Space size={4}>
+            {selectedDetailRow && canEdit && (
+              <Tooltip title="Edit record" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button
+                  type="text"
+                  size="small"
+                  icon={<EditOutlined style={{ fontSize: '14px', color: '#1890ff' }} />}
+                  onClick={() => { openEdit(selectedDetailRow); setDetailDrawer(false); setDetailDrawerExpanded(false); }}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6 }}
+                />
+              </Tooltip>
+            )}
+            <Tooltip title={detailDrawerExpanded ? 'Collapse' : 'Expand'} overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button
+                type="text"
+                size="small"
+                icon={detailDrawerExpanded
+                  ? <FullscreenExitOutlined style={{ fontSize: '14px', color: '#595959' }} />
+                  : <FullscreenOutlined style={{ fontSize: '14px', color: '#595959' }} />}
+                onClick={() => setDetailDrawerExpanded(e => !e)}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 6 }}
+              />
+            </Tooltip>
+          </Space>
+        }
+      >
+        {selectedDetailRow && (() => {
+          const auditFieldOptions = Array.from(new Set(auditLog.map(a => a.field))).map(f => ({ value: f, label: f }));
+          const auditByOptions = Array.from(new Set(auditLog.map(a => a.changed_by).filter(Boolean))).map(b => ({ value: b, label: b }));
+          const q = auditSearch.toLowerCase().trim();
+          const filteredAudit = auditLog.filter(a => {
+            if (auditFieldFilter && a.field !== auditFieldFilter) return false;
+            if (auditByFilter && a.changed_by !== auditByFilter) return false;
+            if (q && !['field','old_value','new_value','changed_by'].some(k => String((a as any)[k] || '').toLowerCase().includes(q))) return false;
+            return true;
+          });
+          return (
+            <div style={{ display: detailDrawerExpanded ? 'grid' : 'flex', gridTemplateColumns: detailDrawerExpanded ? '1fr 1fr' : undefined, flexDirection: detailDrawerExpanded ? undefined : 'column', gap: 16 }}>
+              {/* Left column: details + comments */}
+              <Space direction="vertical" style={{ width: '100%' }} size={16}>
+                <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+                  <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Invoice Project Details</Text>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <Text type="secondary" style={{ fontSize: '11px' }}>Project</Text>
+                      <div style={{ fontSize: '13px', fontWeight: 600, wordBreak: 'break-word' }}>{selectedDetailRow.project || '—'}</div>
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: '11px' }}>Company</Text>
+                      <div style={{ fontSize: '13px' }}>{selectedDetailRow.company || '—'}</div>
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: '11px' }}>Code</Text>
+                      <div style={{ fontSize: '13px', fontFamily: 'monospace', color: '#595959' }}>{selectedDetailRow.code || '—'}</div>
+                    </div>
+                    <div>
+                      <Text type="secondary" style={{ fontSize: '11px' }}>Status</Text>
+                      <div style={{ marginTop: 2 }}>
+                        <Tag color={selectedDetailRow.status === 'Active' ? 'success' : 'default'} style={{ fontSize: '11px' }}>
+                          {selectedDetailRow.status}
+                        </Tag>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
+                  <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>
+                    <MessageOutlined style={{ marginRight: 6, color: '#1890ff' }} />Comments
+                  </Text>
+                  {selectedDetailRow.comments ? (
+                    <div style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 6, padding: '10px 12px', marginBottom: 12, fontSize: '12px', whiteSpace: 'pre-wrap', maxHeight: detailDrawerExpanded ? 300 : 180, overflowY: 'auto', lineHeight: 1.6 }}>
+                      {selectedDetailRow.comments}
+                    </div>
+                  ) : (
+                    <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 12 }}>No comments yet.</Text>
+                  )}
+                  {canEdit && (
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                      <Input.TextArea rows={2} value={newComment} onChange={e => setNewComment(e.target.value)}
+                        placeholder={`Type a comment… (saved as: ${currentUser?.username || 'you'} : ${formatCommentDate(new Date())} : your text)`}
+                        style={{ fontSize: '11px', flex: 1 }}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
+                      />
+                      <Button size="small" onClick={handleAddComment} disabled={!newComment.trim()}
+                        style={{ whiteSpace: 'nowrap', background: newComment.trim() ? '#d9d9d9' : '#f0f0f0', color: newComment.trim() ? '#262626' : '#bfbfbf', border: '1px solid #d9d9d9', cursor: newComment.trim() ? 'pointer' : 'not-allowed' }}>
+                        Add
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </Space>
+
+              {/* Right column (or bottom when collapsed): Audit Trail */}
+              <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8, minHeight: 120 }}>
+                <div style={{ marginBottom: 10 }}>
+                  <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 8 }}>
+                    <ClockCircleOutlined style={{ marginRight: 6, color: '#722ed1' }} />Audit Trail
+                    {filteredAudit.length !== auditLog.length && (
+                      <Text type="secondary" style={{ fontSize: '11px', marginLeft: 8 }}>({filteredAudit.length} of {auditLog.length})</Text>
+                    )}
+                  </Text>
+                  <Space wrap size={6}>
+                    <Input
+                      size="small"
+                      allowClear
+                      placeholder="Search…"
+                      value={auditSearch}
+                      onChange={e => setAuditSearch(e.target.value)}
+                      style={{ width: 140, fontSize: '11px' }}
+                    />
+                    <Select
+                      size="small"
+                      allowClear
+                      placeholder="Field"
+                      value={auditFieldFilter}
+                      onChange={v => setAuditFieldFilter(v ?? null)}
+                      options={auditFieldOptions}
+                      style={{ width: 120, fontSize: '11px' }}
+                      popupMatchSelectWidth={false}
+                    />
+                    <Select
+                      size="small"
+                      allowClear
+                      placeholder="Changed by"
+                      value={auditByFilter}
+                      onChange={v => setAuditByFilter(v ?? null)}
+                      options={auditByOptions}
+                      style={{ width: 120, fontSize: '11px' }}
+                      popupMatchSelectWidth={false}
+                    />
+                    {(auditSearch || auditFieldFilter || auditByFilter) && (
+                      <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 2px', color: '#ff4d4f' }}
+                        onClick={() => { setAuditSearch(''); setAuditFieldFilter(null); setAuditByFilter(null); }}>
+                        ✕ Clear
+                      </Button>
+                    )}
+                  </Space>
+                </div>
+                {auditLoading ? (
+                  <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+                ) : filteredAudit.length === 0 ? (
+                  <Text type="secondary" style={{ fontSize: '12px' }}>{auditLog.length === 0 ? 'No changes recorded yet.' : 'No results match the current filters.'}</Text>
+                ) : (
+                  <Table
+                    size="small"
+                    dataSource={filteredAudit}
+                    rowKey="id"
+                    pagination={{ pageSize: detailDrawerExpanded ? 10 : 5, size: 'small', showSizeChanger: false }}
+                    columns={[
+                      { title: 'Field', dataIndex: 'field', key: 'field', width: 80,
+                        render: (v: string) => <Text style={{ fontSize: '11px', textTransform: 'capitalize' }}>{v}</Text> },
+                      { title: 'From', dataIndex: 'old_value', key: 'old_value', ellipsis: true, width: 90,
+                        render: (v: string) => <Tooltip title={v}><Text style={{ fontSize: '11px' }}>{v || '—'}</Text></Tooltip> },
+                      { title: 'To', dataIndex: 'new_value', key: 'new_value', ellipsis: true, width: 90,
+                        render: (v: string) => <Tooltip title={v}><Text style={{ fontSize: '11px', color: '#1890ff' }}>{v || '—'}</Text></Tooltip> },
+                      { title: 'By', dataIndex: 'changed_by', key: 'changed_by', width: 70,
+                        render: (v: string) => <Text style={{ fontSize: '11px' }}>{v || '—'}</Text> },
+                      { title: 'When', dataIndex: 'changed_at', key: 'changed_at', width: 110,
+                        render: (v: string) => <Text style={{ fontSize: '11px' }}>{v ? new Date(v).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</Text> },
+                    ]}
+                  />
+                )}
+              </div>
+            </div>
+          );
+        })()}
+      </Drawer>
+
       {/* Edit Row Modal */}
       <Modal
         title={<Space><EditOutlined style={{ color: '#1890ff' }} /><span style={{ fontSize: '13px' }}>Edit Project</span></Space>}
@@ -1142,10 +1456,17 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               <Input style={{ fontSize: '12px' }} />
             </Form.Item>
             <Form.Item name="company" label={<span style={{ fontSize: '11px' }}>Company</span>}>
-              <Input style={{ fontSize: '12px' }} />
+              {companyOptions.length > 0 ? (
+                <Select showSearch allowClear size="small" options={companyOptions} placeholder="Select company…" style={{ fontSize: '12px' }} notFoundContent="No options — add in Configuration" />
+              ) : (
+                <Input style={{ fontSize: '12px' }} />
+              )}
             </Form.Item>
             <Form.Item name="status" label={<span style={{ fontSize: '11px' }}>Status</span>} initialValue="Active">
               <Select size="small" options={[{ label: 'Active', value: 'Active' }, { label: 'Inactive', value: 'Inactive' }]} style={{ fontSize: '11px' }} />
+            </Form.Item>
+            <Form.Item name="comments" label={<span style={{ fontSize: '11px' }}>Comments</span>}>
+              <Input.TextArea rows={2} placeholder="Add notes..." style={{ fontSize: '11px' }} />
             </Form.Item>
           </Form>
         )}
@@ -1183,6 +1504,9 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               style={{ fontFamily: 'monospace', fontSize: '11px', background: '#f5f5f5' }}
             />
           </Form.Item>
+          <Form.Item name="comments" label={<span style={{ fontSize: '11px' }}>Comments</span>}>
+            <Input.TextArea rows={2} placeholder="Add notes..." style={{ fontSize: '11px' }} />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -1195,6 +1519,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         width={420}
       >
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {canEdit && (
           <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 16px' }}>
             <div style={{ fontWeight: 600, fontSize: '12px', marginBottom: 4 }}>
               <PlusOutlined style={{ color: '#52c41a', marginRight: 6 }} />Add New Project
@@ -1208,7 +1533,9 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               Add Project
             </Button>
           </div>
+          )}
 
+          {canEdit && (
           <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 16px' }}>
             <div style={{ fontWeight: 600, fontSize: '12px', marginBottom: 4 }}>
               <CalendarOutlined style={{ color: '#1890ff', marginRight: 6 }} />Generate Empty Month Columns
@@ -1243,7 +1570,9 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               </Button>
             </Space>
           </div>
+          )}
 
+          {canDelete && (
           <div style={{ border: '1px solid #fff1f0', borderRadius: 8, padding: '12px 16px', background: '#fff1f0' }}>
             <div style={{ fontWeight: 600, fontSize: '12px', marginBottom: 4, color: '#cf1322' }}>
               <DeleteOutlined style={{ marginRight: 6 }} />Delete All Data
@@ -1266,6 +1595,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               </Button>
             </Popconfirm>
           </div>
+          )}
         </Space>
       </Modal>
     </div>

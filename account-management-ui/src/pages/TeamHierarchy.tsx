@@ -9,6 +9,7 @@ import {
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import '../style.css';
+import { useAuth } from '../context/AuthContext';
 
 const { Title, Text } = Typography;
 
@@ -159,6 +160,9 @@ export function ClientHierarchyInner() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form] = Form.useForm();
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('information_teamhierarchy', 'edit');
+  const canDelete = hasPermission('information_teamhierarchy', 'delete');
 
   // ── Roots (no manager) ─────────────────────────────────────────────────
   const roots = useMemo(() => stakeholders.filter(s => !s.reportingTo), [stakeholders]);
@@ -229,9 +233,12 @@ export function ClientHierarchyInner() {
       onHeaderCell: () => ({ style: { fontSize: '11px', fontWeight: 700 } }),
       render: (_: any, record: Stakeholder) => (
         <Space size={4}>
+          {canEdit && (
           <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<EditOutlined />} size="small" onClick={() => handleEdit(record)} style={{ borderRadius: 6 }} />
           </Tooltip>
+          )}
+          {canDelete && (
           <Popconfirm
             title="Remove this stakeholder?"
             onConfirm={() => handleDelete(record.id)}
@@ -242,6 +249,7 @@ export function ClientHierarchyInner() {
               <Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} />
             </Tooltip>
           </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -315,15 +323,19 @@ export function ClientHierarchyInner() {
           <Tooltip title="Download Excel Template" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<DownloadOutlined />} size="small" onClick={handleDownloadTemplate} style={{ borderRadius: 6 }} />
           </Tooltip>
+          {canEdit && (
           <Tooltip title="Upload from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
             <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
               <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: 6 }} />
             </Upload>
           </Tooltip>
+          )}
+          {canEdit && (
           <Button type="primary" icon={<PlusOutlined />} size="small" onClick={handleAdd}
             style={{ borderRadius: 6, fontSize: '11px' }}>
             Add Stakeholder
           </Button>
+          )}
         </Space>
       </div>
 

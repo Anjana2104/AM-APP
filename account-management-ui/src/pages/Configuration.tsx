@@ -2,14 +2,44 @@
 import {
   Button, Input, Modal, Form, Tag, Space, Typography,
   Divider, Tooltip, Popconfirm, Empty, message, Upload, Select, Checkbox, Tabs,
+  Table, Switch, Badge,
 } from 'antd';
 import {
   PlusOutlined, DeleteOutlined, EditOutlined, SettingOutlined,
-  LockOutlined, SaveOutlined, CloseOutlined, UploadOutlined, DownloadOutlined,
-  LinkOutlined, AppstoreOutlined, TableOutlined,
+  SaveOutlined, CloseOutlined, UploadOutlined, DownloadOutlined,
+  LinkOutlined, AppstoreOutlined, TableOutlined, BellOutlined,
+  HolderOutlined,
 } from '@ant-design/icons';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  closestCenter,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import * as XLSX from 'xlsx';
 import { useConfig, ConfigItem, AVAILABLE_LINK_TARGETS, AppValue } from '../context/ConfigContext';
+import { useAuth } from '../context/AuthContext';
+import {
+  NotificationTrigger,
+  TriggerSource,
+  getNotificationTriggers,
+  getTriggerSources,
+  createNotificationTrigger,
+  updateNotificationTrigger,
+  deleteNotificationTrigger,
+  toggleNotificationTrigger,
+  reorderNotificationTriggers,
+} from '../api/notificationTriggerApi';
+import { getUserGroups, UserGroup } from '../api/notificationApi';
 
 const { Title, Text } = Typography;
 
@@ -52,6 +82,11 @@ export function Configuration() {
                 label: <span><TableOutlined /> Values</span>,
                 children: <ValuesTab />,
               },
+              {
+                key: 'triggers',
+                label: <span><BellOutlined /> Notification Triggers</span>,
+                children: <NotificationTriggersTab />,
+              },
             ]}
           />
         </div>
@@ -64,6 +99,9 @@ export function Configuration() {
 
 function DropdownsTab() {
   const { configs, addConfigType, renameConfigType, deleteConfigType, bulkImportConfigs, addItem, removeItem, editItem, updateLinks, clearAllConfigs } = useConfig();
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('configuration', 'edit');
+  const canDelete = hasPermission('configuration', 'delete');
 
   const [selectedId, setSelectedId] = useState<string | null>(configs[0]?.id ?? null);
   const [newTypeModal, setNewTypeModal] = useState(false);
@@ -281,6 +319,7 @@ function DropdownsTab() {
               <div style={{ padding: '14px 16px', borderBottom: '1px solid #f0f0f0' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                   <Text strong style={{ fontSize: '13px' }}>Configuration Types</Text>
+                  {canEdit && (
                   <Button
                     type="primary"
                     size="small"
@@ -290,20 +329,24 @@ function DropdownsTab() {
                   >
                     New
                   </Button>
+                  )}
                 </div>
                 {/* Icon-only toolbar — labels visible on hover */}
                 <Space size={4}>
+                  {canEdit && (
                   <Tooltip title="Upload from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                     <Upload accept=".xlsx,.xls" beforeUpload={handleBulkUpload} showUploadList={false}>
                       <Button size="small" icon={<UploadOutlined />} style={{ borderRadius: '6px' }} />
                     </Upload>
                   </Tooltip>
+                  )}
                   <Tooltip title="Download template" overlayInnerStyle={{ fontSize: '11px' }}>
                     <Button size="small" icon={<DownloadOutlined />} onClick={handleDownloadTemplate} style={{ borderRadius: '6px' }} />
                   </Tooltip>
                   <Tooltip title="Export all to Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                     <Button size="small" icon={<DownloadOutlined />} onClick={handleExportConfigs} style={{ borderRadius: '6px', color: '#52c41a', borderColor: '#52c41a' }} />
                   </Tooltip>
+                  {canDelete && (
                   <Popconfirm
                     title="Delete all non-built-in configurations?"
                     description="This will permanently remove all custom configuration types and their values."
@@ -316,6 +359,7 @@ function DropdownsTab() {
                       <Button size="small" danger icon={<DeleteOutlined />} style={{ borderRadius: '6px' }} />
                     </Tooltip>
                   </Popconfirm>
+                  )}
                 </Space>
               </div>
 
@@ -351,7 +395,6 @@ function DropdownsTab() {
                           </Space>
                         ) : (
                           <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {cfg.builtIn && <LockOutlined style={{ fontSize: '10px', color: '#8c8c8c', marginRight: 5 }} />}
                             {cfg.name}
                           </div>
                         )}
@@ -359,6 +402,7 @@ function DropdownsTab() {
 
                       {renamingId !== cfg.id && (
                         <Space size={2} onClick={e => e.stopPropagation()}>
+                          {canEdit && (
                           <Tooltip title="Rename">
                             <Button
                               type="text"
@@ -368,8 +412,9 @@ function DropdownsTab() {
                               style={{ color: '#595959', opacity: 0.7 }}
                             />
                           </Tooltip>
-                          {!cfg.builtIn && (
-                            <Popconfirm
+                          )}
+                          {canDelete && (
+                          <Popconfirm
                               title="Delete this configuration?"
                               description="This will permanently remove this configuration type."
                               onConfirm={e => { e?.stopPropagation(); deleteConfigType(cfg.id); if (selectedId === cfg.id) setSelectedId(configs[0]?.id ?? null); }}
@@ -402,12 +447,7 @@ function DropdownsTab() {
                 <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                     <div>
-                      <Space align="center">
-                        {selectedConfig.builtIn && (
-                          <Tag color="blue" style={{ fontSize: '10px' }}>Built-in</Tag>
-                        )}
-                        <Title level={5} style={{ margin: 0 }}>{selectedConfig.name}</Title>
-                      </Space>
+                      <Title level={5} style={{ margin: 0 }}>{selectedConfig.name}</Title>
                       {selectedConfig.description && (
                         <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginTop: 4 }}>
                           {selectedConfig.description}
@@ -430,6 +470,7 @@ function DropdownsTab() {
                               ) : null;
                             })
                           )}
+                          {canEdit && (
                           <Button
                             size="small"
                             type="link"
@@ -439,6 +480,7 @@ function DropdownsTab() {
                           >
                             Manage links
                           </Button>
+                          )}
                         </Space>
                       </div>
                     </div>
@@ -509,6 +551,7 @@ function DropdownsTab() {
                                 </Tag>
                               </div>
                               <Space size={4}>
+                                {canEdit && (
                                 <Tooltip title="Edit">
                                   <Button
                                     type="text"
@@ -518,6 +561,8 @@ function DropdownsTab() {
                                     style={{ color: '#595959' }}
                                   />
                                 </Tooltip>
+                                )}
+                                {canDelete && (
                                 <Popconfirm
                                   title="Remove this value?"
                                   description="Existing records using this value will keep it, but it won't appear in dropdowns."
@@ -529,6 +574,7 @@ function DropdownsTab() {
                                     <Button type="text" size="small" danger icon={<DeleteOutlined />} />
                                   </Tooltip>
                                 </Popconfirm>
+                                )}
                               </Space>
                             </>
                           )}
@@ -540,6 +586,7 @@ function DropdownsTab() {
                   <Divider style={{ margin: '16px 0' }} />
 
                   {/* Add new value */}
+                  {canEdit && (
                   <div style={{ background: '#f9f9f9', borderRadius: '8px', padding: '14px 16px', border: '1px dashed #d9d9d9' }}>
                     <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
                       <PlusOutlined style={{ marginRight: 6, color: '#1890ff' }} />
@@ -584,6 +631,7 @@ function DropdownsTab() {
                       </div>
                     )}
                   </div>
+                  )}
                 </div>
               </div>
             )}
@@ -643,15 +691,17 @@ interface LinksModalProps {
 function LinksModal({ open, configName, currentLinks, onSave, onCancel }: LinksModalProps) {
   const [checked, setChecked] = useState<string[]>(currentLinks);
 
-  // Sync when modal opens
   React.useEffect(() => { setChecked(currentLinks); }, [currentLinks, open]);
 
-  // Group by module
-  const byModule: Record<string, typeof AVAILABLE_LINK_TARGETS> = {};
+  // Build section → module → targets hierarchy
+  const hierarchy: Record<string, Record<string, typeof AVAILABLE_LINK_TARGETS>> = {};
   AVAILABLE_LINK_TARGETS.forEach(t => {
-    if (!byModule[t.module]) byModule[t.module] = [];
-    byModule[t.module].push(t);
+    if (!hierarchy[t.section]) hierarchy[t.section] = {};
+    if (!hierarchy[t.section][t.module]) hierarchy[t.section][t.module] = [];
+    hierarchy[t.section][t.module].push(t);
   });
+
+  const SECTION_ORDER = ['Finance Management', 'Resources', 'Request Management', 'Internal Process'];
 
   return (
     <Modal
@@ -660,27 +710,49 @@ function LinksModal({ open, configName, currentLinks, onSave, onCancel }: LinksM
       onCancel={onCancel}
       onOk={() => onSave(checked)}
       okText="Save Links"
-      width={520}
+      width={560}
     >
       <Text type="secondary" style={{ fontSize: '12px', display: 'block', marginBottom: 16 }}>
-        Select the app fields that should use values from this configuration. When linked, the dropdown for that field will be driven by this config.
+        Select the app fields that should use values from this configuration. When linked, the dropdown for that field will be populated from this config automatically.
       </Text>
-      {Object.entries(byModule).map(([module, targets]) => (
-        <div key={module} style={{ marginBottom: 16 }}>
-          <Text strong style={{ fontSize: '12px', color: '#595959', display: 'block', marginBottom: 6 }}>
-            {module}
-          </Text>
-          {targets.map(t => (
-            <div key={t.id} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #f0f0f0', marginBottom: 4, background: checked.includes(t.id) ? '#e6f4ff' : '#fafafa' }}>
-              <Checkbox
-                checked={checked.includes(t.id)}
-                onChange={e => {
-                  if (e.target.checked) setChecked(prev => [...prev, t.id]);
-                  else setChecked(prev => prev.filter(x => x !== t.id));
-                }}
-              >
-                <Text style={{ fontSize: '12px' }}>{t.label}</Text>
-              </Checkbox>
+      {SECTION_ORDER.filter(s => hierarchy[s]).map(section => (
+        <div key={section} style={{ marginBottom: 16 }}>
+          {/* Section header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid #e8e8e8' }}>
+            <div style={{ width: 3, height: 14, borderRadius: 2, background: '#1890ff', flexShrink: 0 }} />
+            <Text strong style={{ fontSize: '12px', color: '#262626' }}>{section}</Text>
+          </div>
+          {Object.entries(hierarchy[section]).map(([module, targets]) => (
+            <div key={module} style={{ marginBottom: 8, marginLeft: 12 }}>
+              {/* Module sub-header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
+                <div style={{ width: 4, height: 4, borderRadius: '50%', background: '#8c8c8c', flexShrink: 0 }} />
+                <Text style={{ fontSize: '11px', color: '#595959', fontWeight: 600 }}>{module}</Text>
+              </div>
+              {/* Target checkboxes */}
+              {targets.map(t => (
+                <div key={t.id} style={{
+                  padding: '6px 10px 6px 20px',
+                  borderRadius: 6,
+                  border: `1px solid ${checked.includes(t.id) ? '#91caff' : '#f0f0f0'}`,
+                  marginBottom: 4,
+                  background: checked.includes(t.id) ? '#e6f4ff' : '#fafafa',
+                  transition: 'all 0.15s',
+                }}>
+                  <Checkbox
+                    checked={checked.includes(t.id)}
+                    onChange={e => {
+                      if (e.target.checked) setChecked(prev => [...prev, t.id]);
+                      else setChecked(prev => prev.filter(x => x !== t.id));
+                    }}
+                  >
+                    <span style={{ fontSize: '12px', fontWeight: 500 }}>{t.label}</span>
+                    {t.description && (
+                      <span style={{ fontSize: '10px', color: '#8c8c8c', marginLeft: 6 }}>— {t.description}</span>
+                    )}
+                  </Checkbox>
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -952,6 +1024,463 @@ function ValuesTab() {
           Add
         </Button>
       </div>
+    </div>
+  );
+}
+
+// ── Notification Triggers Tab ──────────────────────────────────────────
+
+// Drag-handle row wrapper for the triggers table
+function SortableTriggerRow({ id, children, ...rest }: React.HTMLAttributes<HTMLTableRowElement> & { id: number }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <tr
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      {...rest}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.5 : 1,
+        background: isDragging ? '#e6f4ff' : undefined,
+        cursor: 'default',
+      }}
+    >
+      {children}
+    </tr>
+  );
+}
+
+// Special field pseudo-values — kept in sync with server/config/triggerSources.js
+// This set is only used for UI decisions (hide field_value target type, auto-fill template)
+const SPECIAL_FIELD_VALUES = new Set(['__any__', '__revenue__', '__invoice_amounts__', '__bulk_insert__', '__delete_all__', '__record_delete__']);
+
+const NOTIFY_TARGET_TYPES = [
+  { label: 'New value is the user (field_value)', value: 'field_value' },
+  { label: 'Notify a User Group', value: 'group' },
+  { label: 'Broadcast (all users)', value: 'broadcast' },
+];
+
+const NOTIFICATION_TYPES = [
+  { label: 'Task', value: 'task' },
+  { label: 'Info', value: 'info' },
+  { label: 'Alert', value: 'alert' },
+];
+
+function NotificationTriggersTab() {
+  const { hasPermission } = useAuth();
+  const canEdit = hasPermission('configuration', 'edit');
+  const canDelete = hasPermission('configuration', 'delete');
+
+  const [triggers, setTriggers] = React.useState<NotificationTrigger[]>([]);
+  const [groups, setGroups] = React.useState<UserGroup[]>([]);
+  const [triggerSources, setTriggerSources] = React.useState<TriggerSource[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [modalOpen, setModalOpen] = React.useState(false);
+  const [editingTrigger, setEditingTrigger] = React.useState<NotificationTrigger | null>(null);
+  const [form] = Form.useForm();
+
+  const selectedSource = Form.useWatch('source_table', form);
+  const selectedFieldRaw = Form.useWatch('trigger_field', form);
+  const selectedFields: string[] = Array.isArray(selectedFieldRaw)
+    ? selectedFieldRaw
+    : (selectedFieldRaw ? [selectedFieldRaw] : []);
+  const isSpecialField = selectedFields.some(f => SPECIAL_FIELD_VALUES.has(f));
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const [data, grps, sources] = await Promise.all([
+        getNotificationTriggers(),
+        getUserGroups(),
+        getTriggerSources(),
+      ]);
+      setTriggers(data);
+      setGroups(grps);
+      setTriggerSources(sources);
+    } catch (_) {
+      message.error('Failed to load triggers');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => { load(); }, [load]);
+
+  // dnd-kit sensors — require 5px of movement before drag starts (avoids accidental drags)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = triggers.findIndex(t => t.id === active.id);
+    const newIndex = triggers.findIndex(t => t.id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const reordered = arrayMove(triggers, oldIndex, newIndex);
+    setTriggers(reordered); // optimistic update
+    await reorderNotificationTriggers(reordered.map(t => t.id));
+  };
+
+  const openCreate = () => {
+    setEditingTrigger(null);
+    form.resetFields();
+    form.setFieldsValue({
+      source_table: triggerSources[0]?.value || '',
+      trigger_field: [],
+      notify_target_type: 'field_value',
+      notification_type: 'task',
+      is_active: true,
+      message_template: 'The {field} of "{record_name}" was changed from "{old_value}" to "{new_value}" by {changed_by}.',
+    });    setModalOpen(true);
+  };
+
+  const openEdit = (t: NotificationTrigger) => {
+    setEditingTrigger(t);
+    form.setFieldsValue({
+      name: t.name,
+      source_table: t.source_table,
+      trigger_field: t.trigger_field ? t.trigger_field.split(',').map(f => f.trim()).filter(Boolean) : [],
+      message_template: t.message_template,
+      notify_target_type: t.notify_target_type,
+      notify_target_value: t.notify_target_value,
+      notification_type: t.notification_type,
+      is_active: !!t.is_active,
+    });
+    setModalOpen(true);
+  };
+
+  const handleSave = async () => {
+    try {
+      const vals = await form.validateFields();
+      const fields: string[] = Array.isArray(vals.trigger_field) ? vals.trigger_field : [vals.trigger_field];
+      const triggerLabel = fields
+        .map(f => sourceFields.find(sf => sf.value === f)?.label || f)
+        .join(', ');
+      const payload = {
+        name: vals.name,
+        source_table: vals.source_table,
+        trigger_field: fields.join(','),
+        trigger_label: triggerLabel,
+        message_template: vals.message_template || '',
+        notify_target_type: vals.notify_target_type,
+        notify_target_value: vals.notify_target_value || '',
+        notification_type: vals.notification_type || 'task',
+        is_active: vals.is_active ? 1 : 0,
+      };
+
+      if (editingTrigger) {
+        const res = await updateNotificationTrigger(editingTrigger.id, payload);
+        if (res.ok) { message.success('Trigger updated'); setModalOpen(false); load(); }
+        else message.error(res.error || 'Update failed');
+      } else {
+        const res = await createNotificationTrigger(payload as any);
+        if (res.ok) { message.success('Trigger created'); setModalOpen(false); load(); }
+        else message.error(res.error || 'Create failed');
+      }
+    } catch (_) {}
+  };
+
+  const handleDelete = async (id: number) => {
+    const res = await deleteNotificationTrigger(id);
+    if (res.ok) { message.success('Deleted'); load(); }
+    else message.error(res.error || 'Delete failed');
+  };
+
+  const handleDuplicate = async (t: NotificationTrigger) => {
+    const res = await createNotificationTrigger({
+      name: `${t.name} (copy)`,
+      source_table: t.source_table,
+      trigger_field: t.trigger_field,
+      trigger_label: t.trigger_label,
+      message_template: t.message_template,
+      notify_target_type: t.notify_target_type,
+      notify_target_value: t.notify_target_value,
+      notification_type: t.notification_type,
+      is_active: 0,
+    } as any);
+    if (res.ok) { message.success('Trigger duplicated (inactive)'); load(); }
+    else message.error(res.error || 'Duplicate failed');
+  };
+
+  const handleToggle = async (id: number) => {
+    await toggleNotificationTrigger(id);
+    load();
+  };
+
+  const sourceFields = triggerSources.find(s => s.value === selectedSource)?.fields || [];
+  const groupOptions = groups.map(g => ({ label: g.name, value: String(g.id) }));
+
+  const columns = [
+    ...(canEdit ? [{
+      title: '',
+      key: 'drag',
+      width: 32,
+      render: () => (
+        <HolderOutlined
+          style={{ cursor: 'grab', color: '#bbb', fontSize: '14px', padding: '4px' }}
+          className="drag-handle"
+        />
+      ),
+    }] : []),
+    {
+      title: 'Name',
+      dataIndex: 'name',
+      key: 'name',
+      render: (v: string) => <span style={{ fontWeight: 600, fontSize: '13px' }}>{v}</span>,
+    },
+    {
+      title: 'Source',
+      dataIndex: 'source_table',
+      key: 'source_table',
+      render: (v: string) => {
+        const s = triggerSources.find(x => x.value === v);
+        return <Tag color="blue" style={{ fontSize: '11px' }}>{s?.label || v}</Tag>;
+      },
+    },
+    {
+      title: 'Field',
+      dataIndex: 'trigger_field',
+      key: 'trigger_field',
+      render: (v: string, row: NotificationTrigger) => {
+        const fields = v ? v.split(',').map(f => f.trim()).filter(Boolean) : [];
+        const src = triggerSources.find(s => s.value === row.source_table);
+        return (
+          <Space size={2} wrap>
+            {fields.map(f => {
+              if (f === '__any__') return <Tag key={f} color="volcano" style={{ fontSize: '11px' }}>★ Any field</Tag>;
+              if (SPECIAL_FIELD_VALUES.has(f)) {
+                const fi = src?.fields.find(fi => fi.value === f);
+                return <Tag key={f} color="geekblue" style={{ fontSize: '11px' }}>{fi?.label || f}</Tag>;
+              }
+              const fi = src?.fields.find(fi => fi.value === f);
+              return <Tag key={f} color="cyan" style={{ fontSize: '11px' }}>{fi?.label || f}</Tag>;
+            })}
+          </Space>
+        );
+      },
+    },
+    {
+      title: 'Notify',
+      dataIndex: 'notify_target_type',
+      key: 'notify_target_type',
+      render: (v: string, row: NotificationTrigger) => {
+        if (v === 'field_value') return <Tag color="green" style={{ fontSize: '11px' }}>New value → User</Tag>;
+        if (v === 'group') {
+          const grp = groups.find(g => String(g.id) === String(row.notify_target_value));
+          return <Tag color="purple" style={{ fontSize: '11px' }}>Group: {grp ? grp.name : row.notify_target_value}</Tag>;
+        }
+        return <Tag color="orange" style={{ fontSize: '11px' }}>Broadcast</Tag>;
+      },
+    },
+    {
+      title: 'Type',
+      dataIndex: 'notification_type',
+      key: 'notification_type',
+      render: (v: string) => <Tag style={{ fontSize: '11px' }}>{v}</Tag>,
+    },
+    {
+      title: 'Active',
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (v: number, row: NotificationTrigger) =>
+        canEdit ? (
+          <Switch
+            size="small"
+            checked={!!v}
+            onChange={() => handleToggle(row.id)}
+          />
+        ) : (
+          <Badge status={v ? 'success' : 'default'} text={v ? 'On' : 'Off'} />
+        ),
+    },
+    ...(canEdit || canDelete ? [{
+      title: 'Actions',
+      key: 'actions',
+      render: (_: unknown, row: NotificationTrigger) => (
+        <Space size={4}>
+          {canEdit && (
+            <Tooltip title="Edit">
+              <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(row)} />
+            </Tooltip>
+          )}
+          {canEdit && (
+            <Tooltip title="Duplicate">
+              <Button size="small" icon={<PlusOutlined />} onClick={() => handleDuplicate(row)} />
+            </Tooltip>
+          )}
+          {canDelete && (
+            <Popconfirm
+              title="Delete this trigger?"
+              onConfirm={() => handleDelete(row.id)}
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+            >
+              <Tooltip title="Delete">
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
+        </Space>
+      ),
+    }] : []),
+  ];
+
+  return (
+    <div style={{ padding: '16px 0' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div>
+          <Typography.Text strong style={{ fontSize: '13px' }}>Notification Triggers</Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: '12px', marginLeft: 8 }}>
+            Automatically send notifications when specific fields change
+          </Typography.Text>
+        </div>
+        {canEdit && (
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>
+            Add Trigger
+          </Button>
+        )}
+      </div>
+
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={triggers.map(t => t.id)} strategy={verticalListSortingStrategy}>
+          <Table
+            dataSource={triggers}
+            columns={columns}
+            rowKey="id"
+            loading={loading}
+            size="small"
+            pagination={false}
+            locale={{ emptyText: <Empty description="No triggers configured yet" imageStyle={{ height: 40 }} /> }}
+            components={{
+              body: {
+                row: ({ children, ...props }: any) => {
+                  const id = props['data-row-key'] ? Number(props['data-row-key']) : 0;
+                  return canEdit
+                    ? <SortableTriggerRow id={id} {...props}>{children}</SortableTriggerRow>
+                    : <tr {...props}>{children}</tr>;
+                },
+              },
+            }}
+          />
+        </SortableContext>
+      </DndContext>
+
+      <Modal
+        open={modalOpen}
+        title={editingTrigger ? 'Edit Trigger' : 'New Notification Trigger'}
+        onCancel={() => setModalOpen(false)}
+        onOk={handleSave}
+        okText="Save"
+        width={560}
+        destroyOnClose
+      >
+        <Form form={form} layout="vertical" size="small" style={{ marginTop: 12 }}>
+          <Form.Item
+            name="name"
+            label="Trigger Name"
+            rules={[{ required: true, message: 'Name is required' }]}
+          >
+            <Input placeholder="e.g. SOW Owner Assignment" />
+          </Form.Item>
+
+          <Form.Item
+            name="source_table"
+            label="Source (Table)"
+            rules={[{ required: true }]}
+          >
+            <Select
+              options={triggerSources.map(s => ({ label: s.label, value: s.value }))}
+              onChange={() => form.setFieldValue('trigger_field', undefined)}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="trigger_field"
+            label="When these field(s) change"
+            rules={[{ required: true, message: 'Select at least one field' }]}
+          >
+            <Select
+              mode="multiple"
+              options={sourceFields.map(f => ({ label: f.label, value: f.value }))}
+              placeholder="Select one or more fields"
+              disabled={sourceFields.length === 0}
+              allowClear
+              onChange={(vals: string[]) => {
+                const hasSpecial = vals.some(v => SPECIAL_FIELD_VALUES.has(v));
+                if (hasSpecial || vals.length > 1) {
+                  form.setFieldsValue({
+                    message_template: 'For record "{record_name}", {changes}. Updated by {changed_by}.',
+                    notify_target_type: form.getFieldValue('notify_target_type') === 'field_value'
+                      ? 'group'
+                      : form.getFieldValue('notify_target_type'),
+                  });
+                } else {
+                  form.setFieldsValue({
+                    message_template: 'The {field} of "{record_name}" was changed from "{old_value}" to "{new_value}" by {changed_by}.',
+                  });
+                }
+              }}
+            />
+          </Form.Item>
+
+          <Form.Item name="notify_target_type" label="Notify Who?" rules={[{ required: true }]}>
+            <Select
+              options={NOTIFY_TARGET_TYPES.filter(t => {
+                if (t.value !== 'field_value') return true;
+                return !isSpecialField && selectedFields.length === 1;
+              })}
+            />
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prev, curr) => prev.notify_target_type !== curr.notify_target_type}
+          >
+            {({ getFieldValue }) =>
+              getFieldValue('notify_target_type') === 'group' ? (
+                <Form.Item
+                  name="notify_target_value"
+                  label="User Group"
+                  rules={[{ required: true, message: 'Select a group to notify' }]}
+                >
+                  <Select
+                    options={groupOptions}
+                    placeholder="Select a group"
+                    showSearch
+                    filterOption={(input, opt) =>
+                      (opt?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+                    }
+                  />
+                </Form.Item>
+              ) : null
+            }
+          </Form.Item>
+
+          <Form.Item name="notification_type" label="Notification Type">
+            <Select options={NOTIFICATION_TYPES} />
+          </Form.Item>
+
+          <Form.Item
+            name="message_template"
+            label="Message Template"
+            extra={isSpecialField
+              ? 'Available: {changes} (all changed fields summary), {record_name}, {changed_by}'
+              : 'Available: {field}, {old_value}, {new_value}, {record_name}, {changed_by}'}
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder={isSpecialField
+                ? '"{record_name}" was updated by {changed_by}: {changes}'
+                : "The {field} of '{record_name}' was changed from '{old_value}' to '{new_value}' by {changed_by}."}
+            />
+          </Form.Item>
+
+          <Form.Item name="is_active" label="Active" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

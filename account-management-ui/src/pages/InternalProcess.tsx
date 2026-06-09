@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 import * as XLSX from 'xlsx';
 import '../style.css';
+import { useAuth } from '../context/AuthContext';
 
 const { Title, Text } = Typography;
 
@@ -151,7 +152,7 @@ function downloadTemplate() {
 }
 
 // --- Pipeline Card ---
-function PipelineCard({ r, onEdit, onView, onDelete }: { r: ProcessRow; onEdit: () => void; onView: () => void; onDelete: () => void }) {
+function PipelineCard({ r, onEdit, onView, onDelete, canEdit, canDelete }: { r: ProcessRow; onEdit: () => void; onView: () => void; onDelete: () => void; canEdit?: boolean; canDelete?: boolean }) {
   const status = deriveStatus(r);
   const statusColor = STATUS_COLORS[status];
 
@@ -177,15 +178,19 @@ function PipelineCard({ r, onEdit, onView, onDelete }: { r: ProcessRow; onEdit: 
           <Tooltip title="View" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<EyeOutlined />} size="small" onClick={onView} style={{ borderRadius: 6 }} />
           </Tooltip>
+          {(canEdit ?? true) && (
           <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}>
             <Button icon={<EditOutlined />} size="small" onClick={onEdit} style={{ borderRadius: 6 }} />
           </Tooltip>
+          )}
+          {(canDelete ?? true) && (
           <Popconfirm title="Delete this record?" description="This action cannot be undone." onConfirm={onDelete}
             okText="Delete" cancelText="Cancel" okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
             <Tooltip title="Delete" overlayInnerStyle={{ fontSize: '11px' }}>
               <Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} />
             </Tooltip>
           </Popconfirm>
+          )}
         </div>
       </div>
 
@@ -341,6 +346,9 @@ interface ProcessTabProps {
 
 function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProps) {
   const { configs } = useConfig();
+  const { hasPermission, currentUser } = useAuth();
+  const canEdit = hasPermission('clientmgmt_connects', 'edit');
+  const canDelete = hasPermission('clientmgmt_connects', 'delete');
   const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
   const [columnDrawer, setColumnDrawer] = useState(false);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
@@ -469,7 +477,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
   const openView = (r: ProcessRow) => { setViewingRow(r); setViewModal(true); };
   const handleDelete = (r: ProcessRow) => {
     setRows(prev => prev.filter(pr => pr.key !== r.key).map((pr, i) => ({ ...pr, sno: i + 1 })));
-    if (r.id) processApi.deleteProcess(r.id);
+    if (r.id) processApi.deleteProcess(r.id, currentUser?.username);
   };
   const handleSave = () => {
     form.validateFields().then(vals => {
@@ -549,7 +557,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
   const clearFilters = () => { setFilters({}); setPendingFilters({}); };
 
   const handleClearAll = () => {
-    processApi.clearAll();
+    processApi.clearAll(currentUser?.username);
     setRows([]);
     setFromServer?.(false);
     message.success('All process records deleted');
@@ -560,9 +568,9 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
   const cStyle = { fontSize: '11px' };
 
   const tableCols = [
-    visibleColumns.sno        && { title: 'S.No.', dataIndex: 'sno', key: 'sno', width: 55, onHeaderCell: () => ({ style: hStyle }), render: (v: number) => <span style={cStyle}>{v}</span> },
-    visibleColumns.startDate  && { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 90, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
-    visibleColumns.sow        && { title: 'SOW', dataIndex: 'sow', key: 'sow', width: 240, onHeaderCell: () => ({ style: hStyle }),
+    visibleColumns.sno        && { title: 'S.No.', key: 'sno', width: 55, onHeaderCell: () => ({ style: hStyle }), render: (_: unknown, __: ProcessRow, index: number) => <span style={cStyle}>{index + 1}</span> },
+    visibleColumns.startDate  && { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 90, sorter: (a: ProcessRow, b: ProcessRow) => (a.startDate || '').localeCompare(b.startDate || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
+    visibleColumns.sow        && { title: 'SOW', dataIndex: 'sow', key: 'sow', width: 240, sorter: (a: ProcessRow, b: ProcessRow) => (a.sow || '').localeCompare(b.sow || ''), onHeaderCell: () => ({ style: hStyle }),
       render: (v: string, r: ProcessRow) => r.sowFile
         ? (
           <Tooltip title="Click to download SOW document" overlayInnerStyle={{ fontSize: '11px' }}>
@@ -574,20 +582,20 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         )
         : <span style={{ ...cStyle, fontWeight: 600 }}>{v}</span>
     },
-    visibleColumns.signedSow  && { title: 'Signed SOW', dataIndex: 'signedSow', key: 'signedSow', width: 95, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => v ? <Tag color={v === 'Yes' ? 'green' : 'orange'} style={{ fontSize: '10px' }}>{v}</Tag> : null },
-    visibleColumns.piw        && { title: 'PIW', dataIndex: 'piw', key: 'piw', width: 220, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
-    visibleColumns.active     && { title: 'Active', dataIndex: 'active', key: 'active', width: 70, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => v ? <Tag color={v === 'Yes' ? 'green' : 'default'} style={{ fontSize: '10px' }}>{v}</Tag> : null },
-    visibleColumns.salesforceId && { title: 'Salesforce ID', dataIndex: 'salesforceId', key: 'salesforceId', width: 130, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, color: v ? '#1890ff' : undefined }}>{v}</span> },
-    visibleColumns.promsId    && { title: 'PROMS ID', dataIndex: 'promsId', key: 'promsId', width: 110, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
-    visibleColumns.budget     && { title: 'Budget', dataIndex: 'budget', key: 'budget', width: 120, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, fontWeight: v ? 600 : 400 }}>{v}</span> },
-    visibleColumns.openAirCode && { title: 'Open Air Code', dataIndex: 'openAirCode', key: 'openAirCode', width: 240, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
-    visibleColumns.comments   && { title: 'Comments', dataIndex: 'comments', key: 'comments', width: 140, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
-    visibleColumns.accountAnchor && { title: 'Account Anchor', dataIndex: 'accountAnchor', key: 'accountAnchor', width: 130, onHeaderCell: () => ({ style: hStyle }),
+    visibleColumns.signedSow  && { title: 'Signed SOW', dataIndex: 'signedSow', key: 'signedSow', width: 95, sorter: (a: ProcessRow, b: ProcessRow) => (a.signedSow || '').localeCompare(b.signedSow || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => v ? <Tag color={v === 'Yes' ? 'green' : 'orange'} style={{ fontSize: '10px' }}>{v}</Tag> : null },
+    visibleColumns.piw        && { title: 'PIW', dataIndex: 'piw', key: 'piw', width: 220, sorter: (a: ProcessRow, b: ProcessRow) => (a.piw || '').localeCompare(b.piw || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
+    visibleColumns.active     && { title: 'Active', dataIndex: 'active', key: 'active', width: 70, sorter: (a: ProcessRow, b: ProcessRow) => (a.active || '').localeCompare(b.active || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => v ? <Tag color={v === 'Yes' ? 'green' : 'default'} style={{ fontSize: '10px' }}>{v}</Tag> : null },
+    visibleColumns.salesforceId && { title: 'Salesforce ID', dataIndex: 'salesforceId', key: 'salesforceId', width: 130, sorter: (a: ProcessRow, b: ProcessRow) => (a.salesforceId || '').localeCompare(b.salesforceId || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, color: v ? '#1890ff' : undefined }}>{v}</span> },
+    visibleColumns.promsId    && { title: 'PROMS ID', dataIndex: 'promsId', key: 'promsId', width: 110, sorter: (a: ProcessRow, b: ProcessRow) => (a.promsId || '').localeCompare(b.promsId || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
+    visibleColumns.budget     && { title: 'Budget', dataIndex: 'budget', key: 'budget', width: 120, sorter: (a: ProcessRow, b: ProcessRow) => (a.budget || '').localeCompare(b.budget || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, fontWeight: v ? 600 : 400 }}>{v}</span> },
+    visibleColumns.openAirCode && { title: 'Open Air Code', dataIndex: 'openAirCode', key: 'openAirCode', width: 240, sorter: (a: ProcessRow, b: ProcessRow) => (a.openAirCode || '').localeCompare(b.openAirCode || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
+    visibleColumns.comments   && { title: 'Comments', dataIndex: 'comments', key: 'comments', width: 140, sorter: (a: ProcessRow, b: ProcessRow) => (a.comments || '').localeCompare(b.comments || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
+    visibleColumns.accountAnchor && { title: 'Account Anchor', dataIndex: 'accountAnchor', key: 'accountAnchor', width: 130, sorter: (a: ProcessRow, b: ProcessRow) => (a.accountAnchor || '').localeCompare(b.accountAnchor || ''), onHeaderCell: () => ({ style: hStyle }),
       render: (v: string) => v
         ? <Tag color="purple" style={{ fontSize: '10px' }}>{v}</Tag>
         : <span style={{ ...cStyle, color: '#bfbfbf' }}>Unassigned</span>
     },
-    { title: 'Status', key: 'status', width: 110, onHeaderCell: () => ({ style: hStyle }),
+    { title: 'Status', key: 'status', width: 110, sorter: (a: ProcessRow, b: ProcessRow) => deriveStatus(a).localeCompare(deriveStatus(b)), onHeaderCell: () => ({ style: hStyle }),
       render: (_: any, r: ProcessRow) => { const s = deriveStatus(r); return <Tag style={{ fontSize: '10px', background: `${STATUS_COLORS[s]}18`, color: STATUS_COLORS[s], border: `1px solid ${STATUS_COLORS[s]}44` }}>{s}</Tag>; }
     },
     {
@@ -596,10 +604,12 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
       render: (_: any, r: ProcessRow) => (
         <Space size={3}>
           <Tooltip title="View" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<EyeOutlined />} size="small" onClick={() => openView(r)} style={{ borderRadius: 6 }} /></Tooltip>
-          <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<EditOutlined />} size="small" onClick={() => openEdit(r)} style={{ borderRadius: 6 }} /></Tooltip>
+          {canEdit && <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<EditOutlined />} size="small" onClick={() => openEdit(r)} style={{ borderRadius: 6 }} /></Tooltip>}
+          {canDelete && (
           <Popconfirm title="Delete this record?" description="This action cannot be undone." onConfirm={() => handleDelete(r)} okText="Delete" cancelText="Cancel" okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
             <Tooltip title="Delete" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} /></Tooltip>
           </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -734,11 +744,13 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                 <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: 6 }} />
               </Tooltip>
             )}
+            {canEdit && (
             <Tooltip title="Upload from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
               <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
                 <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: 6 }} />
               </Upload>
             </Tooltip>
+            )}
             <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
               <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} style={{ borderRadius: 6 }} />
             </Tooltip>
@@ -747,7 +759,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                 <Button icon={<DownloadOutlined />} size="small" onClick={handleDownload} style={{ borderRadius: 6, color: '#52c41a', borderColor: '#52c41a' }} />
               </Tooltip>
             )}
-            {rows.length > 0 && (
+            {rows.length > 0 && canDelete && (
               <Popconfirm
                 title="Delete all process records?"
                 description="This will permanently remove all records from the database."
@@ -759,7 +771,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                 </Tooltip>
               </Popconfirm>
             )}
-            <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openAdd} style={{ borderRadius: 6, fontSize: '11px' }}>Add New</Button>
+            {canEdit && <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openAdd} style={{ borderRadius: 6, fontSize: '11px' }}>Add New</Button>}
           </Space>
         </Space>
       </div>
@@ -797,6 +809,8 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                       onEdit={() => openEdit(r)}
                       onView={() => openView(r)}
                       onDelete={() => handleDelete(r)}
+                      canEdit={canEdit}
+                      canDelete={canDelete}
                     />
                   ))
                 )}

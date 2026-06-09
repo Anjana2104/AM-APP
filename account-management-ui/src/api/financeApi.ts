@@ -64,13 +64,13 @@ export async function getProjects(): Promise<{ projects: FinanceProject[]; month
 }
 
 // ── Bulk save (full replace) ──────────────────────────────────────────────────
-export async function bulkSave(projects: FinanceProject[], monthHeaders: string[]): Promise<{ ok: boolean; error?: string }> {
+export async function bulkSave(projects: FinanceProject[], monthHeaders: string[], changedBy?: string): Promise<{ ok: boolean; error?: string }> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/projects/bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projects, monthHeaders }),
+    body: JSON.stringify({ projects, monthHeaders, changedBy }),
   });
   const data = await res.json();
   if (!res.ok) return { ok: false, error: data.error || 'Server error' };
@@ -78,13 +78,13 @@ export async function bulkSave(projects: FinanceProject[], monthHeaders: string[
 }
 
 // ── Create one project ────────────────────────────────────────────────────────
-export async function createProject(payload: FinanceProject): Promise<{ ok: boolean; id?: number }> {
+export async function createProject(payload: FinanceProject, changedBy?: string): Promise<{ ok: boolean; id?: number }> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/projects`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ ...payload, changedBy }),
   });
   const data = await res.json();
   return data;
@@ -104,19 +104,24 @@ export async function updateProject(id: number, payload: Partial<FinanceProject>
 }
 
 // ── Delete one project ────────────────────────────────────────────────────────
-export async function deleteProject(id: number): Promise<boolean> {
+export async function deleteProject(id: number, changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(`${BASE}/projects/${id}`, { method: 'DELETE' });
+  const url = changedBy ? `${BASE}/projects/${id}?changedBy=${encodeURIComponent(changedBy)}` : `${BASE}/projects/${id}`;
+  const res = await fetch(url, { method: 'DELETE' });
   const data = await res.json();
   return data.ok === true;
 }
 
 // ── Clear all projects ────────────────────────────────────────────────────────
-export async function clearAll(): Promise<boolean> {
+export async function clearAll(changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(`${BASE}/projects`, { method: 'DELETE' });
+  const res = await fetch(`${BASE}/projects`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changedBy }),
+  });
   const data = await res.json();
   return data.ok === true;
 }

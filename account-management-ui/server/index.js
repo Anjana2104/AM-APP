@@ -16,6 +16,14 @@ const resourceRoutes = require('./routes/resources');
 const requestRoutes = require('./routes/requests');
 const processRoutes = require('./routes/process');
 const configRoutes = require('./routes/config');
+const authRoutes = require('./routes/auth');
+const userRoutes = require('./routes/users');
+const roleRoutes = require('./routes/roles');
+const auditRoutes = require('./routes/audit');
+const userGroupRoutes = require('./routes/user-groups');
+const notificationRoutes = require('./routes/notifications');
+const notificationTriggerRoutes = require('./routes/notification-triggers');
+const { hashPassword } = require('./routes/auth');
 
 const PORT = process.env.PORT || 3001;
 
@@ -95,6 +103,7 @@ async function runMigrations() {
   )`);
   try { db.run(`ALTER TABLE invoice_projects ADD COLUMN active INTEGER DEFAULT 1`); } catch (_) {}
   try { db.run(`ALTER TABLE invoice_projects ADD COLUMN status TEXT DEFAULT 'Active'`); } catch (_) {}
+  try { db.run(`ALTER TABLE invoice_projects ADD COLUMN comments TEXT DEFAULT ""`); } catch (_) {}
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_projects_code ON invoice_projects(code)`);
 
   db.run(`CREATE TABLE IF NOT EXISTS invoice_amounts (
@@ -107,6 +116,130 @@ async function runMigrations() {
     value TEXT DEFAULT "", description TEXT DEFAULT "",
     created_at TEXT, updated_at TEXT
   )`);
+
+  // ── User Access Control tables ────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS roles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT DEFAULT "",
+    permissions TEXT DEFAULT "{}",
+    created_at TEXT,
+    updated_at TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    password_plain TEXT DEFAULT "",
+    display_name TEXT DEFAULT "",
+    role_id INTEGER REFERENCES roles(id),
+    active INTEGER DEFAULT 1,
+    created_at TEXT,
+    updated_at TEXT
+  )`);
+  // Add password_plain column if upgrading from older schema
+  try { db.run(`ALTER TABLE users ADD COLUMN password_plain TEXT DEFAULT ""`); } catch (_) {}
+
+  // Audit log table
+  db.run(`CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    module TEXT NOT NULL,
+    record_id INTEGER NOT NULL,
+    record_name TEXT DEFAULT "",
+    field TEXT NOT NULL,
+    old_value TEXT DEFAULT "",
+    new_value TEXT DEFAULT "",
+    changed_by TEXT DEFAULT "",
+    changed_at TEXT NOT NULL
+  )`);
+
+  // ── User Groups tables ────────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS user_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT "",
+    user_type_config_id TEXT DEFAULT "",
+    created_at TEXT,
+    updated_at TEXT
+  )`);
+
+  db.run(`CREATE TABLE IF NOT EXISTS user_group_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    UNIQUE(group_id, user_id)
+  )`);
+
+  // ── Notifications table ───────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT DEFAULT "task",
+    title TEXT NOT NULL,
+    message TEXT DEFAULT "",
+    target_user_id INTEGER,
+    target_group_id INTEGER,
+    source_user TEXT DEFAULT "",
+    is_read INTEGER DEFAULT 0,
+    read_at TEXT,
+    read_by TEXT DEFAULT "[]",
+    created_at TEXT NOT NULL
+  )`);
+
+  // ── Notification Triggers table ───────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS notification_triggers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    source_table TEXT NOT NULL,
+    trigger_field TEXT NOT NULL,
+    trigger_label TEXT DEFAULT "",
+    message_template TEXT DEFAULT "",
+    notify_target_type TEXT DEFAULT "field_value",
+    notify_target_value TEXT DEFAULT "",
+    notification_type TEXT DEFAULT "task",
+    is_active INTEGER DEFAULT 1,
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT
+  )`);
+  // Add sort_order to existing notification_triggers (idempotent)
+  try { db.run(`ALTER TABLE notification_triggers ADD COLUMN sort_order INTEGER DEFAULT 0`); } catch (_) {}
+  // Backfill sort_order with id order for existing rows
+  db.run(`UPDATE notification_triggers SET sort_order = id WHERE sort_order = 0 OR sort_order IS NULL`);
+  // Seed default Admin role and admin user if they don't exist
+  const adminRole = db.get("SELECT id FROM roles WHERE name = 'Admin'");
+  let adminRoleId = adminRole ? adminRole.id : null;
+  if (!adminRoleId) {
+    const allPages = [
+      'account_summary','executive_summary','executive_revenue','executive_invoicing',
+      'resources_info','resources_utilization','resources_upskilling',
+      'clientmgmt_requests','clientmgmt_connects',
+      'information_ratecard','information_teamhierarchy','information_process','information_codeguide',
+      'configuration','user_access_control',
+    ];
+    const permissions = {};
+    allPages.forEach(p => { permissions[p] = { view: true, edit: true, delete: true }; });
+    const ts = new Date().toISOString();
+    db.run(
+      "INSERT INTO roles (name, description, permissions, created_at, updated_at) VALUES (?,?,?,?,?)",
+      ['Admin', 'Full access to all pages and features', JSON.stringify(permissions), ts, ts]
+    );
+    adminRoleId = db.lastId();
+    console.log(' Created default Admin role');
+  }
+
+  const adminUser = db.get("SELECT id FROM users WHERE username = 'admin'");
+  if (!adminUser) {
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256').update('admin123' + 'eam_salt_2024').digest('hex');
+    const ts = new Date().toISOString();
+    db.run(
+      "INSERT INTO users (username, password_hash, password_plain, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+      ['admin', hash, 'admin123', 'Administrator', adminRoleId, 1, ts, ts]
+    );
+    console.log(' Created default admin user (username: admin, password: admin123)');
+  }
+
   console.log(' Migrations applied.');
 }
 
@@ -133,6 +266,13 @@ app.use('/api/resources', resourceRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/process', processRoutes);
 app.use('/api/config', configRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/roles', roleRoutes);
+app.use('/api/audit', auditRoutes);
+app.use('/api/user-groups', userGroupRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/notification-triggers', notificationTriggerRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────────────
 app.use((req, res) => {

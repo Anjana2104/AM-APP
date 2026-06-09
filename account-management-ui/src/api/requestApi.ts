@@ -94,18 +94,23 @@ export async function updateRequest(id: number, payload: Partial<RequestPayload>
   return data.ok === true;
 }
 
-export async function deleteRequest(id: number): Promise<boolean> {
+export async function deleteRequest(id: number, changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(`${BASE}/${id}`, { method: 'DELETE' });
+  const url = changedBy ? `${BASE}/${id}?changedBy=${encodeURIComponent(changedBy)}` : `${BASE}/${id}`;
+  const res = await fetch(url, { method: 'DELETE' });
   const data = await res.json();
   return data.ok === true;
 }
 
-export async function clearAll(): Promise<boolean> {
+export async function clearAll(changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(BASE, { method: 'DELETE' });
+  const res = await fetch(BASE, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ changedBy }),
+  });
   const data = await res.json();
   return data.ok === true;
 }

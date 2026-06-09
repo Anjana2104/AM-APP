@@ -17,9 +17,9 @@ export interface InvoiceProject {
   status?: 'Active' | 'Inactive';
   /** @deprecated use status instead; kept for backward compat with existing DB rows */
   active?: number | boolean;
+  comments?: string;
   /** keyed by month label e.g. "Oct'25" → number */
   revenue: Record<string, number>;
-  monthHeaders?: string[];
 }
 
 // ── GET projects ──────────────────────────────────────────────────────────────
@@ -39,12 +39,12 @@ export async function getInvoiceProjects(): Promise<{ projects: InvoiceProject[]
 }
 
 // ── Bulk save (full replace) ──────────────────────────────────────────────────
-export async function bulkSaveInvoices(projects: InvoiceProject[], monthHeaders: string[]): Promise<{ ok: boolean; error?: string }> {
+export async function bulkSaveInvoices(projects: InvoiceProject[], monthHeaders: string[], changedBy?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const res = await fetch(`${BASE}/projects/bulk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ projects, monthHeaders }),
+      body: JSON.stringify({ projects, monthHeaders, changedBy }),
     });
     const data = await res.json();
     if (!res.ok) return { ok: false, error: data.error || 'Server error' };
@@ -55,12 +55,12 @@ export async function bulkSaveInvoices(projects: InvoiceProject[], monthHeaders:
 }
 
 // ── Create one project ────────────────────────────────────────────────────────
-export async function createInvoiceProject(payload: InvoiceProject): Promise<{ ok: boolean; id?: number }> {
+export async function createInvoiceProject(payload: InvoiceProject, changedBy?: string): Promise<{ ok: boolean; id?: number }> {
   try {
     const res = await fetch(`${BASE}/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, changedBy }),
     });
     const data = await res.json();
     return data;
@@ -85,9 +85,10 @@ export async function updateInvoiceProject(id: number, payload: Partial<InvoiceP
 }
 
 // ── Delete one project ────────────────────────────────────────────────────────
-export async function deleteInvoiceProject(id: number): Promise<boolean> {
+export async function deleteInvoiceProject(id: number, changedBy?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/projects/${id}`, { method: 'DELETE' });
+    const url = changedBy ? `${BASE}/projects/${id}?changedBy=${encodeURIComponent(changedBy)}` : `${BASE}/projects/${id}`;
+    const res = await fetch(url, { method: 'DELETE' });
     const data = await res.json();
     return data.ok === true;
   } catch {
@@ -96,9 +97,13 @@ export async function deleteInvoiceProject(id: number): Promise<boolean> {
 }
 
 // ── Clear all projects ────────────────────────────────────────────────────────
-export async function clearAllInvoices(): Promise<boolean> {
+export async function clearAllInvoices(changedBy?: string): Promise<boolean> {
   try {
-    const res = await fetch(`${BASE}/projects`, { method: 'DELETE' });
+    const res = await fetch(`${BASE}/projects`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changedBy }),
+    });
     const data = await res.json();
     return data.ok === true;
   } catch {

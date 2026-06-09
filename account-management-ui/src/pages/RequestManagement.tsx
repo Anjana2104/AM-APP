@@ -53,6 +53,7 @@ import * as XLSXStyle from 'xlsx-js-style';
 import dayjs from 'dayjs';
 import { RequestInsightsChart } from './RequestInsightsChart';
 import { useConfig } from '../context/ConfigContext';
+import { useAuth } from '../context/AuthContext';
 import * as requestApi from '../api/requestApi';
 import '../style.css';
 
@@ -70,16 +71,6 @@ interface ClientRequest {
   requestType?: string;
   updatedOn?: string;
 }
-
-// Constants
-const REQUEST_TYPES = [
-  { label: 'Resource Demand', value: 'resource_demand', color: 'blue' },
-  { label: 'Onboarding', value: 'onboarding', color: 'green' },
-  { label: 'Offboarding', value: 'offboarding', color: 'red' },
-];
-const REQUEST_TYPE_OPTIONS = REQUEST_TYPES.map(t => ({ label: t.label, value: t.value }));
-const REQUEST_TYPE_LABEL: Record<string, string> = Object.fromEntries(REQUEST_TYPES.map(t => [t.value, t.label]));
-const REQUEST_TYPE_COLOR: Record<string, string> = Object.fromEntries(REQUEST_TYPES.map(t => [t.value, t.color]));
 
 // Utility Functions
 const formatDateToDDMMYYYY = (dateString: string | undefined): string => {
@@ -103,11 +94,19 @@ const getOverallStatusBackgroundColor = (status: string): string => OVERALL_STAT
 
 // Main Component
 export default function RequestManagement() {
-  const { getConfig } = useConfig();
+  const { getConfigByLink } = useConfig();
+  const { hasPermission, currentUser } = useAuth();
+  const canEdit = hasPermission('clientmgmt_requests', 'edit');
+  const canDelete = hasPermission('clientmgmt_requests', 'delete');
 
-  // Derive processing/overall status options dynamically from config context
-  const processingStatusItems = getConfig('request_processing_status')?.items ?? [];
-  const overallStatusItems = getConfig('request_overall_status')?.items ?? [];
+  // Derive processing/overall status + request type options dynamically from config context
+  const typeItems = getConfigByLink('request_type_field')?.items ?? [];
+  const processingStatusItems = getConfigByLink('request_processing_status_field')?.items ?? [];
+  const overallStatusItems = getConfigByLink('request_overall_status_field')?.items ?? [];
+
+  const REQUEST_TYPE_OPTIONS = typeItems.map(i => ({ label: i.label, value: i.value }));
+  const REQUEST_TYPE_LABEL: Record<string, string> = Object.fromEntries(typeItems.map(i => [i.value, i.label]));
+  const REQUEST_TYPE_COLOR: Record<string, string> = Object.fromEntries(typeItems.map(i => [i.value, i.color ?? 'default']));
 
   const PROCESSING_STATUS_OPTIONS = processingStatusItems.map(i => ({ label: i.label, value: i.value }));
   const OVERALL_STATUS_OPTIONS = overallStatusItems.map(i => ({ label: i.label, value: i.value }));
@@ -188,7 +187,7 @@ export default function RequestManagement() {
 
           let requestType = '';
           const typeValue = (row['Request Type'] || '').toString().trim();
-          const matchedType = REQUEST_TYPES.find(t => t.label.toLowerCase() === typeValue.toLowerCase() || t.value === typeValue.toLowerCase().replace(/\s+/g, '_'));
+          const matchedType = typeItems.find(t => t.label.toLowerCase() === typeValue.toLowerCase() || t.value === typeValue.toLowerCase().replace(/\s+/g, '_'));
           if (matchedType) requestType = matchedType.value;
           else if (typeValue) requestType = typeValue;
 
@@ -284,7 +283,7 @@ export default function RequestManagement() {
       okText: 'Delete',
       okType: 'danger',
       onOk: () => {
-        if (request.id) requestApi.deleteRequest(request.id);
+        if (request.id) requestApi.deleteRequest(request.id, currentUser?.username);
         setRequests(prev => prev.filter(r => r.sno !== request.sno));
       },
     });
@@ -333,7 +332,7 @@ export default function RequestManagement() {
       okType: 'danger',
       onOk: () => {
         const toDelete = requests.filter(r => selectedRowKeys.includes(r.sno) && r.id);
-        toDelete.forEach(r => requestApi.deleteRequest(r.id!));
+        toDelete.forEach(r => requestApi.deleteRequest(r.id!, currentUser?.username));
         setRequests(requests.filter(r => !selectedRowKeys.includes(r.sno)));
         setSelectedRowKeys([]);
       },
@@ -341,7 +340,7 @@ export default function RequestManagement() {
   };
 
   const handleClearAll = async () => {
-    await requestApi.clearAll();
+    await requestApi.clearAll(currentUser?.username);
     setRequests([]);
     setFromServer(false);
     message.success('All request data cleared');
@@ -387,10 +386,10 @@ export default function RequestManagement() {
   const columns = [
     {
       title: 'S.No',
-      dataIndex: 'sno',
       key: 'sno',
       width: 80,
       fixed: 'left' as const,
+      render: (_: unknown, __: ClientRequest, index: number) => index + 1,
       hidden: !visibleColumns.sno,
     },
     {
@@ -399,6 +398,7 @@ export default function RequestManagement() {
       key: 'beelineId',
       width: 130,
       fixed: 'left' as const,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.beelineId || '').localeCompare(b.beelineId || ''),
       hidden: !visibleColumns.beelineId,
     },
     {
@@ -406,6 +406,7 @@ export default function RequestManagement() {
       dataIndex: 'requestType',
       key: 'requestType',
       width: 130,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.requestType || '').localeCompare(b.requestType || ''),
       hidden: !visibleColumns.requestType,
       render: (type: string) => type
         ? <Tag color={REQUEST_TYPE_COLOR[type] || 'default'} style={{ fontSize: '10px' }}>{REQUEST_TYPE_LABEL[type] || type}</Tag>
@@ -431,6 +432,7 @@ export default function RequestManagement() {
       dataIndex: 'raisedBy',
       key: 'raisedBy',
       width: 120,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.raisedBy || '').localeCompare(b.raisedBy || ''),
       hidden: !visibleColumns.raisedBy,
     },
     {
@@ -438,6 +440,7 @@ export default function RequestManagement() {
       dataIndex: 'processingStatus',
       key: 'processingStatus',
       width: 150,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.processingStatus || '').localeCompare(b.processingStatus || ''),
       hidden: !visibleColumns.processingStatus,
       render: (status: string) => PROCESSING_STATUS_DISPLAY_MAP[status] || status,
     },
@@ -446,6 +449,7 @@ export default function RequestManagement() {
       dataIndex: 'overallStatus',
       key: 'overallStatus',
       width: 130,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.overallStatus || '').localeCompare(b.overallStatus || ''),
       hidden: !visibleColumns.overallStatus,
       render: (status: string) => (
         <span style={{
@@ -466,6 +470,7 @@ export default function RequestManagement() {
       dataIndex: 'accountAnchor',
       key: 'accountAnchor',
       width: 120,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.accountAnchor || '').localeCompare(b.accountAnchor || ''),
       hidden: !visibleColumns.accountAnchor,
     },
     {
@@ -473,6 +478,7 @@ export default function RequestManagement() {
       dataIndex: 'dateRaised',
       key: 'dateRaised',
       width: 120,
+      sorter: (a: ClientRequest, b: ClientRequest) => (a.dateRaised || '').localeCompare(b.dateRaised || ''),
       hidden: !visibleColumns.dateRaised,
     },
     {
@@ -482,6 +488,7 @@ export default function RequestManagement() {
       fixed: 'right' as const,
       render: (_: any, record: ClientRequest) => (
         <Space size="small">
+          {canEdit && (
           <Button
             type="text"
             size="small"
@@ -489,6 +496,8 @@ export default function RequestManagement() {
             onClick={() => handleEdit(record)}
             style={{ fontSize: '12px' }}
           />
+          )}
+          {canDelete && (
           <Button
             type="text"
             size="small"
@@ -497,6 +506,7 @@ export default function RequestManagement() {
             onClick={() => handleDelete(record)}
             style={{ fontSize: '12px' }}
           />
+          )}
         </Space>
       ),
     },
@@ -598,9 +608,9 @@ export default function RequestManagement() {
                         tabBarStyle={{ marginBottom: 12 }}
                         items={[
                           { key: 'all', label: <span>All <span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.length})</span></span> },
-                          ...REQUEST_TYPES.map(t => ({
+                          ...typeItems.map(t => ({
                             key: t.value,
-                            label: <span><Tag color={t.color} style={{ fontSize: '10px', marginRight: 4 }}>{t.label}</Tag><span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.filter(r => r.requestType === t.value).length})</span></span>,
+                            label: <span><Tag color={t.color ?? 'default'} style={{ fontSize: '10px', marginRight: 4 }}>{t.label}</Tag><span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.filter(r => r.requestType === t.value).length})</span></span>,
                           })),
                         ]}
                       />
@@ -652,6 +662,7 @@ export default function RequestManagement() {
                               <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: '6px' }} />
                             </Tooltip>
                           )}
+                          {canEdit && (
                           <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Upload
                               accept=".xlsx,.xls"
@@ -661,13 +672,14 @@ export default function RequestManagement() {
                               <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
                             </Upload>
                           </Tooltip>
+                          )}
                           <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
                           </Tooltip>
                           <Tooltip title="Export Formatted Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportExcel} disabled={!typeFilteredRequests.length} style={{ borderRadius: '6px', color: typeFilteredRequests.length ? '#52c41a' : undefined }} />
                           </Tooltip>
-                          {requests.length > 0 && (
+                          {requests.length > 0 && canDelete && (
                             <Popconfirm
                               title="Delete all requests?"
                               description="This will permanently delete all request data from the database."
@@ -681,7 +693,7 @@ export default function RequestManagement() {
                               </Tooltip>
                             </Popconfirm>
                           )}
-                          <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>
+                          {canEdit && <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>}
                         </Space>
                       </Space>
 
@@ -888,20 +900,20 @@ export default function RequestManagement() {
                                      <Dropdown
                                         menu={{
                                           items: [
-                                            {
+                                            canEdit ? {
                                               key: "edit",
                                               label: <span style={{ fontSize: '11px' }}>Edit</span>,
                                               icon: <EditOutlined style={{ fontSize: '11px' }} />,
                                               onClick: () => handleEdit(request),
-                                            },
-                                            {
+                                            } : null,
+                                            canDelete ? {
                                               key: "delete",
                                               label: <span style={{ fontSize: '11px' }}>Delete</span>,
                                               icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
                                               danger: true,
                                               onClick: () => handleDelete(request),
-                                            },
-                                          ],
+                                            } : null,
+                                          ].filter(Boolean) as any[],
                                         }}
                                        trigger={["click"]}
                                      >
@@ -958,15 +970,17 @@ export default function RequestManagement() {
             <>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
                 <Space wrap size={8}>
+                  {canEdit && (
                   <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
                     <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
                       <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
                     </Upload>
                   </Tooltip>
+                  )}
                   <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
                     <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
                   </Tooltip>
-                  <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>
+                  {canEdit && <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>}
                 </Space>
               </div>
               <div style={{ background: '#f5f5f5', borderRadius: '8px', padding: '60px 24px', textAlign: 'center' }}>
@@ -1017,8 +1031,8 @@ export default function RequestManagement() {
                 </div>
               )}
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <Button size="small" icon={<EditOutlined />} onClick={() => { handleEdit(viewDetailRecord); setViewDetailRecord(null); }}>Edit</Button>
-                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { handleDelete(viewDetailRecord); setViewDetailRecord(null); }}>Delete</Button>
+                {canEdit && <Button size="small" icon={<EditOutlined />} onClick={() => { handleEdit(viewDetailRecord); setViewDetailRecord(null); }}>Edit</Button>}
+                {canDelete && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { handleDelete(viewDetailRecord); setViewDetailRecord(null); }}>Delete</Button>}
               </div>
             </div>
           )}

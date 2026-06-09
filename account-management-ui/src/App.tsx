@@ -1,5 +1,5 @@
-import { Tooltip } from 'antd';
-import { useState, useEffect } from 'react';
+import { Tooltip, Popconfirm } from 'antd';
+import { useState, useEffect, useRef } from 'react';
 import { FinanceManagement } from './pages/FinanceManagement';
 import { InvoiceManagement } from './pages/InvoiceManagement';
 import { FinanceSummary } from './pages/FinanceSummary';
@@ -12,14 +12,24 @@ import { TeamHierarchy } from './pages/TeamHierarchy';
 import { InternalProcess } from './pages/InternalProcess';
 import { Configuration } from './pages/Configuration';
 import { CodeGuide } from './pages/CodeGuide';
+import { UserAccessControl } from './pages/UserAccessControl';
+import { LoginPage } from './pages/LoginPage';
+import { useAuth } from './context/AuthContext';
+import { NotificationProvider, useNotifications } from './context/NotificationContext';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DownOutlined, RightOutlined,
   EyeOutlined, BankOutlined, HomeOutlined, InfoCircleOutlined,
   CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined, SettingOutlined,
-  SafetyCertificateOutlined,
+  SafetyCertificateOutlined, BellOutlined, CheckOutlined,
+  CloseOutlined, AlertOutlined, InfoCircleFilled,
 } from '@ant-design/icons';
+import { Badge, Drawer, Button, List, Space, Typography, Tag, Modal, Form, Input, Select, message } from 'antd';
+import * as notifApi from './api/notificationApi';
+import type { UserGroup } from './api/notificationApi';
+import type { UserRecord } from './api/authApi';
+import * as authApi from './api/authApi';
 import type { ResourceRow } from './pages/ResourceInformation';
 
 type EAMPage =
@@ -36,7 +46,8 @@ type EAMPage =
   | 'information_teamhierarchy'
   | 'information_process'
   | 'information_codeguide'
-  | 'configuration';
+  | 'configuration'
+  | 'user_access_control';
 
 type EAMSection = 'account' | 'executive' | 'resources' | 'clientmgmt' | 'information' | 'configuration';
 
@@ -56,6 +67,7 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   information_process: 'information',
   information_codeguide: 'information',
   configuration: 'configuration',
+  user_access_control: 'configuration',
 };
 
 const ALL_PAGES = Object.keys(PAGE_SECTION_MAP) as EAMPage[];
@@ -152,26 +164,407 @@ function SubNavItem({ label, active, onClick }: { label: string; active: boolean
   );
 }
 
+/* ─── Notification Panel ────────────────────────────────────────── */
+const { Text: AntText } = Typography;
+
+function getTypeColor(type: string) {
+  switch (type) {
+    case 'alert': return '#ff4d4f';
+    case 'info': return '#1890ff';
+    default: return '#fa8c16'; // task
+  }
+}
+
+function relativeTime(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+function CreateNotificationModal({
+  open,
+  onClose,
+  onCreated,
+  currentUserName,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+  currentUserName: string;
+}) {
+  const [form] = Form.useForm();
+  const [saving, setSaving] = useState(false);
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [groups, setGroups] = useState<UserGroup[]>([]);
+  const [targetType, setTargetType] = useState<'user' | 'group' | 'broadcast'>('broadcast');
+
+  useEffect(() => {
+    if (open) {
+      authApi.getUsers().then(setUsers);
+      notifApi.getUserGroups().then(setGroups);
+    }
+  }, [open]);
+
+  const handleSubmit = async (values: any) => {
+    setSaving(true);
+    const payload: any = {
+      type: values.type || 'task',
+      title: values.title,
+      message: values.message || '',
+      source_user: currentUserName,
+      target_user_id: null,
+      target_group_id: null,
+    };
+    if (targetType === 'user' && values.target_user_id) payload.target_user_id = values.target_user_id;
+    if (targetType === 'group' && values.target_group_id) payload.target_group_id = values.target_group_id;
+    const result = await notifApi.createNotification(payload);
+    setSaving(false);
+    if (result.ok) {
+      message.success('Notification created');
+      form.resetFields();
+      onCreated();
+      onClose();
+    } else {
+      message.error(result.error || 'Failed to create');
+    }
+  };
+
+  return (
+    <Modal
+      title="Create Notification"
+      open={open}
+      onCancel={onClose}
+      footer={null}
+      width={480}
+      destroyOnClose
+    >
+      <Form form={form} layout="vertical" onFinish={handleSubmit} style={{ marginTop: 12 }}>
+        <Form.Item name="type" label="Type" initialValue="task">
+          <Select>
+            <Select.Option value="task">Task</Select.Option>
+            <Select.Option value="info">Info</Select.Option>
+            <Select.Option value="alert">Alert</Select.Option>
+          </Select>
+        </Form.Item>
+        <Form.Item name="title" label="Title" rules={[{ required: true, message: 'Required' }]}>
+          <Input placeholder="Notification title" />
+        </Form.Item>
+        <Form.Item name="message" label="Message">
+          <Input.TextArea rows={3} placeholder="Optional message body" />
+        </Form.Item>
+        <Form.Item label="Target">
+          <Select value={targetType} onChange={v => setTargetType(v as any)}>
+            <Select.Option value="broadcast">All Users (Broadcast)</Select.Option>
+            <Select.Option value="user">Specific User</Select.Option>
+            <Select.Option value="group">User Group</Select.Option>
+          </Select>
+        </Form.Item>
+        {targetType === 'user' && (
+          <Form.Item name="target_user_id" label="User" rules={[{ required: true, message: 'Select a user' }]}>
+            <Select showSearch placeholder="Select user" optionFilterProp="children">
+              {users.map(u => (
+                <Select.Option key={u.id} value={u.id}>{u.displayName || u.username}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        )}
+        {targetType === 'group' && (
+          <Form.Item name="target_group_id" label="Group" rules={[{ required: true, message: 'Select a group' }]}>
+            <Select showSearch placeholder="Select group" optionFilterProp="children">
+              {groups.map(g => (
+                <Select.Option key={g.id} value={g.id}>{g.name}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="primary" htmlType="submit" loading={saving}>Send</Button>
+        </div>
+      </Form>
+    </Modal>
+  );
+}
+
+function NotificationPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const {
+    unreadNotifications,
+    unreadHasMore,
+    unreadLoading,
+    historyNotifications,
+    historyHasMore,
+    historyLoading,
+    loading,
+    refreshUnread,
+    loadMoreUnread,
+    loadMoreHistory,
+    resetHistory,
+    markRead,
+    markAllRead,
+    createNotification,
+    unreadCount,
+  } = useNotifications();
+  const { currentUser, hasPermission } = useAuth();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const canCreate = hasPermission('user_access_control', 'edit');
+
+  useEffect(() => {
+    if (open) { refreshUnread(); }
+    if (!open) { resetHistory(); setHistoryOpen(false); }
+  }, [open, refreshUnread, resetHistory]);
+
+  // Load first page of history when section opens
+  useEffect(() => {
+    if (historyOpen && historyNotifications.length === 0) {
+      loadMoreHistory();
+    }
+    if (!historyOpen) { resetHistory(); }
+  }, [historyOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const renderCard = (n: import('./api/notificationApi').Notification, dimmed = false) => (
+    <div
+      key={n.id}
+      style={{
+        borderLeft: `3px solid ${getTypeColor(n.type)}`,
+        background: dimmed ? '#fafafa' : '#fff',
+        borderRadius: '0 8px 8px 0',
+        padding: '10px 12px',
+        marginBottom: 8,
+        opacity: dimmed ? 0.65 : 1,
+        boxShadow: dimmed ? 'none' : '0 1px 4px rgba(0,0,0,0.06)',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <Tag color={getTypeColor(n.type)} style={{ fontSize: '10px', margin: 0, padding: '0 5px', lineHeight: '16px' }}>{n.type}</Tag>
+            <AntText strong style={{ fontSize: '13px' }}>{n.title}</AntText>
+          </div>
+          {n.message && <div style={{ fontSize: '12px', color: '#595959', marginBottom: 4 }}>{n.message}</div>}
+          <div style={{ fontSize: '11px', color: '#aaa' }}>
+            {n.source_user && <span>from: {n.source_user} · </span>}
+            {relativeTime(n.created_at)}
+          </div>
+        </div>
+        {!dimmed && (
+          <Tooltip title="Mark as read">
+            <Button
+              type="text"
+              size="small"
+              icon={<CheckOutlined style={{ fontSize: '11px' }} />}
+              onClick={() => markRead(n.id)}
+              style={{ marginLeft: 8, flexShrink: 0, color: '#52c41a' }}
+            />
+          </Tooltip>
+        )}
+      </div>
+    </div>
+  );
+
+  const drawerWidth = expanded ? '70vw' : 400;
+
+  return (
+    <>
+      <Drawer
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Space>
+              <BellOutlined />
+              <span style={{ fontSize: '14px', fontWeight: 600 }}>Notifications</span>
+              {unreadCount > 0 && <Badge count={unreadCount} style={{ backgroundColor: '#ff4d4f' }} />}
+            </Space>
+            <Space>
+              <Tooltip title={expanded ? 'Collapse' : 'Expand'}>
+                <Button
+                  size="small"
+                  type="text"
+                  icon={expanded
+                    ? <MenuFoldOutlined style={{ fontSize: '13px', color: 'rgba(255,255,255,0.8)' }} />
+                    : <MenuUnfoldOutlined style={{ fontSize: '13px', color: 'rgba(255,255,255,0.8)' }} />}
+                  onClick={() => setExpanded(e => !e)}
+                  style={{ border: 'none', background: 'transparent' }}
+                />
+              </Tooltip>
+              {unreadCount > 0 && (
+                <Button
+                  size="small"
+                  onClick={markAllRead}
+                  style={{ fontSize: '12px', color: '#fff', borderColor: 'rgba(255,255,255,0.5)', background: 'transparent' }}
+                >
+                  Mark all read
+                </Button>
+              )}
+              {canCreate && (
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => setCreateOpen(true)}
+                  style={{ fontSize: '12px', background: '#fff', color: '#1677ff', borderColor: '#fff', fontWeight: 600 }}
+                >
+                  + Create
+                </Button>
+              )}
+            </Space>
+          </div>
+        }
+        placement="right"
+        width={drawerWidth}
+        open={open}
+        onClose={onClose}
+        bodyStyle={{ padding: '12px 16px', background: '#f5f5f5' }}
+        headerStyle={{ background: '#1677ff', borderBottom: '1px solid #1677ff' }}
+        styles={{ header: { color: '#fff' } }}
+      >
+        {loading ? (
+          <div style={{ textAlign: 'center', color: '#aaa', padding: 40 }}>Loading…</div>
+        ) : (
+          <>
+            {/* Unread — max 20, then show count hint */}
+            {unreadNotifications.length === 0 ? (
+              <div style={{ textAlign: 'center', color: '#bbb', padding: '32px 0', fontSize: '13px' }}>
+                <CheckOutlined style={{ fontSize: 28, display: 'block', marginBottom: 8 }} />
+                All caught up!
+              </div>
+            ) : (
+              <>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>
+                  Unread ({unreadCount})
+                </div>
+                {unreadNotifications.map(n => renderCard(n, false))}
+                {unreadHasMore && (
+                  <Button
+                    type="link"
+                    size="small"
+                    loading={unreadLoading}
+                    style={{ fontSize: '12px', paddingLeft: 0 }}
+                    onClick={loadMoreUnread}
+                  >
+                    Load more…
+                  </Button>
+                )}
+                {!unreadHasMore && unreadCount > unreadNotifications.length && (
+                  <div style={{ fontSize: '11px', color: '#aaa', textAlign: 'center', marginTop: 4 }}>
+                    Showing {unreadNotifications.length} of {unreadCount} unread
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Read history — collapsible, paginated */}
+            <div style={{ marginTop: 16 }}>
+              <div
+                onClick={() => setHistoryOpen(h => !h)}
+                style={{
+                  cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                  fontSize: '11px', fontWeight: 700, color: '#aaa',
+                  textTransform: 'uppercase', letterSpacing: '0.5px', userSelect: 'none', marginBottom: 8,
+                }}
+              >
+                {historyOpen ? <DownOutlined style={{ fontSize: 9 }} /> : <RightOutlined style={{ fontSize: 9 }} />}
+                History
+              </div>
+              {historyOpen && (
+                <div>
+                  {historyLoading && historyNotifications.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#ccc', padding: 16 }}>Loading…</div>
+                  ) : historyNotifications.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#ccc', fontSize: '12px', padding: 12 }}>No history yet</div>
+                  ) : (
+                    <>
+                      {historyNotifications.map(n => renderCard(n, true))}
+                      {historyHasMore && (
+                        <Button
+                          type="link"
+                          size="small"
+                          loading={historyLoading}
+                          style={{ fontSize: '12px', paddingLeft: 0 }}
+                          onClick={loadMoreHistory}
+                        >
+                          Load more…
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </>
+        )}
+      </Drawer>
+
+      <CreateNotificationModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={refreshUnread}
+        currentUserName={currentUser?.displayName || currentUser?.username || ''}
+      />
+    </>
+  );
+}
+
+function NotificationBell({ collapsed }: { collapsed: boolean }) {
+  const { unreadCount } = useNotifications();
+  const [open, setOpen] = useState(false);
+
+  const bellBtn = (
+    <button
+      onClick={() => setOpen(true)}
+      style={{
+        background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.55)',
+        cursor: 'pointer', padding: '6px', borderRadius: 6,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative',
+      }}
+    >
+      <Badge count={unreadCount} size="small" offset={[2, -2]}>
+        <BellOutlined style={{ fontSize: '14px', color: 'rgba(255,255,255,0.65)' }} />
+      </Badge>
+    </button>
+  );
+
+  return (
+    <>
+      {collapsed ? (
+        <Tooltip title="Notifications" placement="right">{bellBtn}</Tooltip>
+      ) : bellBtn}
+      <NotificationPanel open={open} onClose={() => setOpen(false)} />
+    </>
+  );
+}
+
 export default function App() {
-  const initial = parseHash();
-  const [activeModule, setActiveModule] = useState<'home' | 'eam'>(initial.module);
-  const [activePage, setActivePage] = useState<EAMPage>(initial.page);
-  const [expandedSections, setExpandedSections] = useState<Set<EAMSection>>(new Set<EAMSection>());
+  const { isAuthenticated, currentUser, logout, hasPermission } = useAuth();
+
+  // Parse the URL hash once on mount to restore the page the user was on
+  const initialHash = parseHash();
+  const [activeModule, setActiveModule] = useState<'home' | 'eam'>(initialHash.module);
+  const [activePage, setActivePage] = useState<EAMPage>(initialHash.page);
+  const [expandedSections, setExpandedSections] = useState<Set<EAMSection>>(
+    initialHash.module === 'eam'
+      ? new Set<EAMSection>([PAGE_SECTION_MAP[initialHash.page]])
+      : new Set<EAMSection>()
+  );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [resources, setResources] = useState<ResourceRow[]>([]);
   const [resourceInfoRoleFilter, setResourceInfoRoleFilter] = useState<string | undefined>(undefined);
 
-  // Sync URL → state when user navigates with browser back/forward or opens bookmarked hash
+  // Track previous auth state to detect genuine login (false → true) vs page refresh
+  const prevAuthRef = useRef<boolean | undefined>(undefined);
+
+  // Only redirect to Home on a real login (prev=false → now=true), not on page refresh
   useEffect(() => {
-    const onHashChange = () => {
-      const { module, page } = parseHash();
-      setActiveModule(module);
-      setActivePage(page);
-      if (module === 'eam') setExpandedSections(prev => new Set([...prev, PAGE_SECTION_MAP[page]]));
-    };
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+    if (prevAuthRef.current === false && isAuthenticated) {
+      // Genuine login — go to home
+      setActiveModule('home');
+      window.location.hash = '#/home';
+    }
+    prevAuthRef.current = isAuthenticated;
+  }, [isAuthenticated]);
 
   // Sync state → URL
   useEffect(() => {
@@ -195,11 +588,25 @@ export default function App() {
     });
   };
 
+  if (!isAuthenticated) return <LoginPage />;
+
   if (activeModule === 'eam') {
     const collapsed = sidebarCollapsed;
     const isExp = (s: EAMSection) => expandedSections.has(s);
 
     const renderContent = () => {
+      // Guard: user must have view permission for the active page
+      if (!hasPermission(activePage, 'view')) {
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, padding: 60 }}>
+            <SafetyCertificateOutlined style={{ fontSize: 48, color: '#d9d9d9' }} />
+            <div style={{ fontSize: '18px', fontWeight: 600, color: '#595959' }}>Access Denied</div>
+            <div style={{ fontSize: '13px', color: '#8c8c8c', textAlign: 'center' }}>
+              You do not have permission to view this page.<br />Contact your administrator to request access.
+            </div>
+          </div>
+        );
+      }
       switch (activePage) {
         case 'account_summary':      return <AccountSummary onNavigate={page => navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage])} />;
         case 'executive_summary':    return <FinanceSummary onNavigate={page => navigateTo(page, 'executive')} />;
@@ -215,11 +622,13 @@ export default function App() {
         case 'information_codeguide':        return <CodeGuide />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
         case 'configuration':             return <Configuration />;
+        case 'user_access_control':       return <UserAccessControl />;
         default: return null;
       }
     };
 
     return (
+      <NotificationProvider>
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
 
         {/* ─── Left Sidebar ───────────────────────────────────── */}
@@ -238,11 +647,14 @@ export default function App() {
           {/* ── Top header row: Home icon + Account + collapse ── */}
           <div style={{ padding: collapsed ? '12px 6px' : '12px 12px', display: 'flex', alignItems: 'center', gap: collapsed ? 0 : 8, justifyContent: collapsed ? 'center' : 'space-between', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
             {collapsed ? (
-              <Tooltip title="Home" placement="right">
-                <button onClick={goHome} style={{ background: activeModule === 'home' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <HomeOutlined style={{ fontSize: '17px' }} />
-                </button>
-              </Tooltip>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <Tooltip title="Home" placement="right">
+                  <button onClick={goHome} style={{ background: activeModule === 'home' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <HomeOutlined style={{ fontSize: '17px' }} />
+                  </button>
+                </Tooltip>
+                <NotificationBell collapsed={true} />
+              </div>
             ) : (
               <>
                 {/* Home icon — clickable */}
@@ -259,6 +671,9 @@ export default function App() {
                   <DownOutlined style={{ fontSize: '8px', color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
                 </div>
 
+                {/* Bell icon */}
+                <NotificationBell collapsed={false} />
+
                 {/* Collapse toggle */}
                 <button onClick={() => setSidebarCollapsed(true)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.28)', cursor: 'pointer', padding: '6px', borderRadius: 6, display: 'flex', alignItems: 'center', flexShrink: 0 }}>
                   <MenuFoldOutlined style={{ fontSize: '12px' }} />
@@ -274,14 +689,15 @@ export default function App() {
               /* Collapsed: icons only */
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                 {[
-                  { icon: <EyeOutlined />, label: 'Account Summary', action: () => navigateTo('account_summary', 'account'), active: activePage === 'account_summary' },
-                  { icon: <DollarOutlined />, label: 'Finance Management', action: () => navigateTo('executive_summary', 'executive'), active: activePage.startsWith('executive') },
-                  { icon: <ThunderboltOutlined />, label: 'Resources', action: () => navigateTo('resources_info', 'resources'), active: activePage.startsWith('resources') },
-                  { icon: <UserOutlined />, label: 'Request Management', action: () => navigateTo('clientmgmt_requests', 'clientmgmt'), active: activePage.startsWith('clientmgmt') },
-                  { icon: <NodeIndexOutlined />, label: 'Internal Process', action: () => navigateTo('clientmgmt_connects', 'clientmgmt'), active: activePage === 'clientmgmt_connects' },
-                  { icon: <SettingOutlined />, label: 'Configuration', action: () => navigateTo('configuration', 'configuration'), active: activePage === 'configuration' },
-                  { icon: <InfoCircleOutlined />, label: 'Knowledge Base', action: () => navigateTo('information_ratecard', 'information'), active: activePage.startsWith('information') },
-                ].map(item => (
+                  { icon: <EyeOutlined />, label: 'Account Summary', action: () => navigateTo('account_summary', 'account'), active: activePage === 'account_summary', pageId: 'account_summary' },
+                  { icon: <DollarOutlined />, label: 'Finance Management', action: () => navigateTo('executive_summary', 'executive'), active: activePage.startsWith('executive'), pageId: 'executive_summary' },
+                  { icon: <ThunderboltOutlined />, label: 'Resources', action: () => navigateTo('resources_info', 'resources'), active: activePage.startsWith('resources'), pageId: 'resources_info' },
+                  { icon: <UserOutlined />, label: 'Request Management', action: () => navigateTo('clientmgmt_requests', 'clientmgmt'), active: activePage.startsWith('clientmgmt'), pageId: 'clientmgmt_requests' },
+                  { icon: <NodeIndexOutlined />, label: 'Internal Process', action: () => navigateTo('clientmgmt_connects', 'clientmgmt'), active: activePage === 'clientmgmt_connects', pageId: 'clientmgmt_connects' },
+                  { icon: <SettingOutlined />, label: 'Configuration', action: () => navigateTo('configuration', 'configuration'), active: activePage === 'configuration', pageId: 'configuration' },
+                  { icon: <SafetyCertificateOutlined />, label: 'User Access Control', action: () => navigateTo('user_access_control', 'configuration'), active: activePage === 'user_access_control', pageId: 'user_access_control' },
+                  { icon: <InfoCircleOutlined />, label: 'Knowledge Base', action: () => navigateTo('information_ratecard', 'information'), active: activePage.startsWith('information'), pageId: 'information_ratecard' },
+                ].filter(item => hasPermission(item.pageId, 'view')).map(item => (
                   <Tooltip key={item.label} title={item.label} placement="right">
                     <button onClick={item.action} style={{ background: item.active ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: item.active ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
                       {item.icon}
@@ -299,41 +715,48 @@ export default function App() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
 
                 {/* ── ACCOUNT SUMMARY ── */}
+                {hasPermission('account_summary', 'view') && (
                 <SideNavItem
                   icon={<EyeOutlined />} label="Account Summary"
                   active={activePage === 'account_summary'}
                   onClick={() => navigateTo('account_summary', 'account')}
                   showArrow
                 />
+                )}
 
                 {/* ── ACCOUNT OPERATIONS section ── */}
                 <SectionLabel label="Account Operations" />
 
                 {/* Finance */}
+                {(hasPermission('executive_summary', 'view') || hasPermission('executive_revenue', 'view') || hasPermission('executive_invoicing', 'view')) && (
                 <SideNavGroup
                   icon={<DollarOutlined />} label="Finance"
                   active={activePage.startsWith('executive')}
                   expanded={isExp('executive')}
                   onToggle={() => toggleSection('executive')}
                 >
-                  <SubNavItem label="Summary" active={activePage === 'executive_summary'} onClick={() => { setActivePage('executive_summary'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Revenue Details" active={activePage === 'executive_revenue'} onClick={() => { setActivePage('executive_revenue'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Invoicing Details" active={activePage === 'executive_invoicing'} onClick={() => { setActivePage('executive_invoicing'); setActiveModule('eam'); }} />
+                  {hasPermission('executive_summary', 'view') && <SubNavItem label="Summary" active={activePage === 'executive_summary'} onClick={() => { setActivePage('executive_summary'); setActiveModule('eam'); }} />}
+                  {hasPermission('executive_revenue', 'view') && <SubNavItem label="SOW Details" active={activePage === 'executive_revenue'} onClick={() => { setActivePage('executive_revenue'); setActiveModule('eam'); }} />}
+                  {hasPermission('executive_invoicing', 'view') && <SubNavItem label="Invoicing Details" active={activePage === 'executive_invoicing'} onClick={() => { setActivePage('executive_invoicing'); setActiveModule('eam'); }} />}
                 </SideNavGroup>
+                )}
 
                 {/* Resources */}
+                {(hasPermission('resources_info', 'view') || hasPermission('resources_utilization', 'view') || hasPermission('resources_upskilling', 'view')) && (
                 <SideNavGroup
                   icon={<ThunderboltOutlined />} label="Resources"
                   active={activePage.startsWith('resources')}
                   expanded={isExp('resources')}
                   onToggle={() => toggleSection('resources')}
                 >
-                  <SubNavItem label="Information" active={activePage === 'resources_info'} onClick={() => { setActivePage('resources_info'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Engagement Mapping" active={activePage === 'resources_utilization'} onClick={() => { setActivePage('resources_utilization'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Upskilling" active={activePage === 'resources_upskilling'} onClick={() => { setActivePage('resources_upskilling'); setActiveModule('eam'); }} />
+                  {hasPermission('resources_info', 'view') && <SubNavItem label="Information" active={activePage === 'resources_info'} onClick={() => { setActivePage('resources_info'); setActiveModule('eam'); }} />}
+                  {hasPermission('resources_utilization', 'view') && <SubNavItem label="Engagement Mapping" active={activePage === 'resources_utilization'} onClick={() => { setActivePage('resources_utilization'); setActiveModule('eam'); }} />}
+                  {hasPermission('resources_upskilling', 'view') && <SubNavItem label="Upskilling" active={activePage === 'resources_upskilling'} onClick={() => { setActivePage('resources_upskilling'); setActiveModule('eam'); }} />}
                 </SideNavGroup>
+                )}
 
                 {/* Client Requests */}
+                {hasPermission('clientmgmt_requests', 'view') && (
                 <SideNavGroup
                   icon={<UserOutlined />} label="Client Requests"
                   active={activePage === 'clientmgmt_requests'}
@@ -342,38 +765,55 @@ export default function App() {
                 >
                   <SubNavItem label="Overview" active={activePage === 'clientmgmt_requests'} onClick={() => { setActivePage('clientmgmt_requests'); setActiveModule('eam'); }} />
                 </SideNavGroup>
+                )}
 
                 {/* Internal Process */}
+                {hasPermission('clientmgmt_connects', 'view') && (
                 <SideNavItem
                   icon={<NodeIndexOutlined />} label="Internal Process"
                   active={activePage === 'clientmgmt_connects'}
                   onClick={() => navigateTo('clientmgmt_connects', 'clientmgmt')}
                   showArrow
                 />
+                )}
 
                 {/* ── SETTINGS & CONFIGURATION section ── */}
                 <SectionLabel label="Settings & Configuration" />
 
                 {/* Configuration */}
+                {hasPermission('configuration', 'view') && (
                 <SideNavGroup
                   icon={<SettingOutlined />} label="Configuration"
                   active={activePage === 'configuration'}
                   expanded={isExp('configuration')}
                   onToggle={() => { navigateTo('configuration', 'configuration'); toggleSection('configuration'); }}
                 />
+                )}
+
+                {/* User Access Control — admin-only */}
+                {hasPermission('user_access_control', 'view') && (
+                <SideNavItem
+                  icon={<SafetyCertificateOutlined />} label="User Access Control"
+                  active={activePage === 'user_access_control'}
+                  onClick={() => navigateTo('user_access_control', 'configuration')}
+                  showArrow
+                />
+                )}
 
                 {/* Knowledge Base */}
+                {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (
                 <SideNavGroup
                   icon={<InfoCircleOutlined />} label="Knowledge Base"
                   active={activePage.startsWith('information')}
                   expanded={isExp('information')}
                   onToggle={() => toggleSection('information')}
                 >
-                  <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => { setActivePage('information_ratecard'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => { setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => { setActivePage('information_process'); setActiveModule('eam'); }} />
-                  <SubNavItem label="Code Guide" active={activePage === 'information_codeguide'} onClick={() => { setActivePage('information_codeguide'); setActiveModule('eam'); }} />
+                  {hasPermission('information_ratecard', 'view') && <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => { setActivePage('information_ratecard'); setActiveModule('eam'); }} />}
+                  {hasPermission('information_teamhierarchy', 'view') && <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => { setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} />}
+                  {hasPermission('information_process', 'view') && <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => { setActivePage('information_process'); setActiveModule('eam'); }} />}
+                  {hasPermission('information_codeguide', 'view') && <SubNavItem label="Code Guide" active={activePage === 'information_codeguide'} onClick={() => { setActivePage('information_codeguide'); setActiveModule('eam'); }} />}
                 </SideNavGroup>
+                )}
 
               </div>
             )}
@@ -382,12 +822,20 @@ export default function App() {
           {/* ── User footer ──────────────────── */}
           {!collapsed && (
             <div style={{ padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1d4ed8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>AM</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Account Manager</div>
-                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.38)' }}>Admin</div>
+              <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1d4ed8)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                {(currentUser?.displayName || currentUser?.username || 'U').slice(0, 2).toUpperCase()}
               </div>
-              <DownOutlined style={{ fontSize: '9px', color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentUser?.displayName || currentUser?.username}</div>
+                <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.38)' }}>{currentUser?.roleName || 'No Role'}</div>
+              </div>
+              <Popconfirm title="Sign out?" onConfirm={logout} okText="Sign Out" cancelText="Cancel" placement="topRight">
+                <Tooltip title="Sign Out" placement="right">
+                  <button style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: '6px', borderRadius: 6, display: 'flex', alignItems: 'center' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                  </button>
+                </Tooltip>
+              </Popconfirm>
             </div>
           )}
 
@@ -400,6 +848,7 @@ export default function App() {
           </div>
         </div>
       </div>
+      </NotificationProvider>
     );
   }
 
@@ -444,10 +893,56 @@ export default function App() {
       minHeight: '100vh',
       background: 'linear-gradient(160deg, #eef2fb 0%, #f5f8ff 60%, #eaf4ff 100%)',
       display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      padding: '40px 24px',
+      flexDirection: 'column',
+      padding: 0,
     }}>
+      {/* ── Top bar with user info + sign out ── */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+        padding: '12px 28px', gap: 12,
+        borderBottom: '1px solid rgba(24,70,150,0.07)',
+        background: 'rgba(255,255,255,0.7)',
+        backdropFilter: 'blur(8px)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: '50%',
+            background: 'linear-gradient(135deg,#3b82f6,#1d4ed8)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: '11px', fontWeight: 700, color: '#fff', flexShrink: 0,
+          }}>
+            {(currentUser?.displayName || currentUser?.username || 'U').slice(0, 2).toUpperCase()}
+          </div>
+          <div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: '#0a1628', lineHeight: 1.2 }}>
+              {currentUser?.displayName || currentUser?.username}
+            </div>
+            <div style={{ fontSize: '11px', color: '#8c9ab0' }}>
+              {currentUser?.roleName || 'No Role'}
+            </div>
+          </div>
+        </div>
+        <Popconfirm title="Sign out of EAM?" onConfirm={logout} okText="Sign Out" cancelText="Cancel" placement="bottomRight">
+          <Tooltip title="Sign Out">
+            <button style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: 'transparent', border: '1px solid #e0e7f0',
+              borderRadius: 8, padding: '6px 12px', cursor: 'pointer',
+              color: '#5a6a8a', fontSize: '12px', fontWeight: 500,
+              transition: 'all 0.15s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#fff0f0'; e.currentTarget.style.borderColor = '#ff4d4f'; e.currentTarget.style.color = '#ff4d4f'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.borderColor = '#e0e7f0'; e.currentTarget.style.color = '#5a6a8a'; }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+              Sign Out
+            </button>
+          </Tooltip>
+        </Popconfirm>
+      </div>
+
+      {/* ── Centred content ── */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px 24px' }}>
       <div style={{ maxWidth: 820, width: '100%', textAlign: 'center' }}>
 
         {/* Welcome label */}
@@ -543,6 +1038,7 @@ export default function App() {
           <span style={{ fontSize: 18 }}>→</span>
         </button>
 
+      </div>
       </div>
     </div>
   );
