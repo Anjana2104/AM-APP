@@ -39,7 +39,6 @@ function evaluateTriggers(db, sourceTable, changedValues, oldRecord, newRecord, 
         [sourceTable]
       );
     } catch (tableErr) {
-      console.error('[triggerEvaluator] notification_triggers table missing — restart server after migration:', tableErr.message);
       return;
     }
 
@@ -136,8 +135,8 @@ function evaluateTriggers(db, sourceTable, changedValues, oldRecord, newRecord, 
 
       db.run(
         `INSERT INTO notifications
-           (type, title, message, target_user_id, target_group_id, source_user, is_read, read_by, created_at)
-         VALUES (?,?,?,?,?,?,0,'[]',?)`,
+           (type, title, message, target_user_id, target_group_id, source_user, is_read, read_by, trigger_id, created_at)
+         VALUES (?,?,?,?,?,?,0,'[]',?,?)`,
         [
           trigger.notification_type || 'task',
           trigger.name,
@@ -145,12 +144,12 @@ function evaluateTriggers(db, sourceTable, changedValues, oldRecord, newRecord, 
           targetUserId,
           targetGroupId,
           changedBy || 'system',
+          trigger.id,
           ts,
         ]
       );
     }
   } catch (err) {
-    console.error('[triggerEvaluator] Unexpected error:', err.message);
   }
 }
 

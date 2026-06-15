@@ -16,14 +16,12 @@ const DEFAULT_XLSX = path.join(
 
 async function seed() {
   const xlsxPath = process.argv[2] || DEFAULT_XLSX;
-  console.log("Reading:", xlsxPath);
 
   const wb = XLSX.readFile(xlsxPath);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-  if (!rows.length) { console.log("No rows found."); return; }
-  console.log("Columns:", Object.keys(rows[0]).join(" | "));
+  if (!rows.length) { return; }
 
   const db = await getDb();
   db.run("DELETE FROM resources");
@@ -52,9 +50,8 @@ async function seed() {
     inserted++;
   });
 
-  console.log(`Seeded ${inserted} resources.`);
   db.close();
   resetDb();
 }
 
-seed().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
+seed().then(() => process.exit(0)).catch(err => { process.exit(1); });

@@ -16,19 +16,17 @@ const DEFAULT_XLSX = path.join(
 
 async function seed() {
   const xlsxPath = process.argv[2] || DEFAULT_XLSX;
-  console.log("Reading:", xlsxPath);
 
   const wb = XLSX.readFile(xlsxPath);
   const sheetName = wb.SheetNames.find(n => n.includes("SOW Budget")) || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const raw = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
-  if (!raw.length) { console.log("No rows found."); return; }
+  if (!raw.length) { return; }
 
   // Detect month columns (not fixed columns)
   const FIXED = new Set(["S.No.", "Project", "Code", "Space", "Owners"]);
   const monthCols = Object.keys(raw[0]).filter(k => !FIXED.has(k));
-  console.log("Months found:", monthCols);
 
   const db = await getDb();
 
@@ -60,9 +58,8 @@ async function seed() {
     inserted++;
   }
 
-  console.log(`Seeded ${inserted} projects.`);
   db.close();
   resetDb();
 }
 
-seed().catch(err => { console.error(err); process.exit(1); });
+seed().catch(err => { process.exit(1); });

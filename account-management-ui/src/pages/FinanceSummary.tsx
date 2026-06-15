@@ -317,16 +317,9 @@ export function FinanceSummary({ onNavigate }: FinanceSummaryProps) {
 
   return (
     <div ref={pageRef} style={{ padding: '8px 24px 24px', maxWidth: 1200, margin: '0 auto', minWidth: 0 }}>
-      {/* ── Header + Filters ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
-        <div style={{ paddingLeft: 8 }}>
-          <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#001529', margin: 0 }}>
-            Finance Summary
-          </h2>
-          <p style={{ fontSize: '12px', color: '#8c8c8c', margin: '2px 0 0' }}>
-            Planned vs Invoiced — Executive Overview
-          </p>
-        </div>
+      {/* ── Filters ── */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 }}>
+        <Text type="secondary" style={{ fontSize: '11px', color: '#8c8c8c', paddingLeft: 8 }}>Planned vs Invoiced — Executive Overview</Text>
         <Space wrap style={{ alignItems: 'center' }}>
           {companies.length > 0 && (
             <Space size={4}>

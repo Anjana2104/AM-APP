@@ -1,3 +1,11 @@
+/**
+ * UserAccessControl.tsx
+ * 
+ * User Access Control — Manage user permissions, roles, and access levels
+ * for application features and data
+ * UI Location: Settings & Configuration > User Access Control
+ * Page ID: user_access_control
+ */
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Tabs, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space,
@@ -25,6 +33,7 @@ const ALL_PAGES: { id: string; label: string; section: string }[] = [
   { id: 'resources_info', label: 'Resources – Information', section: 'Resources' },
   { id: 'resources_utilization', label: 'Resources – Engagement Mapping', section: 'Resources' },
   { id: 'resources_upskilling', label: 'Resources – Upskilling', section: 'Resources' },
+  { id: 'resources_insights', label: 'Resources – Resource Insights', section: 'Resources' },
   { id: 'clientmgmt_requests', label: 'Client Requests – Overview', section: 'Client Requests' },
   { id: 'clientmgmt_connects', label: 'Internal Process', section: 'Client Requests' },
   { id: 'information_ratecard', label: 'Knowledge – Rate Card', section: 'Knowledge Base' },
@@ -32,6 +41,7 @@ const ALL_PAGES: { id: string; label: string; section: string }[] = [
   { id: 'information_process', label: 'Knowledge – Client Process', section: 'Knowledge Base' },
   { id: 'information_codeguide', label: 'Knowledge – Code Guide', section: 'Knowledge Base' },
   { id: 'configuration', label: 'Configuration', section: 'Settings' },
+  { id: 'user_settings', label: 'User Settings', section: 'Settings' },
   { id: 'user_access_control', label: 'User Access Control', section: 'Settings' },
 ];
 

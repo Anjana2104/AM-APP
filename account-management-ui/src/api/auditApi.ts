@@ -28,3 +28,23 @@ export async function getAuditLog(module: string, recordId: number): Promise<Aud
     return [];
   }
 }
+
+export async function addAuditLog(entry: {
+  module: string;
+  record_id: number;
+  record_name?: string;
+  field: string;
+  old_value?: string;
+  new_value?: string;
+  changed_by?: string;
+}): Promise<void> {
+  try {
+    await fetch(BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entry),
+    });
+  } catch {
+    /* silently ignore */
+  }
+}

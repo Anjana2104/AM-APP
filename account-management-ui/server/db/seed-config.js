@@ -50,14 +50,12 @@ async function seedConfig() {
          VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
         [t.type_id, t.name, t.description, t.built_in, t.linked_to, now, now]
       );
-      console.log('Inserted type:', t.type_id);
     } else {
       // Always update linked_to so new link targets are applied
       db.run(
         `UPDATE app_config_types SET linked_to = ?, description = ?, updated_at = ? WHERE type_id = ?`,
         [t.linked_to, t.description, now, t.type_id]
       );
-      console.log('Updated type linked_to:', t.type_id);
     }
   }
 
@@ -89,7 +87,6 @@ async function seedConfig() {
       );
     }
   });
-  console.log('Seeded request_processing_status items');
 
   // ── Items for request_overall_status ─────────────────────────────────
   const overallItems = [
@@ -113,7 +110,6 @@ async function seedConfig() {
       );
     }
   });
-  console.log('Seeded request_overall_status items');
 
   // ── Items for resource_allocation_status ─────────────────────────────
   // These are the canonical workflow status values the system uses internally.
@@ -139,7 +135,6 @@ async function seedConfig() {
       );
     }
   });
-  console.log('Seeded resource_allocation_status items');
 
   // ── Items for project_engagement ─────────────────────────────────────
   // NO hardcoded items — user adds their own values via Configuration > Manage Links.
@@ -151,7 +146,6 @@ async function seedConfig() {
       ['project_engagement', v]
     );
   });
-  console.log('Cleared old project_engagement default items (user manages these via Configuration UI)');
 
   // ── Default app value ─────────────────────────────────────────────────
   const existingVal = db.get('SELECT id FROM app_values WHERE key = ?', ['SOW_STORAGE_URL']);
@@ -166,14 +160,11 @@ async function seedConfig() {
         now,
       ]
     );
-    console.log('Inserted default SOW_STORAGE_URL');
   } else {
-    console.log('SOW_STORAGE_URL already exists');
   }
 
-  console.log('Config seed complete.');
   db.close();
   resetDb();
 }
 
-seedConfig().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
+seedConfig().then(() => process.exit(0)).catch(err => { process.exit(1); });

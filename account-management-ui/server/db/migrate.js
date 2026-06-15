@@ -66,9 +66,12 @@ async function migrate() {
       request_type      TEXT DEFAULT "",
       updated_on        TEXT DEFAULT "",
       created_at        TEXT,
-      updated_at        TEXT
+      updated_at        TEXT,
+      is_active         INTEGER DEFAULT 1
     )
   `);
+  // Add is_active to existing client_requests rows (idempotent)
+  try { db.run(`ALTER TABLE client_requests ADD COLUMN is_active INTEGER DEFAULT 1`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS resources (
@@ -154,9 +157,18 @@ async function migrate() {
     )
   `);
 
-  console.log("Migration complete.");
+  // Request comments table (idempotent)
+  db.run(`CREATE TABLE IF NOT EXISTS request_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id INTEGER NOT NULL,
+    author TEXT NOT NULL DEFAULT "",
+    tag TEXT NOT NULL DEFAULT "General",
+    body TEXT NOT NULL DEFAULT "",
+    created_at TEXT NOT NULL
+  )`);
+
   db.close();
   resetDb();
 }
 
-migrate().then(() => process.exit(0)).catch(err => { console.error(err); process.exit(1); });
+migrate().then(() => process.exit(0)).catch(err => { process.exit(1); });

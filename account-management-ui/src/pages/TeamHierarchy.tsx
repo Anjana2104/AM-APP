@@ -1,3 +1,11 @@
+/**
+ * TeamHierarchy.tsx
+ * 
+ * Team Hierarchy — Display and manage organizational team structure
+ * with hierarchical relationships and role assignments
+ * UI Location: Knowledge Base > Team Hierarchy
+ * Page ID: information_teamhierarchy
+ */
 import React, { useState, useMemo } from 'react';
 import {
   Tabs, Button, Form, Input, Select, Modal, Typography, Space,

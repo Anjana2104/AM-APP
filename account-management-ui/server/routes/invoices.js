@@ -158,7 +158,6 @@ router.post("/projects/bulk", async (req, res) => {
     }
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    console.error("Invoice upsert error:", err);
     const msg = err.message || '';
     if (msg.includes('UNIQUE') || msg.includes('unique')) {
       return res.status(409).json({ error: 'Duplicate project code detected.', detail: msg });

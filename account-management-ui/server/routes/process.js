@@ -73,7 +73,6 @@ router.post('/bulk', async (req, res) => {
     }
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    console.error('Process upsert error:', err);
     res.status(500).json({ error: err.message });
   }
 });

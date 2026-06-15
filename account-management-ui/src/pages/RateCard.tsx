@@ -1,3 +1,11 @@
+/**
+ * RateCard.tsx
+ * 
+ * Client Rate Card — Manage and view client-specific rates by role
+ * with table and card view options
+ * UI Location: Knowledge Base > Client Rate Card
+ * Page ID: information_ratecard
+ */
 import React, { useState, useMemo } from 'react';
 import { Tabs, Switch, Table, Typography, Tooltip, Row, Col, Space } from 'antd';
 import '../style.css';

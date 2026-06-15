@@ -1,3 +1,12 @@
+/**
+ * RequestManagement.tsx
+ * 
+ * Requests — Client request management with Insights, Beeline integration,
+ * filtering, bulk actions, and export capabilities
+ * UI Location: Client Management > Clients > Requests
+ * Page ID: clientmgmt_requests
+ * Child Components: EnhancedInsights.tsx, RequestInsightsChart.tsx
+ */
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Table,
@@ -26,6 +35,7 @@ import {
   Pagination,
   Checkbox,
   Popconfirm,
+  Segmented,
 } from 'antd';
 const { Text } = Typography;
 import {
@@ -47,14 +57,24 @@ import {
   CloudServerOutlined,
   FileExcelOutlined,
   EyeOutlined,
+  LinkOutlined,
+  StopOutlined,
+  CheckCircleOutlined,
+  ExpandAltOutlined,
+  ShrinkOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import dayjs from 'dayjs';
-import { RequestInsightsChart } from './RequestInsightsChart';
+import { RequestInsightsChart, BeelineResourcePanel } from './RequestInsightsChart';
+import { EnhancedInsights } from './EnhancedInsights';
+import RequestDetailPanel from '../components/RequestDetailPanel';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
+import { useUserPreferences } from '../context/UserPreferencesContext';
 import * as requestApi from '../api/requestApi';
+import * as resourceApi from '../api/resourceApi';
+import type { ResourcePayload } from '../api/resourceApi';
 import '../style.css';
 
 // Types and interfaces
@@ -70,6 +90,7 @@ interface ClientRequest {
   dateRaised: string;
   requestType?: string;
   updatedOn?: string;
+  isActive?: boolean;
 }
 
 // Utility Functions
@@ -77,6 +98,19 @@ const formatDateToDDMMYYYY = (dateString: string | undefined): string => {
   if (!dateString) return '';
   const parsed = dayjs(dateString);
   if (parsed.isValid()) return parsed.format('DD/MM/YYYY');
+  return dateString;
+};
+
+const formatDateReadable = (dateString: string | undefined): string => {
+  if (!dateString) return '';
+  // Handle DD/MM/YYYY stored format
+  const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dateString);
+  if (ddmmyyyy) {
+    const parsed = dayjs(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
+    if (parsed.isValid()) return parsed.format('DD MMMM YYYY');
+  }
+  const parsed = dayjs(dateString);
+  if (parsed.isValid()) return parsed.format('DD MMMM YYYY');
   return dateString;
 };
 
@@ -93,9 +127,10 @@ const getOverallStatusColor = (status: string): string => OVERALL_STATUS_COLOR_M
 const getOverallStatusBackgroundColor = (status: string): string => OVERALL_STATUS_BG_MAP[status] || '#f5f5f5';
 
 // Main Component
-export default function RequestManagement() {
+export default function RequestManagement({ initialBeelineFilter, onFilterApplied }: { initialBeelineFilter?: string; onFilterApplied?: () => void } = {}) {
   const { getConfigByLink } = useConfig();
   const { hasPermission, currentUser } = useAuth();
+  const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('clientmgmt_requests', 'edit');
   const canDelete = hasPermission('clientmgmt_requests', 'delete');
 
@@ -127,7 +162,8 @@ export default function RequestManagement() {
   const [filters, setFilters] = useState<Record<string, any>>({});
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [viewDetailRecord, setViewDetailRecord] = useState<ClientRequest | null>(null);
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
+  const [panelExpanded, setPanelExpanded] = useState(false);
+  const [visibleColumns, setVisibleColumnsState] = useState<Record<string, boolean>>({
     sno: true,
     beelineId: true,
     requestType: true,
@@ -138,13 +174,25 @@ export default function RequestManagement() {
     accountAnchor: true,
     dateRaised: true,
   });
+  const [activeTab, setActiveTab] = useState<string>('overview');
+
+  // Apply saved user preferences once loaded
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    const vis = getColumnVisibility('requests');
+    setVisibleColumnsState(prev => ({ ...prev, ...vis }));
+  }, [preferencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setVisibleColumns = (newVis: Record<string, boolean>) => {
+    setVisibleColumnsState(newVis);
+    saveColumnVisibility('requests', newVis);
+  };
 
   // Filtered requests
   const filteredRequests = useMemo(() => {
     return requests.filter(req => {
       for (const [key, value] of Object.entries(filters)) {
-        if (!value) continue;
-        
+        if (!value && value !== false) continue;
         if (key === 'sno' && !req.sno.toString().includes(value)) return false;
         if (key === 'beelineId' && !req.beelineId.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'description' && !req.description.toLowerCase().includes(value.toLowerCase())) return false;
@@ -152,6 +200,12 @@ export default function RequestManagement() {
         if (key === 'accountAnchor' && !req.accountAnchor.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'requestType' && req.requestType !== value) return false;
         if (key === 'overallStatus' && req.overallStatus !== value) return false;
+        if (key === 'processingStatus' && req.processingStatus !== value) return false;
+        if (key === 'isActive' && value !== 'all') {
+          const active = req.isActive !== false;
+          if (value === 'active' && !active) return false;
+          if (value === 'inactive' && active) return false;
+        }
       }
       return true;
     });
@@ -215,7 +269,7 @@ export default function RequestManagement() {
           let newCount = 0, updCount = 0;
           uploaded.forEach(u => {
             const key = u.beelineId.toLowerCase();
-            if (existingMap.has(key)) { existingMap.set(key, { ...existingMap.get(key)!, ...u }); updCount++; }
+            if (existingMap.has(key)) { existingMap.set(key, { ...existingMap.get(key)!, ...u, id: existingMap.get(key)!.id }); updCount++; }
             else { existingMap.set(key, u); newCount++; }
           });
           uploadSummary = { newCount, updCount };
@@ -231,7 +285,29 @@ export default function RequestManagement() {
             overallStatus: r.overallStatus, accountAnchor: r.accountAnchor,
             dateRaised: r.dateRaised, requestType: r.requestType || '',
             updatedOn: r.updatedOn || '',
-          }))).then(result => { if (result.ok) setFromServer(true); });
+          }))).then(result => {
+            if (result.ok) {
+              setFromServer(true);
+              // Re-fetch from server to get proper DB IDs for all records (esp. newly inserted)
+              requestApi.getRequests().then(({ requests: fresh }) => {
+                if (fresh.length > 0) {
+                  setRequests(fresh.map((r: any, i: number) => ({
+                    id: r.id, sno: String(r.sno || i + 1),
+                    beelineId: String(r.beeline_id || r.beelineId || ''),
+                    description: String(r.description || ''),
+                    raisedBy: String(r.raised_by || r.raisedBy || ''),
+                    processingStatus: String(r.processing_status || r.processingStatus || ''),
+                    overallStatus: String(r.overall_status || r.overallStatus || ''),
+                    accountAnchor: String(r.account_anchor || r.accountAnchor || ''),
+                    dateRaised: String(r.date_raised || r.dateRaised || ''),
+                    requestType: String(r.request_type || r.requestType || ''),
+                    updatedOn: String(r.updated_on || r.updatedOn || ''),
+                    isActive: r.is_active === undefined ? true : r.is_active !== 0,
+                  })));
+                }
+              });
+            }
+          });
           message.success(`Upload complete: ${uploadSummary.newCount} new, ${uploadSummary.updCount} updated`);
         }, 0);
       } catch (error) {
@@ -289,6 +365,25 @@ export default function RequestManagement() {
     });
   };
 
+  const handleToggleActive = async (request: ClientRequest) => {
+    if (!request.id) return;
+    const newActive = request.isActive === false ? true : false;
+    const result = await requestApi.setActiveStatus(request.id, newActive, currentUser?.username);
+    if (!result.ok) {
+      Modal.error({
+        title: 'Cannot Mark Inactive',
+        content: result.error || 'Failed to update status',
+        okText: 'OK',
+      });
+      return;
+    }
+    setRequests(prev => prev.map(r => r.id === request.id ? { ...r, isActive: newActive } : r));
+    // If this request is currently open in the view panel, refresh it
+    if (viewDetailRecord && viewDetailRecord.id === request.id) {
+      setViewDetailRecord(prev => prev ? { ...prev, isActive: newActive } : prev);
+    }
+  };
+
   const handleSaveEdit = (values: any) => {
     if (editingRequest) {
       const updated = { ...editingRequest, ...values, updatedOn: formatDateToDDMMYYYY(new Date().toISOString()) };
@@ -298,7 +393,8 @@ export default function RequestManagement() {
           processingStatus: updated.processingStatus, overallStatus: updated.overallStatus,
           accountAnchor: updated.accountAnchor, dateRaised: updated.dateRaised,
           requestType: updated.requestType || '', updatedOn: updated.updatedOn,
-        });
+          changedBy: currentUser?.username || 'system',
+        } as any);
       }
       setRequests(prev => prev.map(r => r.sno === editingRequest.sno ? updated : r));
     } else {
@@ -382,7 +478,56 @@ export default function RequestManagement() {
     message.success('Export downloaded');
   };
 
-  // Table columns
+  const handleExportBeelineMapping = () => {
+    const linked = allResources.filter(r => r.beelineId);
+    if (!linked.length) { message.warning('No Beeline-Resource links to export'); return; }
+    const headers = ['Beeline ID', 'RA ID', 'Employee Name', 'Email', 'Role', 'Engagement', 'Allocation Status', 'Skills'];
+    const aoa: any[][] = [headers];
+    const grouped: Record<string, ResourcePayload[]> = {};
+    linked.forEach(r => {
+      if (!grouped[r.beelineId!]) grouped[r.beelineId!] = [];
+      grouped[r.beelineId!].push(r);
+    });
+    Object.entries(grouped).sort(([a],[b]) => a.localeCompare(b)).forEach(([bid, resources]) => {
+      resources.forEach(r => {
+        aoa.push([bid, r.raId, r.empName, r.emailId, r.piwRole || r.roleOrDomain, r.engagement || '', r.allocationStatus || '', r.skills]);
+      });
+    });
+    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
+    ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 26 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 30 }];
+    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
+    ws['!sheetViews'] = [{ showGridLines: false }];
+    const numCols = headers.length, numRows = aoa.length;
+    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
+    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
+    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
+    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
+    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
+    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
+    for (let R = 0; R < numRows; R++) {
+      for (let C = 0; C < numCols; C++) {
+        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
+        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
+        ws[addr].s = {
+          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
+          font: R === 0 ? hFont : { sz: 10 },
+          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
+          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
+        };
+      }
+    }
+    const wb = XLSXStyle.utils.book_new();
+    XLSXStyle.utils.book_append_sheet(wb, ws, 'Beeline Resource Mapping');
+    XLSXStyle.writeFile(wb, `Beeline_Resource_Mapping_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    message.success('Beeline-Resource mapping downloaded');
+  };
+
+  const handleNavigateToRequests = (filterCriteria: Record<string, any>) => {
+    setFilters(filterCriteria);
+    setShowFilterPanel(true);
+    setActiveTab('overview');
+  };
+
   const columns = [
     {
       title: 'S.No',
@@ -482,6 +627,23 @@ export default function RequestManagement() {
       hidden: !visibleColumns.dateRaised,
     },
     {
+      title: 'Status',
+      key: 'isActive',
+      width: 100,
+      render: (_: any, record: ClientRequest) => {
+        const active = record.isActive !== false;
+        return (
+          <Tag
+            color={active ? 'green' : 'orange'}
+            style={{ fontSize: 10, cursor: canEdit ? 'pointer' : 'default' }}
+            onClick={canEdit ? () => handleToggleActive(record) : undefined}
+          >
+            {active ? 'Active' : 'Inactive'}
+          </Tag>
+        );
+      },
+    },
+    {
       title: 'Actions',
       key: 'actions',
       width: 80,
@@ -540,6 +702,77 @@ export default function RequestManagement() {
   const isFilterApplied = Object.values(filters).some(v => v);
   const filterPanelRef = useRef<HTMLDivElement>(null);
 
+  // ── Resources state (for beeline linking) ────────────────────────────────
+  const [allResources, setAllResources] = useState<ResourcePayload[]>([]);
+  const [linkResourcesModal, setLinkResourcesModal] = useState<{ open: boolean; request: ClientRequest | null }>({ open: false, request: null });
+  const [linkResourcesChecked, setLinkResourcesChecked] = useState<Set<number>>(new Set());
+  const [savingLinks, setSavingLinks] = useState(false);
+  const [loadingLinkResources, setLoadingLinkResources] = useState(false);
+
+  // Compute linked count per beelineId from allResources
+  const linkedCountMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    allResources.forEach(r => {
+      if (r.beelineId) map[r.beelineId] = (map[r.beelineId] || 0) + 1;
+    });
+    return map;
+  }, [allResources]);
+
+  const mapResource = (r: any): ResourcePayload => ({
+    id: r.id,
+    sno: r.sno,
+    raId: r.ra_id || r.raId || '',
+    empName: r.emp_name || r.empName || '',
+    emailId: r.email_id || r.emailId || '',
+    piwRole: r.piw_role || r.piwRole || '',
+    roleOrDomain: r.role_or_domain || r.roleOrDomain || '',
+    previousWorkex: r.previous_workex || r.previousWorkex || '',
+    doj: r.doj || '',
+    totalWorkex: r.total_workex || r.totalWorkex || '',
+    engagement: r.engagement || '',
+    skills: r.skills || '',
+    allocationStatus: r.allocation_status || r.allocationStatus || '',
+    beelineId: r.beeline_id || r.beelineId || '',
+  });
+
+  const openLinkResourcesModal = async (request: ClientRequest) => {
+    setLinkResourcesModal({ open: true, request });
+    setLoadingLinkResources(true);
+    setLinkResourcesChecked(new Set()); // clear while loading
+    // Refresh resources so beeline IDs are current
+    const { resources: rawRes } = await resourceApi.getResources();
+    const mapped = rawRes.map(mapResource);
+    setAllResources(mapped);
+    const checked = new Set<number>(
+      mapped.filter(r => r.beelineId === request.beelineId && r.id != null).map(r => r.id as number)
+    );
+    setLinkResourcesChecked(checked);
+    setLoadingLinkResources(false);
+  };
+
+  const handleSaveLinks = async () => {
+    const request = linkResourcesModal.request;
+    if (!request) return;
+    setSavingLinks(true);
+    const prevLinked = new Set<number>(
+      allResources.filter(r => r.beelineId === request.beelineId && r.id != null).map(r => r.id as number)
+    );
+    const toLink = [...linkResourcesChecked].filter(id => !prevLinked.has(id));
+    const toUnlink = [...prevLinked].filter(id => !linkResourcesChecked.has(id));
+    const ops: Promise<boolean>[] = [
+      ...toLink.map(id => resourceApi.setBeelineLink(id, request.beelineId, currentUser?.username || 'system')),
+      ...toUnlink.map(id => resourceApi.setBeelineLink(id, '', currentUser?.username || 'system')),
+    ];
+    await Promise.all(ops);
+    // Refresh resources
+    const { resources: rawRes } = await resourceApi.getResources();
+    setAllResources(rawRes.map(mapResource));
+    setSavingLinks(false);
+    message.success('Resource links updated');
+    setLinkResourcesModal({ open: false, request: null });
+  };
+  // ── End Resources state ───────────────────────────────────────────────────
+
   // Load from DB on mount
   useEffect(() => {
     setLoading(true);
@@ -557,12 +790,24 @@ export default function RequestManagement() {
           dateRaised: String(r.date_raised || r.dateRaised || ''),
           requestType: String(r.request_type || r.requestType || ''),
           updatedOn: String(r.updated_on || r.updatedOn || ''),
+          isActive: r.is_active === undefined ? (r.isActive === undefined ? true : r.isActive) : r.is_active !== 0,
         }));
         setRequests(mapped);
         setFromServer(true);
       }
     }).finally(() => setLoading(false));
+    // Load all resources for beeline linking
+    resourceApi.getResources().then(({ resources }) => setAllResources(resources.map(mapResource)));
   }, []);
+
+  // Apply initial beeline filter when provided from navigation
+  useEffect(() => {
+    if (initialBeelineFilter) {
+      setFilters(f => ({ ...f, beelineId: initialBeelineFilter }));
+      setShowFilterPanel(true);
+      onFilterApplied?.();
+    }
+  }, [initialBeelineFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!showFilterPanel) return;
     const handleMouseDown = (e: MouseEvent) => {
@@ -586,37 +831,52 @@ export default function RequestManagement() {
     <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '12px 24px' }}>
       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
         <Space direction="vertical" style={{ width: '100%' }} size={6}>
-          <div>
-            <Typography.Title level={4} style={{ marginBottom: 2 }}>Request Management</Typography.Title>
-            <Text type="secondary" style={{ fontSize: '12px' }}>Manage client requests, staffing status, and processing</Text>
-          </div>
-          <div style={{ background: '#fff', borderRadius: '8px', padding: '16px' }}>
-        {requests.length > 0 ? (
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '0' }}>
           <Tabs
+            activeKey={activeTab}
+            onChange={setActiveTab}
             destroyInactiveTabPane
+            size="small"
+            style={{ padding: '0 16px' }}
+            tabBarStyle={{ marginBottom: 0, fontSize: '12px' }}
             items={[
               {
-                key: 'views',
-                label: 'Overview',
-                  children: (
-                    <div onClick={handleContainerClick} style={{ minHeight: '500px' }}>
-                      {/* Child tabs by request type */}
-                      <Tabs
-                        activeKey={activeTypeTab}
-                        onChange={setActiveTypeTab}
-                        size="small"
-                        tabBarStyle={{ marginBottom: 12 }}
-                        items={[
-                          { key: 'all', label: <span>All <span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.length})</span></span> },
+                key: 'overview',
+                label: <span style={{ fontSize: '12px' }}>Beeline Requests</span>,
+                children: (
+                  <div onClick={handleContainerClick} style={{ minHeight: '500px', padding: '16px 0' }}>
+                    {/* Type segmented control */}
+                    <div style={{ marginBottom: 14 }}>
+                      <Segmented
+                        value={activeTypeTab}
+                        onChange={val => setActiveTypeTab(String(val))}
+                        options={[
+                          {
+                            label: (
+                              <span style={{ fontSize: '12px' }}>
+                                All{' '}
+                                <Badge count={filteredRequests.length} size="small" style={{ backgroundColor: '#1890ff', fontSize: '10px' }} showZero />
+                              </span>
+                            ),
+                            value: 'all',
+                          },
                           ...typeItems.map(t => ({
-                            key: t.value,
-                            label: <span><Tag color={t.color ?? 'default'} style={{ fontSize: '10px', marginRight: 4 }}>{t.label}</Tag><span style={{ fontSize: '10px', color: '#8c8c8c' }}>({filteredRequests.filter(r => r.requestType === t.value).length})</span></span>,
+                            label: (
+                              <span style={{ fontSize: '12px' }}>
+                                <Tag color={t.color ?? 'default'} style={{ fontSize: '10px', marginRight: 4, marginBottom: 0 }}>{t.label}</Tag>
+                                <Badge count={filteredRequests.filter(r => r.requestType === t.value).length} size="small" style={{ backgroundColor: '#8c8c8c', fontSize: '10px' }} showZero />
+                              </span>
+                            ),
+                            value: t.value,
                           })),
                         ]}
+                        style={{ background: '#f5f5f5' }}
                       />
+                    </div>
+                    {/* Toolbar row */}
                       <Space style={{ marginBottom: '16px', width: '100%', justifyContent: 'space-between', display: 'flex' }} direction="horizontal">
                         <Space size={6}>
-                          <Text type="secondary">Showing: <strong>{typeFilteredRequests.length}</strong> {typeFilteredRequests.length !== requests.length ? `/ ${requests.length}` : ''}</Text>
+                          <Text type="secondary" style={{ fontSize: '12px' }}>Manage client requests and its processing stage</Text>
                           {fromServer && <Tooltip title="Data from server" overlayInnerStyle={{ fontSize: '11px' }}><CloudServerOutlined style={{ color: '#52c41a', fontSize: '13px' }} /></Tooltip>}
                         </Space>
                         <Space wrap size={8}>
@@ -662,38 +922,44 @@ export default function RequestManagement() {
                               <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: '6px' }} />
                             </Tooltip>
                           )}
-                          {canEdit && (
-                          <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Upload
-                              accept=".xlsx,.xls"
-                              beforeUpload={handleUpload}
-                              showUploadList={false}
-                            >
-                              <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
-                            </Upload>
-                          </Tooltip>
-                          )}
-                          <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
-                          </Tooltip>
-                          <Tooltip title="Export Formatted Excel" overlayInnerStyle={{ fontSize: '11px' }}>
+                          <Tooltip title="Export Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportExcel} disabled={!typeFilteredRequests.length} style={{ borderRadius: '6px', color: typeFilteredRequests.length ? '#52c41a' : undefined }} />
                           </Tooltip>
-                          {requests.length > 0 && canDelete && (
-                            <Popconfirm
-                              title="Delete all requests?"
-                              description="This will permanently delete all request data from the database."
-                              onConfirm={handleClearAll}
-                              okText="Yes, delete all"
-                              cancelText="Cancel"
-                              okButtonProps={{ danger: true, size: 'small' }}
-                            >
-                              <Tooltip title="Delete all requests" overlayInnerStyle={{ fontSize: '11px' }}>
-                                <Button icon={<DeleteOutlined />} size="small" danger style={{ fontSize: '11px' }} />
-                              </Tooltip>
-                            </Popconfirm>
-                          )}
-                          {canEdit && <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>}
+                          <Dropdown trigger={['click']} menu={{ items: [
+                            ...(canEdit ? [{ key: 'add', label: <span style={{ fontSize: '11px' }}>Add New Request</span>, icon: <PlusOutlined style={{ fontSize: '11px' }} />, onClick: handleAddNew }] : []),
+                            { type: 'divider' as const },
+                            { key: 'dlTemplate', label: <span style={{ fontSize: '11px' }}>Download Template</span>, icon: <DownloadOutlined style={{ fontSize: '11px' }} />, onClick: downloadTemplate },
+                            ...(canEdit ? [{
+                              key: 'ulRequest',
+                              label: <span style={{ fontSize: '11px' }}>Upload Requests</span>,
+                              icon: <UploadOutlined style={{ fontSize: '11px' }} />,
+                              onClick: () => {
+                                const inp = document.createElement('input');
+                                inp.type = 'file'; inp.accept = '.xlsx,.xls';
+                                inp.onchange = (ev) => { const f = (ev.target as HTMLInputElement).files?.[0]; if (f) handleUpload(f); };
+                                inp.click();
+                              },
+                            }] : []),
+                            ...(canDelete && requests.length > 0 ? [
+                              { type: 'divider' as const },
+                              {
+                                key: 'deleteAll',
+                                label: <span style={{ fontSize: '11px' }}>Delete All Requests</span>,
+                                icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+                                danger: true,
+                                onClick: () => Modal.confirm({
+                                  title: 'Delete all requests?',
+                                  content: 'This will permanently delete all request data from the database.',
+                                  okText: 'Yes, delete all',
+                                  cancelText: 'Cancel',
+                                  okButtonProps: { danger: true, size: 'small' },
+                                  onOk: handleClearAll,
+                                }),
+                              },
+                            ] : []),
+                          ]}}>
+                            <Button icon={<MoreOutlined />} size="small" style={{ borderRadius: '6px' }} />
+                          </Dropdown>
                         </Space>
                       </Space>
 
@@ -703,12 +969,10 @@ export default function RequestManagement() {
                           <Space>
                             <Popover
                               content={
-                                <Space direction="vertical" size={4} style={{ width: '150px' }}>
+                                <div style={{ minWidth: '180px' }}>
                                   {OVERALL_STATUS_OPTIONS.map(status => (
-                                    <Button
+                                    <div
                                       key={status.value}
-                                      type="text"
-                                      size="small"
                                       onClick={() => {
                                         setRequests(requests.map(r =>
                                           selectedRowKeys.includes(r.sno)
@@ -717,12 +981,20 @@ export default function RequestManagement() {
                                         ));
                                         setSelectedRowKeys([]);
                                       }}
-                                      style={{ width: '100%', textAlign: 'left' }}
+                                      style={{
+                                        padding: '8px 12px',
+                                        cursor: 'pointer',
+                                        fontSize: '11px',
+                                        borderRadius: '4px',
+                                        transition: 'background 0.2s',
+                                      }}
+                                      onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                                     >
                                       {status.label}
-                                    </Button>
+                                    </div>
                                   ))}
-                                </Space>
+                                </div>
                               }
                               trigger={['click']}
                               placement="top"
@@ -731,12 +1003,10 @@ export default function RequestManagement() {
                             </Popover>
                             <Popover
                               content={
-                                <Space direction="vertical" size={4} style={{ width: '180px' }}>
+                                <div style={{ minWidth: '200px' }}>
                                   {PROCESSING_STATUS_OPTIONS.map(status => (
-                                    <Button
+                                    <div
                                       key={status.value}
-                                      type="text"
-                                      size="small"
                                       onClick={() => {
                                         setRequests(requests.map(r =>
                                           selectedRowKeys.includes(r.sno)
@@ -745,12 +1015,20 @@ export default function RequestManagement() {
                                         ));
                                         setSelectedRowKeys([]);
                                       }}
-                                      style={{ width: '100%', textAlign: 'left' }}
+                                      style={{
+                                        padding: '8px 12px',
+                                        cursor: 'pointer',
+                                        fontSize: '11px',
+                                        borderRadius: '4px',
+                                        transition: 'background 0.2s',
+                                      }}
+                                      onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
+                                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                                     >
                                       {status.label}
-                                    </Button>
+                                    </div>
                                   ))}
-                                </Space>
+                                </div>
                               }
                               trigger={['click']}
                               placement="top"
@@ -777,16 +1055,8 @@ export default function RequestManagement() {
                                   <Input size="small" placeholder="Search..." value={filters.beelineId || ''} onChange={e => setFilters({ ...filters, beelineId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
                                 </div>
                                 <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Resource Name</div>
-                                  <Input size="small" placeholder="Search..." value={filters.raisedBy || ''} onChange={e => setFilters({ ...filters, raisedBy: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Account Anchor</div>
                                   <Input size="small" placeholder="Search..." value={filters.accountAnchor || ''} onChange={e => setFilters({ ...filters, accountAnchor: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Description</div>
-                                  <Input size="small" placeholder="Search..." value={filters.description || ''} onChange={e => setFilters({ ...filters, description: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
                                 </div>
                                 <div>
                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Overall Status</div>
@@ -799,6 +1069,10 @@ export default function RequestManagement() {
                                  <div>
                                    <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Request Type</div>
                                    <Select size="small" placeholder="All" allowClear value={filters.requestType || undefined} onChange={val => setFilters({ ...filters, requestType: val })} options={REQUEST_TYPE_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
+                                 </div>
+                                 <div>
+                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline Status</div>
+                                   <Select size="small" placeholder="All" allowClear value={filters.isActive || undefined} onChange={val => setFilters({ ...filters, isActive: val })} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} style={{ width: '100%', fontSize: '11px' }} />
                                  </div>
                               </Space>
                             </div>
@@ -843,16 +1117,8 @@ export default function RequestManagement() {
                                   <Input size="small" placeholder="Search..." value={filters.beelineId || ''} onChange={e => setFilters({ ...filters, beelineId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
                                 </div>
                                 <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Resource Name</div>
-                                  <Input size="small" placeholder="Search..." value={filters.raisedBy || ''} onChange={e => setFilters({ ...filters, raisedBy: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Account Anchor</div>
                                   <Input size="small" placeholder="Search..." value={filters.accountAnchor || ''} onChange={e => setFilters({ ...filters, accountAnchor: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Description</div>
-                                  <Input size="small" placeholder="Search..." value={filters.description || ''} onChange={e => setFilters({ ...filters, description: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
                                 </div>
                                 <div>
                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Overall Status</div>
@@ -866,6 +1132,10 @@ export default function RequestManagement() {
                                    <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Request Type</div>
                                    <Select size="small" placeholder="All" allowClear value={filters.requestType || undefined} onChange={val => setFilters({ ...filters, requestType: val })} options={REQUEST_TYPE_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline Status</div>
+                                    <Select size="small" placeholder="All" allowClear value={filters.isActive || undefined} onChange={val => setFilters({ ...filters, isActive: val })} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} style={{ width: '100%', fontSize: '11px' }} />
+                                  </div>
                               </Space>
                             </div>
                           )}
@@ -885,18 +1155,28 @@ export default function RequestManagement() {
                                 style={{
                                   height: '100%',
                                   borderRadius: '8px',
-                                  border: selectedRowKeys.includes(request.sno) ? '2px solid #1a1a1a' : '1px solid #d9d9d9',
+                                  border: selectedRowKeys.includes(request.sno) ? '2px solid #1a1a1a' : request.isActive === false ? '1px solid #ffe7ba' : '1px solid #d9d9d9',
                                   cursor: 'pointer',
-                                  backgroundColor: selectedRowKeys.includes(request.sno) ? '#f5f5f5' : '#ffffff',
+                                  backgroundColor: selectedRowKeys.includes(request.sno) ? '#f5f5f5' : request.isActive === false ? '#fff7e6' : '#ffffff',
                                   padding: '12px',
+                                  opacity: request.isActive === false ? 0.8 : 1,
                                 }}
                               >
                                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: "8px" }}>
                                    <div>
-                                     <Text strong style={{ fontSize: "13px" }}>{request.beelineId}</Text>
+                                     <Tag color={request.isActive === false ? 'orange' : 'green'} style={{ fontSize: 9, padding: '0 5px', marginBottom: 4, display: 'inline-block' }}>
+                                       {request.isActive === false ? 'Inactive' : 'Active'}
+                                     </Tag>
+                                     <div>
+                                       <Text strong style={{ fontSize: "13px" }}>{request.beelineId}</Text>
+                                       {(linkedCountMap[request.beelineId] || 0) > 0 && (
+                                         <Badge count={linkedCountMap[request.beelineId]} size="small" style={{ backgroundColor: '#1890ff', fontSize: '10px', marginLeft: 4 }} />
+                                       )}
+                                     </div>
                                      <div style={{ fontSize: "12px", color: "#8c8c8c" }}>{request.raisedBy}</div>
                                    </div>
-                                   <div style={{ textAlign: "right" }}>
+                                    <div style={{ display: "flex", gap: 4, alignItems: "center", justifyContent: "flex-end" }}>
+                                      <Tooltip title="View"><Button type="text" size="small" icon={<EyeOutlined />} style={{ padding: 0, color: "#1890ff" }} onClick={e => { e.stopPropagation(); setViewDetailRecord(request); }} /></Tooltip>
                                      <Dropdown
                                         menu={{
                                           items: [
@@ -905,6 +1185,20 @@ export default function RequestManagement() {
                                               label: <span style={{ fontSize: '11px' }}>Edit</span>,
                                               icon: <EditOutlined style={{ fontSize: '11px' }} />,
                                               onClick: () => handleEdit(request),
+                                            } : null,
+                                            {
+                                              key: "linkResources",
+                                              label: <span style={{ fontSize: '11px' }}>Link Resources</span>,
+                                              icon: <LinkOutlined style={{ fontSize: '11px' }} />,
+                                              onClick: () => openLinkResourcesModal(request),
+                                            },
+                                            canEdit ? {
+                                              key: "toggleActive",
+                                              label: <span style={{ fontSize: '11px' }}>{request.isActive === false ? 'Mark Active' : 'Mark Inactive'}</span>,
+                                              icon: request.isActive === false
+                                                ? <CheckCircleOutlined style={{ fontSize: '11px', color: '#52c41a' }} />
+                                                : <StopOutlined style={{ fontSize: '11px', color: '#fa8c16' }} />,
+                                              onClick: () => handleToggleActive(request),
                                             } : null,
                                             canDelete ? {
                                               key: "delete",
@@ -917,9 +1211,10 @@ export default function RequestManagement() {
                                         }}
                                        trigger={["click"]}
                                      >
+                                        {/* eye moved above */}
                                        <Button type="text" size="small" icon={<MoreOutlined />} style={{ padding: 0 }} />
                                      </Dropdown>
-                                     <div style={{ fontSize: "11px", color: "#262626", fontWeight: "500", marginTop: "4px" }}>{request.accountAnchor}</div>
+                                     <div style={{ fontSize: "11px", color: "#262626", fontWeight: "500", marginTop: 4 }}>{request.accountAnchor}</div>
                                    </div>
                                  </div>
                                 <Divider style={{ margin: '8px 0' }} />
@@ -946,7 +1241,7 @@ export default function RequestManagement() {
                                 </Text>
                                 <div style={{ textAlign: 'right' }}>
                                   <Text style={{ fontSize: '10px', color: '#bfbfbf' }}>
-                                    Updated: {request.updatedOn || '-'}
+                                    Updated: {formatDateReadable(request.updatedOn) || '-'}
                                   </Text>
                                 </div>
                               </Card>
@@ -956,85 +1251,127 @@ export default function RequestManagement() {
                           </div>
                         </div>
                       )}
+                      {requests.length === 0 && (
+                        <div style={{ background: '#f5f5f5', borderRadius: '8px', padding: '60px 24px', textAlign: 'center', marginTop: 8 }}>
+                          {loading
+                            ? <Spin tip="Loading requests..." />
+                            : <Text type="secondary">No requests yet. Use the <strong>⋯</strong> menu to upload a file or add a new request.</Text>
+                          }
+                        </div>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  key: 'beeline_ids',
+                  label: <span style={{ fontSize: '12px' }}><LinkOutlined /> Beeline IDs</span>,
+                  children: (
+                    <div style={{ padding: '16px 0' }}>
+                      <BeelineResourcePanel
+                        requests={requests}
+                        allResources={allResources}
+                        onExportBeelineMapping={handleExportBeelineMapping}
+                        onToggleActive={async (id, isActive) => {
+                          const result = await requestApi.setActiveStatus(id, isActive, currentUser?.username);
+                          if (!result.ok) {
+                            Modal.error({ title: 'Cannot Mark Inactive', content: result.error || 'Failed to update status', okText: 'OK' });
+                            return;
+                          }
+                          setRequests(prev => prev.map(r => r.id === id ? { ...r, isActive } : r));
+                        }}
+                      />
                     </div>
                   ),
                 },
                 {
                   key: 'insights',
-                  label: <span><BarChartOutlined /> Insights</span>,
-                  children: <RequestInsightsChart requests={requests} />,
+                  label: <span style={{ fontSize: '12px' }}><BarChartOutlined /> Insights</span>,
+                  children: (
+                    <div style={{ padding: '16px 0' }}>
+                      <EnhancedInsights
+                        requests={requests}
+                        allResources={allResources}
+                        onNavigateToRequests={handleNavigateToRequests}
+                        overallStatusDisplayMap={OVERALL_STATUS_DISPLAY_MAP}
+                        processingStatusDisplayMap={PROCESSING_STATUS_DISPLAY_MAP}
+                        processingStatusOptions={PROCESSING_STATUS_OPTIONS}
+                        overallStatusOptions={OVERALL_STATUS_OPTIONS}
+                        requestTypeOptions={REQUEST_TYPE_OPTIONS}
+                        requestTypeLabel={REQUEST_TYPE_LABEL}
+                        requestTypeColor={REQUEST_TYPE_COLOR}
+                      />
+                    </div>
+                  ),
                 },
               ]}
             />
-          ) : (
-            <>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '12px' }}>
-                <Space wrap size={8}>
-                  {canEdit && (
-                  <Tooltip title="Upload" overlayInnerStyle={{ fontSize: '11px' }}>
-                    <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
-                      <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
-                    </Upload>
-                  </Tooltip>
-                  )}
-                  <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
-                    <Button icon={<DownloadOutlined />} onClick={downloadTemplate} size="small" style={{ borderRadius: '6px' }} />
-                  </Tooltip>
-                  {canEdit && <Button type="default" size="small" style={{ borderRadius: '6px', fontSize: '11px' }} onClick={handleAddNew}>+ Add Request</Button>}
-                </Space>
-              </div>
-              <div style={{ background: '#f5f5f5', borderRadius: '8px', padding: '60px 24px', textAlign: 'center' }}>
-                {loading
-                  ? <Spin tip="Loading requests..." />
-                  : <Text type="secondary">No requests yet. Upload a file or add a new request to get started.</Text>
-                }
-              </div>
-            </>
-          )}
           </div>
         </Space>
 
         <Drawer
-          title={viewDetailRecord ? `${viewDetailRecord.beelineId} — Details` : 'Request Details'}
+          title={
+            viewDetailRecord ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <LinkOutlined style={{ color: '#1890ff' }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>{viewDetailRecord.beelineId}</span>
+                </div>
+                <Space size={4} style={{ marginRight: 32 }}>
+                  <Tooltip title={panelExpanded ? 'Collapse' : 'Expand'}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={panelExpanded ? <ShrinkOutlined /> : <ExpandAltOutlined />}
+                      onClick={() => setPanelExpanded(p => !p)}
+                    />
+                  </Tooltip>
+                  {canEdit && (
+                    <Tooltip title="Edit">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<EditOutlined style={{ color: '#1890ff' }} />}
+                        onClick={() => { handleEdit(viewDetailRecord); setViewDetailRecord(null); setPanelExpanded(false); }}
+                      />
+                    </Tooltip>
+                  )}
+                  {canDelete && (
+                    <Tooltip title="Delete">
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<DeleteOutlined style={{ color: '#ff4d4f' }} />}
+                        onClick={() => { handleDelete(viewDetailRecord); setViewDetailRecord(null); setPanelExpanded(false); }}
+                      />
+                    </Tooltip>
+                  )}
+                </Space>
+              </div>
+            ) : 'Request Details'
+          }
           placement="right"
-          onClose={() => setViewDetailRecord(null)}
+          onClose={() => { setViewDetailRecord(null); setPanelExpanded(false); }}
           open={!!viewDetailRecord}
-          width={480}
+          width={panelExpanded ? 900 : 520}
+          styles={{ body: { padding: '0 16px 16px' } }}
         >
           {viewDetailRecord && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Tag color={REQUEST_TYPE_COLOR[viewDetailRecord.requestType || ''] || 'default'} style={{ fontSize: '11px' }}>
-                  {REQUEST_TYPE_LABEL[viewDetailRecord.requestType || ''] || viewDetailRecord.requestType || 'No Type'}
-                </Tag>
-                <span style={{ backgroundColor: getOverallStatusBackgroundColor(viewDetailRecord.overallStatus), color: getOverallStatusColor(viewDetailRecord.overallStatus), padding: '2px 10px', borderRadius: 4, fontSize: '11px', fontWeight: 500 }}>
-                  {OVERALL_STATUS_DISPLAY_MAP[viewDetailRecord.overallStatus] || viewDetailRecord.overallStatus}
-                </span>
-              </div>
-              {[
-                { label: 'Beeline ID', value: viewDetailRecord.beelineId },
-                { label: 'Raised By', value: viewDetailRecord.raisedBy },
-                { label: 'Account Anchor', value: viewDetailRecord.accountAnchor },
-                { label: 'Processing Status', value: PROCESSING_STATUS_DISPLAY_MAP[viewDetailRecord.processingStatus] || viewDetailRecord.processingStatus },
-                { label: 'Date Raised', value: viewDetailRecord.dateRaised },
-                { label: 'Last Updated', value: viewDetailRecord.updatedOn },
-              ].map(({ label, value }) => value ? (
-                <div key={label} style={{ background: '#fafafa', borderRadius: 6, padding: '10px 14px', border: '1px solid #f0f0f0' }}>
-                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>{label}</div>
-                  <div style={{ fontSize: '13px', fontWeight: 500, color: '#262626' }}>{value}</div>
-                </div>
-              ) : null)}
-              {viewDetailRecord.description && (
-                <div style={{ background: '#fafafa', borderRadius: 6, padding: '10px 14px', border: '1px solid #f0f0f0' }}>
-                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Description</div>
-                  <div style={{ fontSize: '13px', color: '#262626', lineHeight: 1.6 }}>{viewDetailRecord.description}</div>
-                </div>
-              )}
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                {canEdit && <Button size="small" icon={<EditOutlined />} onClick={() => { handleEdit(viewDetailRecord); setViewDetailRecord(null); }}>Edit</Button>}
-                {canDelete && <Button size="small" danger icon={<DeleteOutlined />} onClick={() => { handleDelete(viewDetailRecord); setViewDetailRecord(null); }}>Delete</Button>}
-              </div>
-            </div>
+            <RequestDetailPanel
+              request={viewDetailRecord}
+              currentUser={currentUser?.username || currentUser?.name || 'Unknown'}
+              processingStatusLabel={v => PROCESSING_STATUS_DISPLAY_MAP[v] || v}
+              overallStatusLabel={v => OVERALL_STATUS_DISPLAY_MAP[v] || v}
+              overallStatusColor={getOverallStatusColor}
+              overallStatusBg={getOverallStatusBackgroundColor}
+              requestTypeLabel={v => REQUEST_TYPE_LABEL[v] || v}
+              requestTypeColor={v => REQUEST_TYPE_COLOR[v] || 'default'}
+              canEdit={canEdit}
+              canDelete={canDelete}
+              onEdit={() => { handleEdit(viewDetailRecord); setViewDetailRecord(null); setPanelExpanded(false); }}
+              onDelete={() => { handleDelete(viewDetailRecord); setViewDetailRecord(null); setPanelExpanded(false); }}
+              onToggleActive={() => handleToggleActive(viewDetailRecord)}
+              onLinkResources={() => { openLinkResourcesModal(viewDetailRecord); }}
+            />
           )}
         </Drawer>
 
@@ -1060,7 +1397,7 @@ export default function RequestManagement() {
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Checkbox
                   checked={visibleColumns[key]}
-                  onChange={(e) => setVisibleColumns(prev => ({ ...prev, [key]: e.target.checked }))}
+                  onChange={(e) => setVisibleColumns({ ...visibleColumns, [key]: e.target.checked })}
                 />
                 <label style={{ fontSize: '12px', marginBottom: 0, cursor: 'pointer' }}>{label}</label>
               </div>
@@ -1108,6 +1445,78 @@ export default function RequestManagement() {
           </Form>
         </Drawer>
       </div>
+
+      {/* ── Link Resources Modal ────────────────────────────────── */}
+      <Modal
+        title={
+          <span style={{ fontSize: '13px' }}>
+            <LinkOutlined style={{ marginRight: 6, color: '#1890ff' }} />
+            Link Resources to {linkResourcesModal.request?.beelineId}
+          </span>
+        }
+        open={linkResourcesModal.open}
+        onCancel={() => setLinkResourcesModal({ open: false, request: null })}
+        onOk={handleSaveLinks}
+        okText="Save Links"
+        confirmLoading={savingLinks}
+        width={480}
+        destroyOnClose
+      >
+        {linkResourcesModal.request && (
+          <Space direction="vertical" style={{ width: '100%' }} size={8}>
+            <div style={{ fontSize: '11px', color: '#8c8c8c' }}>
+              Select resources to link to <strong>{linkResourcesModal.request.beelineId}</strong>.
+              Resources already linked to another Beeline ID will be re-linked to this one.
+            </div>
+            <Spin spinning={loadingLinkResources} tip="Loading resources…" size="small">
+              <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, minHeight: 60 }}>
+                {!loadingLinkResources && allResources.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#8c8c8c', fontSize: '12px' }}>No resources available</div>
+                ) : allResources.map((r: ResourcePayload) => {
+                  const rid = (r as any).id as number;
+                  if (!rid) return null;
+                  const isChecked = linkResourcesChecked.has(rid);
+                  const existingBeeline = r.beelineId || '';
+                  const linkedElsewhere = existingBeeline && existingBeeline !== linkResourcesModal.request?.beelineId;
+                  return (
+                    <div key={rid} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderBottom: '1px solid #f5f5f5', cursor: 'pointer', background: isChecked ? '#f0f5ff' : 'transparent' }}
+                      onClick={() => {
+                        const next = new Set(linkResourcesChecked);
+                        if (next.has(rid)) next.delete(rid); else next.add(rid);
+                        setLinkResourcesChecked(next);
+                      }}>
+                      <Checkbox checked={isChecked} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '12px', fontWeight: 500 }}>{r.empName}</div>
+                        <div style={{ fontSize: '11px', color: '#8c8c8c' }}>{r.raId} · {r.piwRole || r.roleOrDomain}</div>
+                      </div>
+                      {linkedElsewhere && (
+                        <Tag color="orange" style={{ fontSize: '10px' }}>{existingBeeline}</Tag>
+                      )}
+                      {isChecked && !linkedElsewhere && (
+                        <Tag color="blue" style={{ fontSize: '10px' }}><LinkOutlined /> Linked</Tag>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Spin>
+            <div style={{ fontSize: '11px', color: '#595959', fontWeight: 500 }}>
+              {linkResourcesChecked.size} resource(s) selected
+            </div>
+          </Space>
+        )}
+      </Modal>
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+

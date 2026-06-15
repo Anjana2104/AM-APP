@@ -1,3 +1,11 @@
+/**
+ * FinanceManagement.tsx
+ * 
+ * SOW Details — Statement of Work management with Excel upload/download,
+ * budget tracking, and project milestone planning
+ * UI Location: Account Operations > Finance > SOW Details
+ * Page ID: executive_revenue
+ */
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   Tabs, Typography, Space, Upload, Table, Button, message, Input, Tooltip,
@@ -21,8 +29,9 @@ import * as auditApi from '../api/auditApi';
 import type { AuditEntry } from '../api/auditApi';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
+import { useUserPreferences } from '../context/UserPreferencesContext';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 type ExcelRow = Record<string, any>;
 
@@ -111,6 +120,7 @@ interface ProjectListProps {
 function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
   const { configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
+  const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('executive_revenue', 'edit');
   const canDelete = hasPermission('executive_revenue', 'delete');
 
@@ -127,9 +137,24 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
   const [fromServer, setFromServer] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
+  const [visibleColumns, setVisibleColumnsState] = useState<Set<string>>(
     new Set(['sno', 'project', 'company', 'code', 'space', 'owner', 'total', 'comments'])
   );
+
+  // Apply saved user preferences once loaded
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    const vis = getColumnVisibility('sow');
+    const keys = Object.entries(vis).filter(([,v]) => v).map(([k]) => k);
+    setVisibleColumnsState(new Set(['sno', 'total', ...keys]));
+  }, [preferencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setVisibleColumns = (newSet: Set<string>) => {
+    setVisibleColumnsState(newSet);
+    const vis: Record<string, boolean> = {};
+    ['project','company','code','space','owner','comments'].forEach(k => { vis[k] = newSet.has(k); });
+    saveColumnVisibility('sow', vis);
+  };
   const [filters, setFilters] = useState<{
     project: string; company: string; space: string; owner: string; fy: string | null; status: string | null;
   }>({ project: '', company: '', space: '', owner: '', fy: null, status: null });
@@ -1144,6 +1169,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Space>
+          <Text type="secondary" style={{ fontSize: '11px', color: '#8c8c8c' }}>Revenue across projects and fiscal years</Text>
           <Text type="secondary" style={{ fontSize: '12px' }}>
             Showing: <strong>{displayRows.length}</strong>{displayRows.length !== rows.length ? ` / ${rows.length}` : ''}
           </Text>
@@ -1155,7 +1181,9 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
           {dirty && (
             <Text type="warning" style={{ fontSize: '11px' }}>● Unsaved changes</Text>
           )}
-          {/* Prominent FY selector */}
+        </Space>
+        <Space size={8}>
+          {/* FY selector moved to right */}
           {availableFYs.length > 0 && (
             <Space size={4}>
               <Text style={{ fontSize: '11px', color: '#8c8c8c' }}>FY:</Text>
@@ -1170,9 +1198,6 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
               />
             </Space>
           )}
-        </Space>
-        <Space size={8}>
-          {/* Currency toggle */}
           <Tooltip title={currency === 'INR' ? 'Switch to USD' : 'Switch to INR'} overlayInnerStyle={{ fontSize: '11px' }}>
             <Button
               size="small"
@@ -2155,10 +2180,6 @@ export function FinanceManagement({ onNavigate: _onNavigate }: FinanceManagement
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '12px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <Space direction="vertical" style={{ width: '100%' }} size={6}>
-          <div>
-            <Title level={4} style={{ marginBottom: 2 }}>SOW Details</Title>
-            <Text type="secondary" style={{ fontSize: '12px' }}>Revenue across projects and fiscal years</Text>
-          </div>
           <div style={{ background: '#fff', borderRadius: 8 }}>
             <Tabs items={items} size="small" defaultActiveKey="milestones" style={{ padding: '0 16px' }} />
           </div>

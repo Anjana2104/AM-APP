@@ -242,7 +242,6 @@ router.post("/projects/bulk", async (req, res) => {
 
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    console.error("Upsert error:", err);
     const msg = err.message || '';
     if (msg.includes('UNIQUE') || msg.includes('unique')) {
       return res.status(409).json({ error: 'Duplicate project code detected. Each project must have a unique code (derived from project name). Fix the file and re-upload.', detail: msg });

@@ -1,4 +1,12 @@
-﻿import React, { useState } from 'react';
+/**
+ * Configuration.tsx
+ * 
+ * App Settings — Global dropdown configuration manager for system-wide
+ * settings, custom fields, and Excel import/export of configurations
+ * UI Location: Settings & Configuration > Configuration > App Settings
+ * Page ID: configuration
+ */
+import React, { useState } from 'react';
 import {
   Button, Input, Modal, Form, Tag, Space, Typography,
   Divider, Tooltip, Popconfirm, Empty, message, Upload, Select, Checkbox, Tabs,

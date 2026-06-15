@@ -46,7 +46,37 @@ function formatNotification(n, userIdInt) {
     is_read_by_user: isReadByUser,
     read_at: n.read_at,
     created_at: n.created_at,
+    trigger_id: n.trigger_id || null,
   };
+}
+
+/**
+ * Load the active snooze rules for a user from user_preferences.
+ * Returns an array of { triggerId: number|null, until: ISO string } for rules that haven't expired.
+ */
+function getActiveSnoozeRules(db, userIdInt) {
+  try {
+    const row = db.get('SELECT preferences FROM user_preferences WHERE user_id = ?', [userIdInt]);
+    if (!row) return [];
+    let prefs = {};
+    try { prefs = JSON.parse(row.preferences || '{}'); } catch (_) { return []; }
+    const rules = prefs.notificationSnooze || [];
+    const nowTs = new Date();
+    return rules.filter(r => new Date(r.until) > nowTs);
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Check if a notification's trigger_id is covered by any active snooze rule.
+ * - A rule with triggerId === null means "snooze ALL triggers"
+ * - A rule with triggerId === X means "snooze trigger X only"
+ * Notifications NOT from a trigger (trigger_id is null) are never snoozed.
+ */
+function isNotificationSnoozed(notifTriggerId, snoozeRules) {
+  if (!notifTriggerId) return false; // manual / broadcast notifications are never snoozed
+  return snoozeRules.some(rule => rule.triggerId === null || rule.triggerId === notifTriggerId);
 }
 
 // GET /api/notifications/count?userId=X  — lightweight unread count
@@ -60,11 +90,13 @@ router.get('/count', async (req, res) => {
     const groupRows = db.all('SELECT group_id FROM user_group_members WHERE user_id = ?', [userIdInt]);
     const groupIds = groupRows.map(r => r.group_id);
     const { where, params } = buildWhereClause(userIdInt, groupIds);
+    const snoozeRules = getActiveSnoozeRules(db, userIdInt);
 
-    // Count only rows not read by this user
-    const all = db.all(`SELECT id, is_read, read_by, target_group_id FROM notifications ${where} ORDER BY created_at DESC`, params);
+    // Count only rows not read by this user and not snoozed
+    const all = db.all(`SELECT id, is_read, read_by, target_group_id, trigger_id FROM notifications ${where} ORDER BY created_at DESC`, params);
     let unreadCount = 0;
     for (const n of all) {
+      if (isNotificationSnoozed(n.trigger_id, snoozeRules)) continue;
       let readBy = [];
       try { readBy = JSON.parse(n.read_by || '[]'); } catch (_) {}
       const isReadByUser = readBy.map(String).includes(String(userIdInt)) || (n.is_read === 1 && !n.target_group_id);
@@ -91,13 +123,19 @@ router.get('/', async (req, res) => {
     const groupRows = db.all('SELECT group_id FROM user_group_members WHERE user_id = ?', [userIdInt]);
     const groupIds = groupRows.map(r => r.group_id);
     const { where, params } = buildWhereClause(userIdInt, groupIds);
+    const snoozeRules = getActiveSnoozeRules(db, userIdInt);
 
-    // Fetch all matching notifications, then apply read-filter + pagination in JS
-    // (SQLite can't filter by JSON read_by content efficiently without custom function)
+    // Fetch all matching notifications, then apply read-filter + snooze-filter + pagination in JS
     const all = db.all(`SELECT * FROM notifications ${where} ORDER BY created_at DESC`, params);
 
     const formatted = all.map(n => formatNotification(n, userIdInt));
-    const filtered = onlyUnread ? formatted.filter(n => !n.is_read_by_user) : formatted;
+    // Remove snoozed notifications from unread view; still visible in read history
+    const filtered = formatted.filter(n => {
+      if (onlyUnread && isNotificationSnoozed(n.trigger_id, snoozeRules)) return false;
+      if (onlyUnread && n.is_read_by_user) return false;
+      if (!onlyUnread && n.is_read_by_user) return true; // history — always show
+      return true;
+    });
 
     const total = filtered.length;
     const page = filtered.slice(offsetInt, offsetInt + limitInt);

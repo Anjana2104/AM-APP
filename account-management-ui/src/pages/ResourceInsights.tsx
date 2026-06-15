@@ -1,3 +1,11 @@
+/**
+ * ResourceInsights.tsx
+ * 
+ * Resource Intelligence — Analytics and insights for resource utilization,
+ * skills distribution, and capacity planning
+ * UI Location: Account Operations > Resources > Resource Intelligence
+ * Page ID: resources_insights
+ */
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Select, Tabs, Button, Modal, Form, Input, Tag, Space, Row, Col,

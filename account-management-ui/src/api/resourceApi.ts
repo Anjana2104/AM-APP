@@ -21,6 +21,7 @@ export interface ResourcePayload {
   engagement: string;
   skills: string;
   allocationStatus?: string;
+  beelineId?: string;
 }
 
 let _serverAvailable: boolean | null = null;
@@ -52,19 +53,19 @@ export async function getResources(): Promise<{ resources: ResourcePayload[]; fr
 }
 
 // Upsert bulk (keyed by raId)
-export async function bulkSave(resources: ResourcePayload[]): Promise<{ ok: boolean; inserted: number; updated: number }> {
+export async function bulkSave(resources: ResourcePayload[], changedBy?: string): Promise<{ ok: boolean; inserted: number; updated: number }> {
   const online = await isServerAvailable();
   if (!online) return { ok: false, inserted: 0, updated: 0 };
   const res = await fetch(`${BASE}/bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ resources }),
+    body: JSON.stringify({ resources, changedBy: changedBy || 'system' }),
   });
   return res.json();
 }
 
 // Update one resource
-export async function updateResource(id: number, payload: Partial<ResourcePayload>): Promise<boolean> {
+export async function updateResource(id: number, payload: Partial<ResourcePayload> & { changedBy?: string }): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
   const res = await fetch(`${BASE}/${id}`, {
@@ -92,4 +93,103 @@ export async function clearAll(): Promise<boolean> {
   const res = await fetch(BASE, { method: 'DELETE' });
   const data = await res.json();
   return data.ok === true;
+}
+
+// ── Resource Comments ─────────────────────────────────────────────────────
+
+export interface ResourceComment {
+  id: number;
+  resource_id: number;
+  author: string;
+  tag: string;
+  body: string;
+  created_at: string;
+}
+
+export async function getResourceComments(resourceId: number): Promise<ResourceComment[]> {
+  const online = await isServerAvailable();
+  if (!online) return [];
+  const res = await fetch(`${BASE}/${resourceId}/comments`);
+  const data = await res.json();
+  return data.comments || [];
+}
+
+export async function addResourceComment(
+  resourceId: number,
+  payload: { author: string; tag: string; body: string }
+): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/${resourceId}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+export async function batchUpdateResources(
+  records: Array<Partial<ResourcePayload> & { id: number; changedBy?: string }>,
+  globalChangedBy?: string
+): Promise<{ ok: boolean; updated: number; notFound: number }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false, updated: 0, notFound: 0 };
+  const res = await fetch(`${BASE}/batch`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ records, changedBy: globalChangedBy }),
+  });
+  const data = await res.json();
+  return { ok: data.ok === true, updated: data.updated || 0, notFound: data.notFound || 0 };
+}
+
+export async function deleteResourceComment(resourceId: number, commentId: number): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/${resourceId}/comments/${commentId}`, { method: 'DELETE' });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+// ── Beeline Link ─────────────────────────────────────────────────────────────
+
+export async function setBeelineLink(resourceId: number, beelineId: string, changedBy?: string): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/${resourceId}/beeline-link`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ beelineId, changedBy: changedBy || 'system' }),
+  });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+export async function getBeelineLinks(): Promise<{ id: number; raId: string; empName: string; beelineId: string }[]> {
+  const online = await isServerAvailable();
+  if (!online) return [];
+  const res = await fetch(`${BASE}/beeline-links`);
+  const data = await res.json();
+  return (data.links || []).map((r: any) => ({
+    id: r.id, raId: r.ra_id, empName: r.emp_name, beelineId: r.beeline_id,
+  }));
+}
+
+export interface CrossSearchComment extends ResourceComment {
+  emp_name: string;
+  ra_id: string;
+  allocation_status?: string;
+  engagement?: string;
+}
+
+export async function searchCommentsAcrossResources(q: string): Promise<CrossSearchComment[]> {
+  if (!q || q.trim().length < 2) return [];
+  const online = await isServerAvailable();
+  if (!online) return [];
+  try {
+    const res = await fetch(`${BASE}/comments-search?q=${encodeURIComponent(q.trim())}`);
+    const data = await res.json();
+    return data.results || [];
+  } catch { return []; }
 }

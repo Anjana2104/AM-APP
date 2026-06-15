@@ -95,6 +95,8 @@ export const AVAILABLE_LINK_TARGETS: LinkTarget[] = [
   { id: 'request_overall_status_field', label: 'Overall Status dropdown',   section: 'Request Management', module: 'Request Management',   description: 'Inline edit + filters' },
   // ── Internal Process ───────────────────────────────────────────────
   { id: 'ra_process_account_anchor_field', label: 'Account Anchor dropdown', section: 'Internal Process', module: 'Internal Process',     description: 'Inline allocation edit' },
+  // ── Resources → Comment Tags ───────────────────────────────────────
+  { id: 'resource_comment_tag_field',   label: 'Comment Tag dropdown',      section: 'Resources',          module: 'Resource Information & Engagement Mapping', description: 'Tag picker when adding comments in resource detail view' },
 ];
 
 const DEFAULT_CONFIGS: ConfigType[] = [];

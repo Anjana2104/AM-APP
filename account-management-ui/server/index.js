@@ -23,6 +23,9 @@ const auditRoutes = require('./routes/audit');
 const userGroupRoutes = require('./routes/user-groups');
 const notificationRoutes = require('./routes/notifications');
 const notificationTriggerRoutes = require('./routes/notification-triggers');
+const userPreferencesRoutes = require('./routes/user-preferences');
+const resourceInsightsRoutes = require('./routes/resource-insights');
+const aiRoutes = require('./routes/ai');
 const { hashPassword } = require('./routes/auth');
 
 const PORT = process.env.PORT || 3001;
@@ -62,8 +65,10 @@ async function runMigrations() {
     raised_by TEXT DEFAULT "", processing_status TEXT DEFAULT "",
     overall_status TEXT DEFAULT "", account_anchor TEXT DEFAULT "",
     date_raised TEXT DEFAULT "", request_type TEXT DEFAULT "",
-    updated_on TEXT DEFAULT "", created_at TEXT, updated_at TEXT
+    updated_on TEXT DEFAULT "", created_at TEXT, updated_at TEXT,
+    is_active INTEGER DEFAULT 1
   )`);
+  try { db.run(`ALTER TABLE client_requests ADD COLUMN is_active INTEGER DEFAULT 1`); } catch (_) {}
   db.run(`CREATE TABLE IF NOT EXISTS resources (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
     ra_id TEXT NOT NULL UNIQUE, emp_name TEXT DEFAULT "",
@@ -206,17 +211,92 @@ async function runMigrations() {
   try { db.run(`ALTER TABLE notification_triggers ADD COLUMN sort_order INTEGER DEFAULT 0`); } catch (_) {}
   // Backfill sort_order with id order for existing rows
   db.run(`UPDATE notification_triggers SET sort_order = id WHERE sort_order = 0 OR sort_order IS NULL`);
+
+  // ── User Preferences table ────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS user_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL UNIQUE,
+    preferences TEXT DEFAULT "{}",
+    updated_at TEXT
+  )`);
+
+  // Add trigger_id to notifications (idempotent — used for snooze filtering)
+  try { db.run(`ALTER TABLE notifications ADD COLUMN trigger_id INTEGER DEFAULT NULL`); } catch (_) {}
+
+  // ── Beeline ID link on resources ─────────────────────────────────────────
+  try { db.run(`ALTER TABLE resources ADD COLUMN beeline_id TEXT DEFAULT ""`); } catch (_) {}
+
+  // ── Resource Comments table ────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS resource_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id INTEGER NOT NULL,
+    author TEXT NOT NULL DEFAULT "",
+    tag TEXT NOT NULL DEFAULT "General",
+    body TEXT NOT NULL DEFAULT "",
+    created_at TEXT NOT NULL
+  )`);
+
+  // ── Request Comments table ─────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS request_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    request_id INTEGER NOT NULL,
+    author TEXT NOT NULL DEFAULT "",
+    tag TEXT NOT NULL DEFAULT "General",
+    body TEXT NOT NULL DEFAULT "",
+    created_at TEXT NOT NULL
+  )`);
+
+  // ── Resource Insights table ────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS resource_insights (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_id INTEGER NOT NULL,
+    section TEXT NOT NULL DEFAULT 'interaction',
+    title TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    tag TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'open',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    target_date TEXT DEFAULT NULL,
+    author TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
   // Seed default Admin role and admin user if they don't exist
   const adminRole = db.get("SELECT id FROM roles WHERE name = 'Admin'");
   let adminRoleId = adminRole ? adminRole.id : null;
+
+  // ── Patch ALL roles: add any missing page permissions ─────────────────
+  // This runs on every startup so new pages are automatically granted to Admin
+  // and visible in UAC for other roles to configure.
+  const ALL_KNOWN_PAGES = [
+    'account_summary','executive_summary','executive_revenue','executive_invoicing',
+    'resources_info','resources_utilization','resources_upskilling','resources_insights',
+    'clientmgmt_requests','clientmgmt_connects',
+    'information_ratecard','information_teamhierarchy','information_process','information_codeguide',
+    'configuration','user_settings','user_access_control',
+  ];
+  const existingRoles = db.all("SELECT id, name, permissions FROM roles");
+  for (const role of existingRoles) {
+    let perms = {};
+    try { perms = JSON.parse(role.permissions || '{}'); } catch { perms = {}; }
+    let changed = false;
+    for (const page of ALL_KNOWN_PAGES) {
+      if (!perms[page]) {
+        // Admin gets full access; others get view-only by default
+        perms[page] = role.name === 'Admin'
+          ? { view: true, edit: true, delete: true }
+          : { view: false, edit: false, delete: false };
+        changed = true;
+      }
+    }
+    if (changed) {
+      db.run("UPDATE roles SET permissions=?, updated_at=? WHERE id=?",
+        [JSON.stringify(perms), new Date().toISOString(), role.id]);
+    }
+  }
+
   if (!adminRoleId) {
-    const allPages = [
-      'account_summary','executive_summary','executive_revenue','executive_invoicing',
-      'resources_info','resources_utilization','resources_upskilling',
-      'clientmgmt_requests','clientmgmt_connects',
-      'information_ratecard','information_teamhierarchy','information_process','information_codeguide',
-      'configuration','user_access_control',
-    ];
+    const allPages = ALL_KNOWN_PAGES;
     const permissions = {};
     allPages.forEach(p => { permissions[p] = { view: true, edit: true, delete: true }; });
     const ts = new Date().toISOString();
@@ -225,7 +305,6 @@ async function runMigrations() {
       ['Admin', 'Full access to all pages and features', JSON.stringify(permissions), ts, ts]
     );
     adminRoleId = db.lastId();
-    console.log(' Created default Admin role');
   }
 
   const adminUser = db.get("SELECT id FROM users WHERE username = 'admin'");
@@ -237,13 +316,23 @@ async function runMigrations() {
       "INSERT INTO users (username, password_hash, password_plain, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
       ['admin', hash, 'admin123', 'Administrator', adminRoleId, 1, ts, ts]
     );
-    console.log(' Created default admin user (username: admin, password: admin123)');
   }
 
-  console.log(' Migrations applied.');
 }
 
-// ── Middleware ────────────────────────────────────────────────────────
+// ── Global error handlers ─────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  process.exit(1);
+});
+
+// ── Request logger ────────────────────────────────────────────────────
+app.use((req, _res, next) => {
+  next();
+});
+
 app.use(cors({
   origin: process.env.ALLOWED_ORIGIN || 'http://localhost:5173',
   credentials: true,
@@ -273,6 +362,9 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/user-groups', userGroupRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/notification-triggers', notificationTriggerRoutes);
+app.use('/api/user-preferences', userPreferencesRoutes);
+app.use('/api/resource-insights', resourceInsightsRoutes);
+app.use('/api/ai', aiRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -281,7 +373,6 @@ app.use((req, res) => {
 
 // ── Error handler ─────────────────────────────────────────────────────
 app.use((err, req, res, _next) => {
-  console.error(err);
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
@@ -289,16 +380,5 @@ app.use((err, req, res, _next) => {
 runMigrations().then(() => {
   app.listen(PORT, () => {
     const dbConfig = require('./config/database');
-    console.log(`\n EAM API Server running on http://localhost:${PORT}`);
-    console.log(` Database: ${dbConfig.client}`);
-    if (dbConfig.client === 'sqlite3') {
-      console.log(` SQLite file: ${dbConfig.filename}`);
-    }
-    console.log(`\n   GET    /api/health`);
-    console.log(`   GET    /api/finance/projects`);
-    console.log(`   GET    /api/finance/month-headers`);
-    console.log(`   POST   /api/finance/projects/bulk`);
-    console.log(`   PUT    /api/finance/projects/:id`);
-    console.log(`   DELETE /api/finance/projects/:id\n`);
   });
-}).catch(err => { console.error('Migration failed:', err); process.exit(1); });
+}).catch(err => { process.exit(1); });

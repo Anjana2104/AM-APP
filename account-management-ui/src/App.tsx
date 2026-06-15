@@ -1,4 +1,4 @@
-import { Tooltip, Popconfirm } from 'antd';
+import { Tooltip, Popconfirm, Popover } from 'antd';
 import { useState, useEffect, useRef } from 'react';
 import { FinanceManagement } from './pages/FinanceManagement';
 import { InvoiceManagement } from './pages/InvoiceManagement';
@@ -13,14 +13,17 @@ import { InternalProcess } from './pages/InternalProcess';
 import { Configuration } from './pages/Configuration';
 import { CodeGuide } from './pages/CodeGuide';
 import { UserAccessControl } from './pages/UserAccessControl';
+import { UserSettings } from './pages/UserSettings';
 import { LoginPage } from './pages/LoginPage';
+import ResourceInsights from './pages/ResourceInsights';
 import { useAuth } from './context/AuthContext';
 import { NotificationProvider, useNotifications } from './context/NotificationContext';
+import { UserPreferencesProvider } from './context/UserPreferencesContext';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DownOutlined, RightOutlined,
-  EyeOutlined, BankOutlined, HomeOutlined, InfoCircleOutlined,
+  EyeOutlined, HomeOutlined, InfoCircleOutlined,
   CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined, SettingOutlined,
   SafetyCertificateOutlined, BellOutlined, CheckOutlined,
   CloseOutlined, AlertOutlined, InfoCircleFilled,
@@ -31,6 +34,7 @@ import type { UserGroup } from './api/notificationApi';
 import type { UserRecord } from './api/authApi';
 import * as authApi from './api/authApi';
 import type { ResourceRow } from './pages/ResourceInformation';
+import * as resourceApi from './api/resourceApi';
 
 type EAMPage =
   | 'account_summary'
@@ -39,13 +43,14 @@ type EAMPage =
   | 'executive_invoicing'
   | 'resources_info'
   | 'resources_utilization'
-  | 'resources_upskilling'
+  | 'resources_insights'
   | 'clientmgmt_requests'
   | 'clientmgmt_connects'
   | 'information_ratecard'
   | 'information_teamhierarchy'
   | 'information_process'
   | 'information_codeguide'
+  | 'user_settings'
   | 'configuration'
   | 'user_access_control';
 
@@ -59,7 +64,7 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   executive_invoicing: 'executive',
   resources_info: 'resources',
   resources_utilization: 'resources',
-  resources_upskilling: 'resources',
+  resources_insights: 'resources',
   clientmgmt_requests: 'clientmgmt',
   clientmgmt_connects: 'clientmgmt',
   information_ratecard: 'information',
@@ -67,6 +72,7 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   information_process: 'information',
   information_codeguide: 'information',
   configuration: 'configuration',
+  user_settings: 'configuration',
   user_access_control: 'configuration',
 };
 
@@ -552,6 +558,34 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [resources, setResources] = useState<ResourceRow[]>([]);
   const [resourceInfoRoleFilter, setResourceInfoRoleFilter] = useState<string | undefined>(undefined);
+  const [resourceInfoRaIdFilter, setResourceInfoRaIdFilter] = useState<string | undefined>(undefined);
+  const [resourceInfoFilterType, setResourceInfoFilterType] = useState<string | undefined>(undefined);
+  const [resourceInfoFilterValue, setResourceInfoFilterValue] = useState<string | undefined>(undefined);
+  const [requestsBeelineFilter, setRequestsBeelineFilter] = useState<string | undefined>(undefined);
+
+  // Load resources on mount so EngagementMapping and ResourceInsights work without visiting ResourceInformation first
+  useEffect(() => {
+    resourceApi.getResources().then(({ resources: rows }) => {
+      const mapped: ResourceRow[] = rows.map((r: any, i: number) => ({
+        key: String(r.id || i),
+        id: r.id,
+        sno: String(r.sno || i + 1),
+        raId: String(r.ra_id || r.raId || ''),
+        empName: String(r.emp_name || r.empName || ''),
+        emailId: String(r.email_id || r.emailId || ''),
+        piwRole: String(r.piw_role || r.piwRole || ''),
+        roleOrDomain: String(r.role_or_domain || r.roleOrDomain || ''),
+        previousWorkex: String(r.previous_workex || r.previousWorkex || ''),
+        doj: String(r.doj || ''),
+        totalWorkex: String(r.total_workex || r.totalWorkex || ''),
+        skills: String(r.skills || ''),
+        engagement: String(r.engagement || ''),
+        allocationStatus: String(r.allocation_status || r.allocationStatus || ''),
+        beelineId: String(r.beeline_id || r.beelineId || ''),
+      }));
+      setResources(mapped);
+    }).catch(() => { /* graceful fallback */ });
+  }, []);
 
   // Track previous auth state to detect genuine login (false → true) vs page refresh
   const prevAuthRef = useRef<boolean | undefined>(undefined);
@@ -612,16 +646,17 @@ export default function App() {
         case 'executive_summary':    return <FinanceSummary onNavigate={page => navigateTo(page, 'executive')} />;
         case 'executive_revenue':     return <FinanceManagement />;
         case 'executive_invoicing':   return <InvoiceManagement />;
-        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} initialRoleFilter={resourceInfoRoleFilter} onFilterApplied={() => setResourceInfoRoleFilter(undefined)} />;
-        case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} onNavigate={(page, roleFilter) => { setResourceInfoRoleFilter(roleFilter); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} />;
-        case 'resources_upskilling':  return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Upskilling — Coming Soon</div>;
-        case 'clientmgmt_requests':   return <RequestManagement activeTab="requests" />;
+        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} initialRoleFilter={resourceInfoRoleFilter} initialRaIdFilter={resourceInfoRaIdFilter} initialFilterType={resourceInfoFilterType} initialFilterValue={resourceInfoFilterValue} onFilterApplied={() => { setResourceInfoRoleFilter(undefined); setResourceInfoRaIdFilter(undefined); setResourceInfoFilterType(undefined); setResourceInfoFilterValue(undefined); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
+        case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} onNavigate={(page, roleFilter) => { setResourceInfoRoleFilter(roleFilter); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
+        case 'resources_insights':    return <ResourceInsights resources={resources} onNavigate={(page, raId) => { if (raId) setResourceInfoRaIdFilter(raId); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateWithFilter={(type, value) => { setResourceInfoFilterType(type); setResourceInfoFilterValue(value); navigateTo('resources_info', PAGE_SECTION_MAP['resources_info']); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} />;
+        case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} onFilterApplied={() => setRequestsBeelineFilter(undefined)} />;
         case 'clientmgmt_connects':   return <InternalProcess />;
         case 'information_ratecard':      return <RateCard />;
         case 'information_teamhierarchy': return <TeamHierarchy />;
         case 'information_codeguide':        return <CodeGuide />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
         case 'configuration':             return <Configuration />;
+        case 'user_settings':             return <UserSettings />;
         case 'user_access_control':       return <UserAccessControl />;
         default: return null;
       }
@@ -629,6 +664,7 @@ export default function App() {
 
     return (
       <NotificationProvider>
+      <UserPreferencesProvider userId={currentUser?.id ?? null}>
       <div style={{ height: '100vh', display: 'flex', flexDirection: 'row', overflow: 'hidden' }}>
 
         {/* ─── Left Sidebar ───────────────────────────────────── */}
@@ -662,14 +698,8 @@ export default function App() {
                   <HomeOutlined style={{ fontSize: '15px' }} />
                 </button>
 
-                {/* ZS Associates account */}
-                <div style={{ flex: 1, background: 'rgba(255,255,255,0.06)', borderRadius: 7, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.07)', minWidth: 0 }}>
-                  <div style={{ width: 22, height: 22, borderRadius: 5, background: 'rgba(59,130,246,0.22)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <BankOutlined style={{ fontSize: '11px', color: '#60a5fa' }} />
-                  </div>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>ZS Associates</span>
-                  <DownOutlined style={{ fontSize: '8px', color: 'rgba(255,255,255,0.35)', flexShrink: 0 }} />
-                </div>
+                {/* EAM brand label */}
+                <span style={{ flex: 1, fontSize: '16px', fontWeight: 700, color: '#fff', letterSpacing: 1.5, textAlign: 'center', userSelect: 'none' }}>EAM</span>
 
                 {/* Bell icon */}
                 <NotificationBell collapsed={false} />
@@ -686,24 +716,96 @@ export default function App() {
           <div style={{ flex: 1, overflowY: 'auto', padding: collapsed ? '4px 6px' : '2px 8px', scrollbarWidth: 'none' }}>
 
             {collapsed ? (
-              /* Collapsed: icons only */
+              /* Collapsed: icons with Popover sub-menus */
               <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                {[
-                  { icon: <EyeOutlined />, label: 'Account Summary', action: () => navigateTo('account_summary', 'account'), active: activePage === 'account_summary', pageId: 'account_summary' },
-                  { icon: <DollarOutlined />, label: 'Finance Management', action: () => navigateTo('executive_summary', 'executive'), active: activePage.startsWith('executive'), pageId: 'executive_summary' },
-                  { icon: <ThunderboltOutlined />, label: 'Resources', action: () => navigateTo('resources_info', 'resources'), active: activePage.startsWith('resources'), pageId: 'resources_info' },
-                  { icon: <UserOutlined />, label: 'Request Management', action: () => navigateTo('clientmgmt_requests', 'clientmgmt'), active: activePage.startsWith('clientmgmt'), pageId: 'clientmgmt_requests' },
-                  { icon: <NodeIndexOutlined />, label: 'Internal Process', action: () => navigateTo('clientmgmt_connects', 'clientmgmt'), active: activePage === 'clientmgmt_connects', pageId: 'clientmgmt_connects' },
-                  { icon: <SettingOutlined />, label: 'Configuration', action: () => navigateTo('configuration', 'configuration'), active: activePage === 'configuration', pageId: 'configuration' },
-                  { icon: <SafetyCertificateOutlined />, label: 'User Access Control', action: () => navigateTo('user_access_control', 'configuration'), active: activePage === 'user_access_control', pageId: 'user_access_control' },
-                  { icon: <InfoCircleOutlined />, label: 'Knowledge Base', action: () => navigateTo('information_ratecard', 'information'), active: activePage.startsWith('information'), pageId: 'information_ratecard' },
-                ].filter(item => hasPermission(item.pageId, 'view')).map(item => (
-                  <Tooltip key={item.label} title={item.label} placement="right">
-                    <button onClick={item.action} style={{ background: item.active ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: item.active ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
-                      {item.icon}
+                {/* Account Summary — direct nav, no children */}
+                {hasPermission('account_summary', 'view') && (
+                  <Tooltip title="Account Summary" placement="right">
+                    <button onClick={() => navigateTo('account_summary', 'account')} style={{ background: activePage === 'account_summary' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage === 'account_summary' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      <EyeOutlined />
                     </button>
                   </Tooltip>
-                ))}
+                )}
+                {/* Finance — popover with sub-items */}
+                {(hasPermission('executive_summary', 'view') || hasPermission('executive_revenue', 'view') || hasPermission('executive_invoicing', 'view')) && (
+                  <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 160 }} content={
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Finance</div>
+                      {hasPermission('executive_summary', 'view') && <button onClick={() => { navigateTo('executive_summary', 'executive'); }} style={{ background: activePage === 'executive_summary' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'executive_summary' ? '#1677ff' : '#262626', fontWeight: activePage === 'executive_summary' ? 600 : 400 }}>Summary</button>}
+                      {hasPermission('executive_revenue', 'view') && <button onClick={() => { navigateTo('executive_revenue', 'executive'); }} style={{ background: activePage === 'executive_revenue' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'executive_revenue' ? '#1677ff' : '#262626', fontWeight: activePage === 'executive_revenue' ? 600 : 400 }}>SOW Details</button>}
+                      {hasPermission('executive_invoicing', 'view') && <button onClick={() => { navigateTo('executive_invoicing', 'executive'); }} style={{ background: activePage === 'executive_invoicing' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'executive_invoicing' ? '#1677ff' : '#262626', fontWeight: activePage === 'executive_invoicing' ? 600 : 400 }}>Invoicing Details</button>}
+                    </div>
+                  }>
+                    <button style={{ background: activePage.startsWith('executive') ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('executive') ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      <DollarOutlined />
+                    </button>
+                  </Popover>
+                )}
+                {/* Resources — popover */}
+                {(hasPermission('resources_info', 'view') || hasPermission('resources_insights', 'view') || hasPermission('resources_utilization', 'view')) && (
+                  <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 180 }} content={
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Resources</div>
+                      {hasPermission('resources_info', 'view') && <button onClick={() => { navigateTo('resources_info', 'resources'); }} style={{ background: activePage === 'resources_info' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'resources_info' ? '#1677ff' : '#262626', fontWeight: activePage === 'resources_info' ? 600 : 400 }}>Resource Hub</button>}
+                      {hasPermission('resources_insights', 'view') && <button onClick={() => { navigateTo('resources_insights', 'resources'); }} style={{ background: activePage === 'resources_insights' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'resources_insights' ? '#1677ff' : '#262626', fontWeight: activePage === 'resources_insights' ? 600 : 400 }}>Resource Intelligence</button>}
+                      {hasPermission('resources_utilization', 'view') && <button onClick={() => { navigateTo('resources_utilization', 'resources'); }} style={{ background: activePage === 'resources_utilization' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'resources_utilization' ? '#1677ff' : '#262626', fontWeight: activePage === 'resources_utilization' ? 600 : 400 }}>Engagement Mapping</button>}
+                    </div>
+                  }>
+                    <button style={{ background: activePage.startsWith('resources') ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('resources') ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      <ThunderboltOutlined />
+                    </button>
+                  </Popover>
+                )}
+                {/* Client Requests — popover */}
+                {hasPermission('clientmgmt_requests', 'view') && (
+                  <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 160 }} content={
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Clients</div>
+                      <button onClick={() => { navigateTo('clientmgmt_requests', 'clientmgmt'); }} style={{ background: activePage === 'clientmgmt_requests' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'clientmgmt_requests' ? '#1677ff' : '#262626', fontWeight: activePage === 'clientmgmt_requests' ? 600 : 400 }}>Requests</button>
+                    </div>
+                  }>
+                    <button style={{ background: activePage.startsWith('clientmgmt') && activePage !== 'clientmgmt_connects' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('clientmgmt') && activePage !== 'clientmgmt_connects' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      <UserOutlined />
+                    </button>
+                  </Popover>
+                )}
+                {/* Internal Process */}
+                <Tooltip title="Internal Process" placement="right">
+                  <button onClick={() => navigateTo('clientmgmt_connects', 'clientmgmt')} style={{ background: activePage === 'clientmgmt_connects' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage === 'clientmgmt_connects' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                    <NodeIndexOutlined />
+                  </button>
+                </Tooltip>
+                {/* Configuration — popover */}
+                {(hasPermission('configuration', 'view') || hasPermission('user_settings', 'view') || hasPermission('user_access_control', 'view')) && (
+                  <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 180 }} content={
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Configuration</div>
+                      {hasPermission('configuration', 'view') && <button onClick={() => { navigateTo('configuration', 'configuration'); }} style={{ background: activePage === 'configuration' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'configuration' ? '#1677ff' : '#262626', fontWeight: activePage === 'configuration' ? 600 : 400 }}>App Settings</button>}
+                      {hasPermission('user_settings', 'view') && <button onClick={() => { navigateTo('user_settings', 'configuration'); }} style={{ background: activePage === 'user_settings' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'user_settings' ? '#1677ff' : '#262626', fontWeight: activePage === 'user_settings' ? 600 : 400 }}>User Settings</button>}
+                      {hasPermission('user_access_control', 'view') && <button onClick={() => { navigateTo('user_access_control', 'configuration'); }} style={{ background: activePage === 'user_access_control' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'user_access_control' ? '#1677ff' : '#262626', fontWeight: activePage === 'user_access_control' ? 600 : 400 }}>User Access Control</button>}
+                    </div>
+                  }>
+                    <button style={{ background: activePage.startsWith('configuration') || activePage === 'user_settings' || activePage === 'user_access_control' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('configuration') || activePage === 'user_settings' || activePage === 'user_access_control' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      <SettingOutlined />
+                    </button>
+                  </Popover>
+                )}
+                {/* Knowledge Base — popover */}
+                {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (
+                  <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 160 }} content={
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Knowledge Base</div>
+                      {hasPermission('information_ratecard', 'view') && <button onClick={() => { navigateTo('information_ratecard', 'information'); }} style={{ background: activePage === 'information_ratecard' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_ratecard' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_ratecard' ? 600 : 400 }}>Client Rate Card</button>}
+                      {hasPermission('information_teamhierarchy', 'view') && <button onClick={() => { navigateTo('information_teamhierarchy', 'information'); }} style={{ background: activePage === 'information_teamhierarchy' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_teamhierarchy' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_teamhierarchy' ? 600 : 400 }}>Team Hierarchy</button>}
+                      {hasPermission('information_process', 'view') && <button onClick={() => { navigateTo('information_process', 'information'); }} style={{ background: activePage === 'information_process' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_process' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_process' ? 600 : 400 }}>Client Process</button>}
+                      {hasPermission('information_codeguide', 'view') && <button onClick={() => { navigateTo('information_codeguide', 'information'); }} style={{ background: activePage === 'information_codeguide' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_codeguide' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_codeguide' ? 600 : 400 }}>Code Guide</button>}
+                    </div>
+                  }>
+                    <button style={{ background: activePage.startsWith('information') ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('information') ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                      <InfoCircleOutlined />
+                    </button>
+                  </Popover>
+                )}
                 <div style={{ margin: '4px 6px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
                 <Tooltip title="Expand" placement="right">
                   <button onClick={() => setSidebarCollapsed(false)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
@@ -742,28 +844,28 @@ export default function App() {
                 )}
 
                 {/* Resources */}
-                {(hasPermission('resources_info', 'view') || hasPermission('resources_utilization', 'view') || hasPermission('resources_upskilling', 'view')) && (
+                {(hasPermission('resources_info', 'view') || hasPermission('resources_utilization', 'view') || hasPermission('resources_insights', 'view')) && (
                 <SideNavGroup
                   icon={<ThunderboltOutlined />} label="Resources"
                   active={activePage.startsWith('resources')}
                   expanded={isExp('resources')}
                   onToggle={() => toggleSection('resources')}
                 >
-                  {hasPermission('resources_info', 'view') && <SubNavItem label="Information" active={activePage === 'resources_info'} onClick={() => { setActivePage('resources_info'); setActiveModule('eam'); }} />}
+                  {hasPermission('resources_info', 'view') && <SubNavItem label="Resource Hub" active={activePage === 'resources_info'} onClick={() => { setActivePage('resources_info'); setActiveModule('eam'); }} />}
+                  {hasPermission('resources_insights', 'view') && <SubNavItem label="Resource Intelligence" active={activePage === 'resources_insights'} onClick={() => { setActivePage('resources_insights'); setActiveModule('eam'); }} />}
                   {hasPermission('resources_utilization', 'view') && <SubNavItem label="Engagement Mapping" active={activePage === 'resources_utilization'} onClick={() => { setActivePage('resources_utilization'); setActiveModule('eam'); }} />}
-                  {hasPermission('resources_upskilling', 'view') && <SubNavItem label="Upskilling" active={activePage === 'resources_upskilling'} onClick={() => { setActivePage('resources_upskilling'); setActiveModule('eam'); }} />}
                 </SideNavGroup>
                 )}
 
                 {/* Client Requests */}
                 {hasPermission('clientmgmt_requests', 'view') && (
                 <SideNavGroup
-                  icon={<UserOutlined />} label="Client Requests"
+                  icon={<UserOutlined />} label="Clients"
                   active={activePage === 'clientmgmt_requests'}
                   expanded={isExp('clientmgmt')}
                   onToggle={() => toggleSection('clientmgmt')}
                 >
-                  <SubNavItem label="Overview" active={activePage === 'clientmgmt_requests'} onClick={() => { setActivePage('clientmgmt_requests'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Requests" active={activePage === 'clientmgmt_requests'} onClick={() => { setActivePage('clientmgmt_requests'); setActiveModule('eam'); }} />
                 </SideNavGroup>
                 )}
 
@@ -779,6 +881,14 @@ export default function App() {
 
                 {/* ── SETTINGS & CONFIGURATION section ── */}
                 <SectionLabel label="Settings & Configuration" />
+
+                {/* User Settings — personal preferences */}
+                <SideNavItem
+                  icon={<UserOutlined />} label="User Settings"
+                  active={activePage === 'user_settings'}
+                  onClick={() => navigateTo('user_settings', 'configuration')}
+                  showArrow
+                />
 
                 {/* Configuration */}
                 {hasPermission('configuration', 'view') && (
@@ -843,11 +953,15 @@ export default function App() {
 
         {/* ─── Main Content ────────────────────────────────────── */}
         <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: '#f5f5f5' }}>
-          <div style={{ flex: 1, overflowY: 'auto', minWidth: 0 }}>
+          <div style={activePage === 'resources_utilization'
+            ? { flex: 1, overflow: 'hidden', minWidth: 0, display: 'flex', flexDirection: 'column' }
+            : { flex: 1, overflowY: 'auto', minWidth: 0 }
+          }>
             {renderContent()}
           </div>
         </div>
       </div>
+      </UserPreferencesProvider>
       </NotificationProvider>
     );
   }

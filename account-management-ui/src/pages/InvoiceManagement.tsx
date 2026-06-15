@@ -1,3 +1,11 @@
+/**
+ * InvoiceManagement.tsx
+ * 
+ * Invoicing Details — Track and manage invoices with Excel upload/download,
+ * monthly invoice tracking, and status management
+ * UI Location: Account Operations > Finance > Invoicing Details
+ * Page ID: executive_invoicing
+ */
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import {
   Tabs, Typography, Space, Upload, Table, Button, message, Input, Tooltip,
@@ -20,8 +28,9 @@ import * as auditApi from '../api/auditApi';
 import type { AuditEntry } from '../api/auditApi';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
+import { useUserPreferences } from '../context/UserPreferencesContext';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 type ExcelRow = Record<string, any>;
 
@@ -112,6 +121,7 @@ interface InvoiceListProps {
 function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const { configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
+  const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('executive_invoicing', 'edit');
   const canDelete = hasPermission('executive_invoicing', 'delete');
 
@@ -125,9 +135,24 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const [fromServer, setFromServer] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState<Set<string>>(
+  const [visibleColumns, setVisibleColumnsState] = useState<Set<string>>(
     new Set(['sno', 'project', 'company', 'code', 'total', 'comments'])
   );
+
+  // Apply saved user preferences once loaded
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    const vis = getColumnVisibility('invoice');
+    const keys = Object.entries(vis).filter(([,v]) => v).map(([k]) => k);
+    setVisibleColumnsState(new Set(['sno', 'total', ...keys]));
+  }, [preferencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setVisibleColumns = (newSet: Set<string>) => {
+    setVisibleColumnsState(newSet);
+    const vis: Record<string, boolean> = {};
+    ['project','company','code','comments'].forEach(k => { vis[k] = newSet.has(k); });
+    saveColumnVisibility('invoice', vis);
+  };
   const [filters, setFilters] = useState<{
     project: string; company: string; fy: string | null; status: string | null;
   }>({ project: '', company: '', fy: null, status: null });
@@ -985,6 +1010,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Space>
+          <Text type="secondary" style={{ fontSize: '11px', color: '#8c8c8c' }}>Invoiced amounts across projects and fiscal years</Text>
           <Text type="secondary" style={{ fontSize: '12px' }}>
             Showing: <strong>{displayRows.length}</strong>{displayRows.length !== rows.length ? ` / ${rows.length}` : ''}
           </Text>
@@ -996,6 +1022,8 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
           {dirty && (
             <Text type="warning" style={{ fontSize: '11px' }}>● Unsaved changes</Text>
           )}
+        </Space>
+        <Space size={8}>
           {availableFYs.length > 0 && (
             <Space size={4}>
               <Text style={{ fontSize: '11px', color: '#8c8c8c' }}>FY:</Text>
@@ -1010,8 +1038,6 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
               />
             </Space>
           )}
-        </Space>
-        <Space size={8}>
           <Tooltip title={currency === 'INR' ? 'Switch to USD' : 'Switch to INR'} overlayInnerStyle={{ fontSize: '11px' }}>
             <Button
               size="small"
@@ -1878,10 +1904,6 @@ export function InvoiceManagement({ onNavigate: _onNavigate }: InvoiceManagement
     <div style={{ minHeight: '100vh', background: '#f5f5f5', padding: '12px 24px' }}>
       <div style={{ maxWidth: 1400, margin: '0 auto' }}>
         <Space direction="vertical" style={{ width: '100%' }} size={6}>
-          <div>
-            <Title level={4} style={{ marginBottom: 2 }}>Invoice Details</Title>
-            <Text type="secondary" style={{ fontSize: '12px' }}>Invoiced amounts across projects and fiscal years</Text>
-          </div>
           <div style={{ background: '#fff', borderRadius: 8 }}>
             <Tabs items={items} size="small" defaultActiveKey="invoices" style={{ padding: '0 16px' }} />
           </div>

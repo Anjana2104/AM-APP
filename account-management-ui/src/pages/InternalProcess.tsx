@@ -1,3 +1,11 @@
+/**
+ * InternalProcess.tsx
+ * 
+ * Internal Process — Track internal SOW documents, pipeline management,
+ * and process insights with status tracking and attachments
+ * UI Location: Client Management > Internal Process
+ * Page ID: clientmgmt_connects
+ */
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import * as processApi from '../api/processApi';
 import {
@@ -19,6 +27,7 @@ import {
 import * as XLSX from 'xlsx';
 import '../style.css';
 import { useAuth } from '../context/AuthContext';
+import { useUserPreferences } from '../context/UserPreferencesContext';
 
 const { Title, Text } = Typography;
 
@@ -347,6 +356,7 @@ interface ProcessTabProps {
 function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProps) {
   const { configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
+  const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('clientmgmt_connects', 'edit');
   const canDelete = hasPermission('clientmgmt_connects', 'delete');
   const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
@@ -365,9 +375,21 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
   const [form] = Form.useForm();
   const filterPanelRef = useRef<HTMLDivElement>(null);
 
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(
+  const [visibleColumns, setVisibleColumnsState] = useState<Record<string, boolean>>(
     Object.fromEntries(COL_KEYS.map(c => [c.key, true]))
   );
+
+  // Apply saved user preferences once loaded
+  useEffect(() => {
+    if (!preferencesLoaded) return;
+    const vis = getColumnVisibility('process');
+    setVisibleColumnsState(prev => ({ ...prev, ...vis }));
+  }, [preferencesLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setVisibleColumns = (newVis: Record<string, boolean>) => {
+    setVisibleColumnsState(newVis);
+    saveColumnVisibility('process', newVis);
+  };
 
   const isFilterApplied = Object.values(filters).some(Boolean);
 
@@ -825,7 +847,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         <Space direction="vertical" style={{ width: '100%' }}>
           {COL_KEYS.map(({ key, label }) => (
             <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Checkbox checked={visibleColumns[key]} onChange={e => setVisibleColumns(p => ({ ...p, [key]: e.target.checked }))} />
+              <Checkbox checked={visibleColumns[key]} onChange={e => setVisibleColumns({ ...visibleColumns, [key]: e.target.checked })} />
               <label style={{ fontSize: '12px', marginBottom: 0, cursor: 'pointer' }}>{label}</label>
             </div>
           ))}

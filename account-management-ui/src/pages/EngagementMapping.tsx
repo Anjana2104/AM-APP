@@ -1,17 +1,28 @@
-﻿import { useState, useMemo, useEffect, useRef } from 'react';
-import { Button, Space, Card, Row, Col, Tag, Upload, Tooltip, message, Typography, Drawer, Input, Select, Collapse, Empty, Slider, Table, Tabs, Statistic, Progress, Checkbox, Modal } from 'antd';
+/**
+ * EngagementMapping.tsx
+ * 
+ * Engagement Mapping — Visual drag-and-drop interface for resource allocation
+ * and project engagement tracking with Kanban-style cards
+ * UI Location: Account Operations > Resources > Engagement Mapping
+ * Page ID: resources_utilization
+ */
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { Button, Space, Card, Row, Col, Tag, Upload, Tooltip, message, Typography, Drawer, Input, Select, Collapse, Empty, Slider, Table, Tabs, Statistic, Progress, Checkbox, Modal, Form } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { UploadOutlined, DownloadOutlined, FilterOutlined, EyeOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ProjectOutlined, FileExcelOutlined } from '@ant-design/icons';
+import { UploadOutlined, DownloadOutlined, FilterOutlined, EyeOutlined, AppstoreOutlined, UnorderedListOutlined, BarChartOutlined, TeamOutlined, ProjectOutlined, FileExcelOutlined, MessageOutlined, ExpandAltOutlined, ShrinkOutlined, PieChartOutlined, LinkOutlined } from '@ant-design/icons';
 import { DndContext, DragOverlay, useDroppable, useDraggable, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
+import { ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as RechartTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import * as configApi from '../api/configApi';
 import { useConfig } from '../context/ConfigContext';
-import type { ResourceRow } from './ResourceMgmt';
+import type { ResourceRow } from './ResourceInformation';
 import * as resourceApi from '../api/resourceApi';
 import { useAuth } from '../context/AuthContext';
+import * as requestApi from '../api/requestApi';
+import ResourceDetailPanel from '../components/ResourceDetailPanel';
 
 const { Text } = Typography;
 
@@ -19,6 +30,8 @@ interface ResourceUtilizationProps {
   resources: ResourceRow[];
   onUpdateResources: (updated: ResourceRow[]) => void;
   onNavigate?: (page: string, roleFilter?: string) => void;
+  onNavigateToRequest?: (beelineId: string) => void;
+  onNavigateToInsights?: () => void;
 }
 
 interface UnifiedFilterState {
@@ -28,6 +41,7 @@ interface UnifiedFilterState {
   engagement: string;
   roleOrDomain: string;
   workexRange: [number, number];
+  beelineId: string;
 }
 
 const DEFAULT_UNIFIED_FILTERS: UnifiedFilterState = {
@@ -37,6 +51,7 @@ const DEFAULT_UNIFIED_FILTERS: UnifiedFilterState = {
   engagement: '',
   roleOrDomain: '',
   workexRange: [0, 100],
+  beelineId: '',
 };
 
 // â”€â”€â”€ Kanban Tile (draggable) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -49,7 +64,9 @@ interface KanbanTileProps {
 }
 function KanbanTile({ resource, isSelected, onToggleSelect, onViewDetails, columnColor }: KanbanTileProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: resource.sno, data: { resource } });
-  const skillsArr = resource.skills ? resource.skills.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+  // Parse experience to a clean numeric string (handles "5 years", "5.0", "5", etc.)
+  const expNum = resource.totalWorkex ? parseFloat(String(resource.totalWorkex).replace(/[^\d.]/g, '')) : NaN;
+  const expDisplay = !isNaN(expNum) ? `${expNum % 1 === 0 ? expNum : expNum.toFixed(1)}y` : (resource.totalWorkex || '');
   return (
     <div
       ref={setNodeRef} {...listeners} {...attributes}
@@ -58,13 +75,14 @@ function KanbanTile({ resource, isSelected, onToggleSelect, onViewDetails, colum
         background: isSelected ? '#e6f4ff' : '#fff',
         border: `1px solid ${isSelected ? '#1890ff' : '#ebebeb'}`,
         borderLeft: `3px solid ${isSelected ? '#1890ff' : columnColor}`,
-        borderRadius: 6, padding: '5px 8px', cursor: isDragging ? 'grabbing' : 'grab',
+        borderRadius: 6, padding: '6px 8px', cursor: isDragging ? 'grabbing' : 'grab',
         opacity: isDragging ? 0.35 : 1, marginBottom: 5,
         boxShadow: isSelected ? '0 0 0 2px #91caff40' : '0 1px 2px rgba(0,0,0,0.05)',
         transition: 'opacity 0.15s, box-shadow 0.15s', userSelect: 'none',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 1 }}>
+      {/* Row 1: Name + view button */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
         <Typography.Text strong style={{ fontSize: '11px', lineHeight: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: 3 }}>
           {resource.empName}
         </Typography.Text>
@@ -73,20 +91,24 @@ function KanbanTile({ resource, isSelected, onToggleSelect, onViewDetails, colum
           <EyeOutlined />
         </button>
       </div>
-      <div style={{ fontSize: '9px', color: '#8c8c8c', lineHeight: 1.5 }}>
-        {resource.raId}{(resource.roleOrDomain || resource.piwRole) ? `  |  ${resource.roleOrDomain || resource.piwRole}` : ''}{resource.totalWorkex ? `  |  ${resource.totalWorkex}y` : ''}
+      {/* Row 2: RA ID · experience · Role/Domain */}
+      <div style={{ fontSize: '9px', color: '#8c8c8c', lineHeight: 1.5, marginBottom: 3 }}>
+        {[resource.raId, expDisplay, resource.roleOrDomain || resource.piwRole].filter(Boolean).join('  ·  ')}
       </div>
-      {resource.engagement && resource.engagement !== 'Bench' && (
-        <div style={{ fontSize: '9px', color: '#1890ff', fontStyle: 'italic', lineHeight: 1.4 }}>{resource.engagement}</div>
+      {/* Row 3: Engagement tag (if not Bench) */}
+      {resource.engagement && resource.engagement !== 'Bench' && resource.engagement !== 'No Value' && (
+        <div style={{ marginBottom: 2 }}>
+          <span style={{ fontSize: '8px', padding: '0 5px', lineHeight: '14px', borderRadius: 3, background: '#f9f0ff', color: '#722ed1', border: '1px solid #d3adf7' }}>
+            {resource.engagement}
+          </span>
+        </div>
       )}
-      {skillsArr.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, marginTop: 3 }}>
-          {skillsArr.slice(0, 2).map((s: string, i: number) => (
-            <span key={i} style={{ fontSize: '8px', padding: '0 4px', lineHeight: '14px', borderRadius: 3, background: '#e6f0ff', color: '#1890ff', border: '1px solid #bcd4ff' }}>{s}</span>
-          ))}
-          {skillsArr.length > 2 && (
-            <span style={{ fontSize: '8px', padding: '0 4px', lineHeight: '14px', borderRadius: 3, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9' }}>+{skillsArr.length - 2}</span>
-          )}
+      {/* Row 4: Beeline ID */}
+      {resource.beelineId && (
+        <div style={{ marginTop: 2 }}>
+          <span style={{ fontSize: '8px', padding: '0 5px', lineHeight: '14px', borderRadius: 3, background: '#e6f4ff', color: '#1677ff', border: '1px solid #91caff', display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+            <LinkOutlined style={{ fontSize: 8 }} />{resource.beelineId}
+          </span>
         </div>
       )}
     </div>
@@ -127,9 +149,9 @@ function KanbanColumnComp({ id, title, color, bgColor, resources, selectedSNOs, 
   );
 }
 
-export function EngagementMapping({ resources = [], onUpdateResources, onNavigate }: ResourceUtilizationProps) {
+export function EngagementMapping({ resources = [], onUpdateResources, onNavigate, onNavigateToRequest, onNavigateToInsights }: ResourceUtilizationProps) {
   const { getConfig, getConfigByLink } = useConfig();
-  const { hasPermission } = useAuth();
+  const { hasPermission, currentUser } = useAuth();
   const canEdit = hasPermission('resources_utilization', 'edit');
   const projectEngagementOptions = useMemo(() => {
     const cfg = getConfigByLink('engagement_field');
@@ -141,10 +163,13 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [selectedDetailResource, setSelectedDetailResource] = useState<ResourceRow | null>(null);
+  const [detailExpanded, setDetailExpanded] = useState(false);
   const [cachedResources, setCachedResources] = useState<ResourceRow[]>(resources || []);
   const [unifiedFilters, setUnifiedFilters] = useState<UnifiedFilterState>(DEFAULT_UNIFIED_FILTERS);
   const [mainTab, setMainTab] = useState<string>('bench');
   const [exportingInsights, setExportingInsights] = useState(false);
+  const [engagementChartType, setEngagementChartType] = useState<'pie' | 'bar'>('pie');
+  const [allocationChartType, setAllocationChartType] = useState<'pie' | 'bar'>('pie');
   const [allocStages, setAllocStages] = useState<Array<{ value: string; label: string; color: string }>>([
     { value: 'Shortlisted', label: 'Shortlisted', color: 'cyan' },
     { value: 'Offered',     label: 'Offered',     color: 'orange' },
@@ -153,10 +178,43 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
   ]);
   const insightsRef = useRef<HTMLDivElement>(null);
   const [allocationForm, setAllocationForm] = useState({
-    clientName: '',
     engagementName: '',
+    beelineId: '',
     notes: '',
   });
+
+  // Beeline linking state
+  const [beelineLinkModal, setBeelineLinkModal] = useState<{ open: boolean; resource: ResourceRow | null }>({ open: false, resource: null });
+  const [selectedBeelineId, setSelectedBeelineId] = useState('');
+  const [beelineRequestOptions, setBeelineRequestOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const [beelineSaving, setBeelineSaving] = useState(false);
+
+  const openBeelineLinkModal = async (resource: ResourceRow) => {
+    setSelectedBeelineId(resource.beelineId || '');
+    setBeelineLinkModal({ open: true, resource });
+    try {
+      const activeReqs = await requestApi.getActiveRequests();
+      setBeelineRequestOptions(activeReqs.filter(r => r.beelineId).map(r => ({ value: r.beelineId, label: r.beelineId })));
+    } catch { /* ignore */ }
+  };
+
+  const saveBeelineLink = async () => {
+    const resource = beelineLinkModal.resource;
+    if (!resource) return;
+    setBeelineSaving(true);
+    const ok = await resourceApi.setBeelineLink(resource.id, selectedBeelineId, currentUser?.username || 'system');
+    setBeelineSaving(false);
+    if (ok) {
+      const updated = cachedResources.map(r => r.key === resource.key ? { ...r, beelineId: selectedBeelineId } : r);
+      setCachedResources(updated);
+      onUpdateResources(updated);
+      if (selectedDetailResource?.key === resource.key) setSelectedDetailResource(prev => prev ? { ...prev, beelineId: selectedBeelineId } : prev);
+      message.success('Beeline ID linked successfully');
+      setBeelineLinkModal({ open: false, resource: null });
+    } else {
+      message.error('Failed to save Beeline link');
+    }
+  };
 
   const filterPanelRef = useRef<HTMLDivElement>(null);
 
@@ -166,6 +224,13 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
   const [draggingResource, setDraggingResource] = useState<ResourceRow | null>(null);
   const [pendingTargetStatus, setPendingTargetStatus] = useState<string>('Shortlisted');
   const clearSelection = () => setSelectedSNOs(new Set());
+
+  // ── Release-to-bench modal state ─────────────────────────────────────────
+  const [releaseModal, setReleaseModal] = useState(false);
+  const [releaseTargets, setReleaseTargets] = useState<ResourceRow[]>([]);
+  const [releaseComment, setReleaseComment] = useState('');
+  const [releaseTag, setReleaseTag] = useState('Rejected by Client');
+  const [savingRelease, setSavingRelease] = useState(false);
 
   // Clear selection on tab switch
   useEffect(() => { clearSelection(); }, [mainTab]);
@@ -203,6 +268,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     unifiedFilters.skills ||
     unifiedFilters.engagement ||
     unifiedFilters.roleOrDomain ||
+    unifiedFilters.beelineId ||
     unifiedFilters.workexRange[0] !== 0 ||
     unifiedFilters.workexRange[1] !== 100
   );
@@ -266,6 +332,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     if (unifiedFilters.skills) filtered = filtered.filter(r => r?.skills?.toLowerCase().includes(unifiedFilters.skills.toLowerCase()));
     if (unifiedFilters.engagement) filtered = filtered.filter(r => (r?.engagement || '') === unifiedFilters.engagement);
     if (unifiedFilters.roleOrDomain) filtered = filtered.filter(r => (r?.roleOrDomain || '').toLowerCase().includes(unifiedFilters.roleOrDomain.toLowerCase()));
+    if (unifiedFilters.beelineId) filtered = filtered.filter(r => (r?.beelineId || '') === unifiedFilters.beelineId);
     filtered = filtered.filter(r => {
       const workex = parseInt(r?.totalWorkex || '0', 10);
       return workex >= unifiedFilters.workexRange[0] && workex <= unifiedFilters.workexRange[1];
@@ -338,19 +405,19 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
             {status === 'Shortlisted' && (
               <>
                 <Button type="primary" size="small" style={{ fontSize: '10px', background: '#fa8c16', borderColor: '#fa8c16' }} onClick={() => handleUpdateStatus(record, 'Offered')}>Mark Offered</Button>
-                <Button size="small" danger style={{ fontSize: '10px' }} onClick={() => handleUpdateStatus(record, '')}>Release</Button>
+                <Button size="small" danger style={{ fontSize: '10px' }} onClick={() => handleRelease(record)}>Release</Button>
               </>
             )}
             {status === 'Offered' && (
               <>
                 <Button type="primary" size="small" style={{ fontSize: '10px', background: '#722ed1', borderColor: '#722ed1' }} onClick={() => handleUpdateStatus(record, 'Selected')}>Mark Selected</Button>
-                <Button size="small" danger style={{ fontSize: '10px' }} onClick={() => handleUpdateStatus(record, '')}>Release</Button>
+                <Button size="small" danger style={{ fontSize: '10px' }} onClick={() => handleRelease(record)}>Release</Button>
               </>
             )}
             {status === 'Selected' && (
               <>
                 <Button type="primary" size="small" style={{ fontSize: '10px' }} onClick={() => handleUpdateStatus(record, 'Joined')}>Mark Joined</Button>
-                <Button size="small" danger style={{ fontSize: '10px' }} onClick={() => handleUpdateStatus(record, '')}>Release</Button>
+                <Button size="small" danger style={{ fontSize: '10px' }} onClick={() => handleRelease(record)}>Release</Button>
               </>
             )}
           </Space>
@@ -520,7 +587,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
           piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
           doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '',
           skills: r.skills, allocationStatus: r.allocationStatus || '',
-        }))).catch(() => {/* server offline — in-memory update still applied */});
+        })), currentUser?.username || 'system').catch(() => {/* server offline — in-memory update still applied */});
 
         setCachedResources(updatedResources);
         onUpdateResources(updatedResources);
@@ -535,18 +602,25 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     return false;
   };
 
-  const handleAllocateResource = (resource: ResourceRow) => {
-    setPendingTargetStatus('Shortlisted');
-    setPendingAllocResources([resource]);
+  const openAllocationDrawer = async (resources: ResourceRow[], targetStatus = 'Shortlisted') => {
+    setPendingTargetStatus(targetStatus);
+    setPendingAllocResources(resources);
     setAllocationDrawer(true);
+    // Pre-load beeline ID options (active only)
+    try {
+      const activeReqs = await requestApi.getActiveRequests();
+      setBeelineRequestOptions(activeReqs.filter(r => r.beelineId).map(r => ({ value: r.beelineId, label: r.beelineId })));
+    } catch { /* ignore */ }
+  };
+
+  const handleAllocateResource = (resource: ResourceRow) => {
+    openAllocationDrawer([resource]);
   };
 
   const handleBulkAllocate = (resourcePool: ResourceRow[]) => {
     const toAlloc = resourcePool.filter(r => selectedSNOs.has(r.sno));
     if (!toAlloc.length) { message.warning('Select at least one resource first'); return; }
-    setPendingTargetStatus('Shortlisted');
-    setPendingAllocResources(toAlloc);
-    setAllocationDrawer(true);
+    openAllocationDrawer(toAlloc);
   };
 
   const handleSaveAllocation = async () => {
@@ -569,17 +643,32 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
         };
         try {
           if (res.id) {
-            await resourceApi.updateResource(res.id, payload);
+            await resourceApi.updateResource(res.id, { ...payload, changedBy: currentUser?.username || 'system' });
+            // Link beeline ID if selected
+            if (allocationForm.beelineId) {
+              await resourceApi.setBeelineLink(res.id, allocationForm.beelineId, currentUser?.username || 'system');
+            }
+            // Save notes as a comment
+            if (allocationForm.notes.trim()) {
+              await resourceApi.addResourceComment(res.id, {
+                author: currentUser?.username || 'system',
+                tag: 'General',
+                body: `[Allocation – ${allocationForm.engagementName}] ${allocationForm.notes.trim()}`,
+              });
+            }
           } else {
-            // Fallback: upsert via bulkSave (keyed by raId)
-            await resourceApi.bulkSave([{ ...payload, sno: Number(res.sno) || 0 }]);
+            await resourceApi.bulkSave([{ ...payload, sno: Number(res.sno) || 0 }], currentUser?.username || 'system');
           }
         } catch {
           // Server offline  -  local state still updated below
         }
-        // Always update local state regardless of server response
         const idx = updatedAll.findIndex(r => r.id === res.id || r.raId === res.raId);
-        if (idx >= 0) updatedAll[idx] = { ...updatedAll[idx], engagement: allocationForm.engagementName, allocationStatus: pendingTargetStatus };
+        if (idx >= 0) updatedAll[idx] = {
+          ...updatedAll[idx],
+          engagement: allocationForm.engagementName,
+          allocationStatus: pendingTargetStatus,
+          ...(allocationForm.beelineId ? { beelineId: allocationForm.beelineId } : {}),
+        };
         successCount++;
       }
       setCachedResources(updatedAll);
@@ -589,7 +678,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
         : `${successCount} resources`;
       message.success({ content: `${names} marked as ${pendingTargetStatus} for ${allocationForm.engagementName}`, duration: 5 });
       setAllocationDrawer(false);
-      setAllocationForm({ clientName: '', engagementName: '', notes: '' });
+      setAllocationForm({ engagementName: '', beelineId: '', notes: '' });
       setPendingAllocResources([]);
       clearSelection();
     } catch (err) {
@@ -611,9 +700,9 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     if (newStatus === '' || newStatus === 'Available') { payload.engagement = 'Bench'; payload.allocationStatus = 'Available'; }
     try {
       if (resource.id) {
-        await resourceApi.updateResource(resource.id, payload);
+        await resourceApi.updateResource(resource.id, { ...payload, changedBy: currentUser?.username || 'system' });
       } else {
-        await resourceApi.bulkSave([{ ...payload, sno: Number(resource.sno) || 0 }]);
+        await resourceApi.bulkSave([{ ...payload, sno: Number(resource.sno) || 0 }], currentUser?.username || 'system');
       }
     } catch {
       // Server offline  -  local state still updated below
@@ -629,20 +718,82 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     else message.success(`${resource.empName} marked as ${newStatus}`);
   };
 
+  // ── Release-to-bench helpers ──────────────────────────────────────────────
+
+  /** Opens the release-comment modal for one or more resources */
+  const handleRelease = (targets: ResourceRow | ResourceRow[]) => {
+    const list = Array.isArray(targets) ? targets : [targets];
+    setReleaseTargets(list);
+    setReleaseComment('');
+    setReleaseTag('Rejected by Client');
+    setReleaseModal(true);
+  };
+
+  /** Executes the release: posts comment, then moves to bench */
+  const confirmRelease = async () => {
+    if (!releaseTargets.length) return;
+    setSavingRelease(true);
+    try {
+      // 1. Save comment for each resource that has an id
+      if (releaseComment.trim()) {
+        await Promise.all(
+          releaseTargets
+            .filter(r => r.id)
+            .map(r =>
+              resourceApi.addResourceComment(r.id!, {
+                author: currentUser?.username || 'Unknown',
+                tag: releaseTag,
+                body: releaseComment.trim(),
+              })
+            )
+        );
+      }
+
+      // 2. Perform the status change (handles audit trail)
+      if (releaseTargets.length === 1) {
+        await handleUpdateStatus(releaseTargets[0], '');
+      } else {
+        await handleBulkUpdateStatus(releaseTargets, '');
+        message.success({ content: `${releaseTargets.length} resources released back to bench`, duration: 4 });
+      }
+    } finally {
+      setSavingRelease(false);
+      setReleaseModal(false);
+      setReleaseTargets([]);
+      clearSelection();
+    }
+  };
+
   const handleBulkUpdateStatus = async (resources2: ResourceRow[], newStatus: string, opts?: { engagement?: string }) => {
-    const bulkPayloads = resources2.map(r => {
-      const eng = opts?.engagement !== undefined ? opts.engagement : ((newStatus === '' || newStatus === 'Available') ? 'Bench' : (r.engagement || ''));
-      return { raId: r.raId, sno: Number(r.sno) || 0, empName: r.empName, emailId: r.emailId, piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex, doj: r.doj, totalWorkex: r.totalWorkex, skills: r.skills, engagement: eng, allocationStatus: newStatus };
-    });
     const effectiveStatus = newStatus === '' ? 'Available' : newStatus;
-    const bulkPayloadsFixed = bulkPayloads.map(p => ({ ...p, allocationStatus: effectiveStatus }));
-    try { await resourceApi.bulkSave(bulkPayloadsFixed); } catch { /* offline  -  local state still updated */ }
+    const records = resources2
+      .filter(r => r.id)
+      .map(r => {
+        const eng = opts?.engagement !== undefined
+          ? opts.engagement
+          : (effectiveStatus === 'Available' ? 'Bench' : (r.engagement || ''));
+        return {
+          id: r.id!,
+          engagement: eng,
+          allocationStatus: effectiveStatus,
+          // include all fields so server diff is accurate
+          empName: r.empName, emailId: r.emailId, piwRole: r.piwRole,
+          roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
+          doj: r.doj, totalWorkex: r.totalWorkex, skills: r.skills,
+          changedBy: currentUser?.username || 'system',
+        };
+      });
+    try {
+      if (records.length > 0) await resourceApi.batchUpdateResources(records);
+    } catch { /* offline — local state still updated */ }
+
     const raIdSet = new Set(resources2.map(r => r.raId));
     const updated = (cachedResources || []).map(r => {
       if (!raIdSet.has(r.raId)) return r;
-      const pay = bulkPayloads.find(p => p.raId === r.raId)!;
-      const effStatus = newStatus === '' ? 'Available' : newStatus;
-      return { ...r, engagement: pay.engagement, allocationStatus: effStatus };
+      const eng = opts?.engagement !== undefined
+        ? opts.engagement
+        : (effectiveStatus === 'Available' ? 'Bench' : (r.engagement || ''));
+      return { ...r, engagement: eng, allocationStatus: effectiveStatus };
     });
     setCachedResources(updated);
     onUpdateResources(updated);
@@ -693,9 +844,10 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
     if (targetCol === 'shortlisted' && currentCol === 'available') {
       // Available -> Shortlisted: open allocation drawer to capture engagement name
-      setPendingTargetStatus('Shortlisted');
-      setPendingAllocResources(resourcesToMove);
-      setAllocationDrawer(true);
+      openAllocationDrawer(resourcesToMove, 'Shortlisted');
+    } else if (targetCol === 'available') {
+      // Any stage -> Bench: open release comment modal
+      handleRelease(resourcesToMove);
     } else {
       handleBulkUpdateStatus(resourcesToMove, newStatus);
       const label = resourcesToMove.length === 1 ? resourcesToMove[0].empName : `${resourcesToMove.length} resources`;
@@ -712,13 +864,13 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
   const handleExportListTable = (data: ResourceRow[], filename: string) => {
     if (!data.length) { message.warning('No data to export'); return; }
-    const headers = ['Name', 'RA ID', 'PIW Role', 'Role/Domain', 'Engagement', 'Allocation Status', 'Experience', 'Skills'];
+    const headers = ['Name', 'RA ID', 'PIW Role', 'Role/Domain', 'Engagement', 'Allocation Status', 'Experience', 'Skills', 'Beeline ID'];
     const aoa: any[][] = [headers];
     data.forEach(r => {
-      aoa.push([r.empName, r.raId, r.piwRole || '', r.roleOrDomain || '', r.engagement || '', r.allocationStatus || '', r.totalWorkex || '', r.skills || '']);
+      aoa.push([r.empName, r.raId, r.piwRole || '', r.roleOrDomain || '', r.engagement || '', r.allocationStatus || '', r.totalWorkex || '', r.skills || '', r.beelineId || '']);
     });
     const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 40 }];
+    ws['!cols'] = [{ wch: 28 }, { wch: 12 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 14 }, { wch: 12 }, { wch: 40 }, { wch: 18 }];
     ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
     ws['!sheetViews'] = [{ showGridLines: false }];
     const numCols = headers.length, numRows = aoa.length;
@@ -823,7 +975,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
           raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
           piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
           doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '', skills: r.skills,
-        })));
+        })), currentUser?.username || 'system');
 
         setCachedResources(updated);
         onUpdateResources(updated);
@@ -880,29 +1032,42 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
             </Tooltip>
           )}
         </div>
+        {/* Beeline ID tag */}
+        {resource.beelineId && (
+          <div style={{ marginTop: 4 }}>
+            <Tag icon={<LinkOutlined />} color="blue" style={{ fontSize: '9px', margin: 0, cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); onNavigateToRequest?.(resource.beelineId!); }}>
+              {resource.beelineId}
+            </Tag>
+          </div>
+        )}
         {/* Spacer pushes buttons to bottom */}
         <div style={{ flex: 1 }} />
         {/* Action buttons */}
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end', marginTop: 6 }}>
+          <Tooltip title="Link Beeline Request" overlayInnerStyle={{ fontSize: '11px' }}>
+            <Button type="text" size="small" icon={<LinkOutlined style={{ color: resource.beelineId ? '#1890ff' : '#bfbfbf' }} />}
+              onClick={(e) => { e.stopPropagation(); openBeelineLinkModal(resource); }} style={{ padding: '0 4px' }} />
+          </Tooltip>
           {isAvailable && (
             <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }} disabled={!canEdit}>Allocate</Button>
           )}
           {status === 'Shortlisted' && (
             <>
               <Button type="primary" size="small" onClick={() => handleUpdateStatus(resource, 'Offered')} style={{ fontSize: '10px', background: '#fa8c16', borderColor: '#fa8c16' }}>Mark Offered</Button>
-              <Button size="small" danger onClick={() => handleUpdateStatus(resource, '')} style={{ fontSize: '10px' }}>Release</Button>
+              <Button size="small" danger onClick={() => handleRelease(resource)} style={{ fontSize: '10px' }}>Release</Button>
             </>
           )}
           {status === 'Offered' && (
             <>
               <Button type="primary" size="small" onClick={() => handleUpdateStatus(resource, 'Selected')} style={{ fontSize: '10px', background: '#722ed1', borderColor: '#722ed1' }}>Mark Selected</Button>
-              <Button size="small" danger onClick={() => handleUpdateStatus(resource, '')} style={{ fontSize: '10px' }}>Release</Button>
+              <Button size="small" danger onClick={() => handleRelease(resource)} style={{ fontSize: '10px' }}>Release</Button>
             </>
           )}
           {status === 'Selected' && (
             <>
               <Button type="primary" size="small" onClick={() => handleUpdateStatus(resource, 'Joined')} style={{ fontSize: '10px' }}>Mark Joined</Button>
-              <Button size="small" danger onClick={() => handleUpdateStatus(resource, '')} style={{ fontSize: '10px' }}>Release</Button>
+              <Button size="small" danger onClick={() => handleRelease(resource)} style={{ fontSize: '10px' }}>Release</Button>
             </>
           )}
         </div>
@@ -940,55 +1105,86 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
       if (resource.engagement === 'Bench') benchGroup.push(resource);
       else { const eng = resource.engagement || 'Unassigned'; if (!groups[eng]) groups[eng] = []; groups[eng].push(resource); }
     });
-    const items = [
+    const groupEntries = [
       ...Object.entries(groups).map(([eng, res]) => ({ key: eng, isBench: false, resources: res })),
       ...(benchGroup.length > 0 ? [{ key: 'Bench', isBench: true, resources: benchGroup }] : []),
-    ].map(group => ({
+    ];
+    if (groupEntries.length === 0) return <Empty description="No resources found" style={{ marginTop: 48 }} />;
+
+    const collapseItems = groupEntries.map(group => ({
       key: group.key,
       label: (
-        <span>
-          {group.isBench ? <Tag color="warning" style={{ fontSize: '10px', marginRight: 6 }}>Bench</Tag> : null}
-          {group.key}
-          <span style={{ marginLeft: 8, color: '#888', fontSize: '12px' }}>({group.resources.length})</span>
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ width: 8, height: 8, borderRadius: '50%', background: group.isBench ? '#faad14' : '#1890ff', flexShrink: 0 }} />
+          <span style={{ fontSize: '12px', fontWeight: 600, color: '#333' }}>{group.key}</span>
+          <span style={{ fontSize: '11px', fontWeight: 600, color: group.isBench ? '#faad14' : '#1890ff', background: group.isBench ? '#faad1425' : '#1890ff25', padding: '0 7px', borderRadius: 10, border: `1px solid ${group.isBench ? '#faad1440' : '#1890ff40'}` }}>{group.resources.length}</span>
+        </div>
       ),
       children: (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8, paddingTop: 4 }}>
           {group.resources.map(resource => {
             if (!resource) return null;
-            const skillsArr = resource.skills ? resource.skills.split(',').map(s => s.trim()) : [];
-            const isChecked = selectedSNOs.has(resource.sno);
-            const toggleCheck = () => setSelectedSNOs(prev => { const next = new Set(prev); if (next.has(resource.sno)) next.delete(resource.sno); else next.add(resource.sno); return next; });
+            const isSelected = selectedSNOs.has(resource.sno);
+            const expNum = resource.totalWorkex ? parseFloat(String(resource.totalWorkex).replace(/[^\d.]/g, '')) : NaN;
+            const expDisplay = !isNaN(expNum) ? `${expNum % 1 === 0 ? expNum : expNum.toFixed(1)}y` : (resource.totalWorkex || '');
+            const columnColor = group.isBench ? '#faad14' : '#1890ff';
             return (
-              <div key={resource.sno} style={{ background: isChecked ? '#e6f4ff' : '#fff', borderRadius: '8px', padding: '10px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', border: isChecked ? '2px solid #1890ff' : (group.isBench ? '1px solid #ffe58f' : '1px solid #f0f0f0'), borderLeft: isChecked ? '4px solid #1890ff' : (group.isBench ? '4px solid #faad14' : '1px solid #f0f0f0'), display: 'flex', flexDirection: 'column', minHeight: '140px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '4px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 4, flex: 1, minWidth: 0, marginRight: 4 }}>
-                    <Checkbox checked={isChecked} onChange={toggleCheck} style={{ marginTop: 2, flexShrink: 0 }} />
-                    <Text strong style={{ fontSize: '13px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{resource.empName}</Text>
-                  </div>
+              <div
+                key={resource.sno}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest('button, .ant-dropdown-trigger, .ant-dropdown, .ant-tag')) return;
+                  setSelectedSNOs(prev => { const next = new Set(prev); next.has(resource.sno) ? next.delete(resource.sno) : next.add(resource.sno); return next; });
+                }}
+                style={{
+                  background: isSelected ? '#e6f4ff' : '#fff',
+                  border: `1px solid ${isSelected ? '#1890ff' : '#ebebeb'}`,
+                  borderLeft: `3px solid ${isSelected ? '#1890ff' : columnColor}`,
+                  borderRadius: 6, padding: '6px 8px', cursor: 'pointer',
+                  boxShadow: isSelected ? '0 0 0 2px #91caff40' : '0 1px 2px rgba(0,0,0,0.05)',
+                  transition: 'box-shadow 0.15s, border-color 0.15s',
+                }}
+              >
+                {/* Row 1: Name + view button */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 2 }}>
+                  <Typography.Text strong style={{ fontSize: '11px', lineHeight: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, marginRight: 3 }}>
+                    {resource.empName}
+                  </Typography.Text>
                   <Tooltip title="View Details" overlayInnerStyle={{ fontSize: '11px' }}>
-                    <Button type="text" size="small" icon={<EyeOutlined />} onClick={() => { setSelectedDetailResource(resource); setDetailsModalOpen(true); }} style={{ padding: 0, flexShrink: 0 }} />
+                    <button onClick={(e) => { e.stopPropagation(); setSelectedDetailResource(resource); setDetailsModalOpen(true); }}
+                      style={{ background: 'none', border: 'none', padding: '0 2px', cursor: 'pointer', color: '#8c8c8c', fontSize: 10, lineHeight: 1, flexShrink: 0 }}>
+                      <EyeOutlined />
+                    </button>
                   </Tooltip>
                 </div>
-                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '2px' }}>{resource.raId}</div>
-                <div style={{ fontSize: '11px', color: '#595959', marginBottom: '4px' }}>{resource.roleOrDomain || resource.piwRole}  ·  {resource.totalWorkex || ' - '} yrs</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 2, overflow: 'hidden' }}>
-                  {skillsArr.slice(0, 2).map((skill, idx) => <Tag key={idx} color="blue" style={{ fontSize: '10px', margin: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{skill}</Tag>)}
-                  {skillsArr.length > 2 && (
-                    <Tooltip title={skillsArr.slice(2).join(', ')}><Tag style={{ fontSize: '10px', margin: 0, background: '#f5f5f5', color: '#666', border: '1px solid #d9d9d9', cursor: 'pointer' }}>+{skillsArr.length - 2} more</Tag></Tooltip>
-                  )}
+                {/* Row 2: RA ID · exp · Role */}
+                <div style={{ fontSize: '9px', color: '#8c8c8c', lineHeight: 1.5, marginBottom: 3 }}>
+                  {[resource.raId, expDisplay, resource.roleOrDomain || resource.piwRole].filter(Boolean).join('  ·  ')}
                 </div>
-                <div style={{ flex: 1 }} />
-                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginTop: 6 }}>
-                  <Button type="primary" size="small" onClick={() => handleAllocateResource(resource)} style={{ fontSize: '10px' }} disabled={!canEdit}>Allocate</Button>
-                </div>
+                {/* Row 3: Beeline ID */}
+                {resource.beelineId && (
+                  <div style={{ marginTop: 2 }}>
+                    <span style={{ fontSize: '8px', padding: '0 5px', lineHeight: '14px', borderRadius: 3, background: '#e6f4ff', color: '#1677ff', border: '1px solid #91caff', display: 'inline-flex', alignItems: 'center', gap: 2, cursor: 'pointer' }}
+                      onClick={(e) => { e.stopPropagation(); onNavigateToRequest?.(resource.beelineId!); }}>
+                      <LinkOutlined style={{ fontSize: 8 }} />{resource.beelineId}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       ),
     }));
-    return items.length > 0 ? <Collapse items={items} defaultActiveKey={[]} /> : <Empty description="No resources found" style={{ marginTop: 48 }} />;
+
+    return (
+      <Collapse
+        items={collapseItems}
+        defaultActiveKey={[]}
+        size="small"
+        style={{ background: 'transparent', border: 'none' }}
+        className="projects-group-collapse"
+      />
+    );
   };
 
   const renderListTable = (data: ResourceRow[]) => (
@@ -1037,20 +1233,24 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
   const totalBenchTabCount = filteredBenchResources.length + shortlistedResources.length + offeredResources.length + selectedResources.length;
 
   return (
-    <div style={{ background: '#f5f5f5', padding: '12px 24px' }}>
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        <Space direction="vertical" style={{ width: '100%' }} size={6}>
-          <div>
-            <Typography.Title level={4} style={{ marginBottom: 2 }}>Engagement Mapping</Typography.Title>
-            <Text type="secondary" style={{ fontSize: '12px' }}>Resource allocation across projects, bench status, and utilization insights</Text>
-          </div>
-          <div style={{ background: '#fff', borderRadius: '8px', padding: '16px' }}>
-            <Tabs
-              activeKey={mainTab}
-              onChange={setMainTab}
-              size="small"
-              tabBarStyle={{ fontSize: '11px' }}
-              items={[
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#f5f5f5', padding: '12px 24px', boxSizing: 'border-box', overflow: 'hidden' }}>
+      <style>{`
+        .em-full-tabs { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+        .em-full-tabs > .ant-tabs-nav { flex-shrink: 0; }
+        .em-full-tabs > .ant-tabs-content-holder { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+        .em-full-tabs .ant-tabs-content { height: 100%; display: flex; flex-direction: column; }
+        .em-full-tabs .ant-tabs-tabpane-active { height: 100%; display: flex !important; flex-direction: column; overflow: hidden; }
+        .em-full-tabs .ant-tabs-tabpane:not(.ant-tabs-tabpane-active) { display: none !important; }
+      `}</style>
+      <div style={{ flex: 1, overflow: 'hidden', background: '#fff', borderRadius: '8px', padding: '16px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <Tabs
+          className="em-full-tabs"
+          activeKey={mainTab}
+          onChange={setMainTab}
+          size="small"
+          destroyInactiveTabPane
+          tabBarStyle={{ fontSize: '11px', flexShrink: 0, marginBottom: 0 }}
+          items={[
                 {
                   key: 'bench',
                   label: (
@@ -1060,9 +1260,10 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                     </span>
                   ),
                   children: (
-                    <>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '10px', flexShrink: 0 }}>
                         <Space size={8}>
+                          <Text type="secondary" style={{ fontSize: 11, color: '#8c8c8c' }}>Resource allocation workflow</Text>
                           {selectedSNOs.size > 0 && (
                             <Tag color="blue" style={{ fontSize: '11px', cursor: 'pointer' }} onClick={clearSelection}>
                               {selectedSNOs.size} selected - drag any to move all | click to clear
@@ -1076,27 +1277,17 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                           <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
                           </Tooltip>
-                          <Tooltip title="Download Deployment Pool Template" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Button icon={<DownloadOutlined />} size="small" onClick={downloadDeploymentPoolTemplate} style={{ borderRadius: '6px' }} />
-                          </Tooltip>
-                          {canEdit && (
-                          <Tooltip title="Upload Deployment Pool Tracker (RA ID + Engagement + Allocation Status)" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Upload accept=".xlsx,.xls" beforeUpload={handleDeploymentPoolUpload} showUploadList={false}>
-                              <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: '6px' }} />
-                            </Upload>
-                          </Tooltip>
-                          )}
                           <Tooltip title="Export Bench (Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" disabled={!filteredBenchResources.length} onClick={() => handleExportListTable(filteredBenchResources, `Bench_Export_${new Date().toISOString().slice(0,10)}.xlsx`)} style={{ borderRadius: '6px', color: filteredBenchResources.length ? '#52c41a' : undefined }} />
                           </Tooltip>
-                          <Tooltip title="Export Pipeline (Shortlisted/Offered/Selected)" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportPipeline} style={{ borderRadius: '6px', color: '#722ed1' }}>Pipeline</Button>
+                          <Tooltip title="Export all non-Joined resources (Pipeline)" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportPipeline} style={{ borderRadius: '6px', color: '#722ed1' }} />
                           </Tooltip>
                         </Space>
                       </div>
-                      <div style={{ display: 'flex', gap: '12px' }}>
+                      <div style={{ display: 'flex', gap: '12px', flex: 1, minHeight: 0 }}>
                         {showFilterPanel && (
-                          <div ref={filterPanelRef} data-filter-panel="true" style={{ width: '220px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '14px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+                          <div ref={filterPanelRef} data-filter-panel="true" style={{ width: '220px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '14px', border: '1px solid #f0f0f0', alignSelf: 'flex-start', overflowY: 'auto' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                               <span style={{ fontSize: '12px', fontWeight: 600 }}>Filters</span>
                               <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setUnifiedFilters(DEFAULT_UNIFIED_FILTERS)}>Clear all</Button>
@@ -1123,18 +1314,33 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                 <Select size="small" placeholder="All" allowClear value={unifiedFilters.engagement || undefined} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, engagement: value || '' }))} options={engagementOptions.map(eng => ({ label: eng, value: eng }))} style={{ width: '100%', fontSize: '11px' }} />
                               </div>
                               <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline ID</div>
+                                <Select
+                                  size="small"
+                                  placeholder="All"
+                                  allowClear
+                                  showSearch
+                                  value={unifiedFilters.beelineId || undefined}
+                                  onChange={(value) => setUnifiedFilters(prev => ({ ...prev, beelineId: value || '' }))}
+                                  style={{ width: '100%', fontSize: '11px' }}
+                                  options={Array.from(new Set(cachedResources.map(r => r.beelineId).filter(Boolean))).map(id => ({ value: id, label: id }))}
+                                  notFoundContent={<span style={{ fontSize: '11px' }}>No Beeline IDs linked</span>}
+                                />
+                              </div>
+                              <div>
                                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Experience: {unifiedFilters.workexRange[0]}-{unifiedFilters.workexRange[1]} yrs</div>
                                 <Slider range min={0} max={50} value={unifiedFilters.workexRange} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, workexRange: value as [number, number] }))} />
                               </div>
                             </Space>
                           </div>
                         )}
-                        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+                        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                           {totalBenchTabCount === 0 ? (
                             <Empty description="No bench resources. Upload a RAID file or mark resources as bench." style={{ marginTop: 48 }} />
                           ) : (
+                            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
                             <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-                              <div style={{ display: 'flex', gap: 12, height: 'calc(100vh - 220px)', minHeight: 420 }} onClick={() => setSelectedSNOs(new Set())}>
+                              <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 300 }} onClick={() => setSelectedSNOs(new Set())}>
                                 <KanbanColumnComp id="available" title="Available" color="#faad14" bgColor="#fffbe6"
                                   resources={filteredBenchResources} selectedSNOs={selectedSNOs}
                                   onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
@@ -1176,13 +1382,14 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                 )}
                               </DragOverlay>
                             </DndContext>
+                            </div>
                           )}
                         </div>
                       </div>
-                      <div style={{ marginTop: 8, fontSize: '11px', color: '#bbb', textAlign: 'center' }}>
+                      <div style={{ flexShrink: 0, marginTop: 6, fontSize: '11px', color: '#bbb', textAlign: 'center' }}>
                         Drag tiles to change status | Click to multi-select | Drag selected tile to move all
                       </div>
-                    </>
+                    </div>
                   ),
                 },
                 {
@@ -1194,16 +1401,23 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                     </span>
                   ),
                   children: (
+                    <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                     <>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: '12px' }}>
                         <Text style={{ fontSize: '12px', color: '#666' }}>
                           Showing: <strong>{projectResources.length}</strong> resources on projects
                         </Text>
                         <Space wrap size={8}>
-                          {selectedSNOs.size > 0 && (
+                          {selectedSNOs.size === 1 && canEdit && (
                             <>
-                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>x Clear ({selectedSNOs.size})</Button>
-                              <Button size="small" type="primary" style={{ fontSize: '11px' }} onClick={() => handleBulkAllocate(projectResources)}>Bulk Allocate ({selectedSNOs.size})</Button>
+                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>✕ Clear</Button>
+                              <Button size="small" type="primary" icon={<TeamOutlined />} style={{ fontSize: '11px' }} onClick={() => handleBulkAllocate(projectResources)}>Allocate</Button>
+                            </>
+                          )}
+                          {selectedSNOs.size > 1 && canEdit && (
+                            <>
+                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>✕ Clear ({selectedSNOs.size})</Button>
+                              <Button size="small" type="primary" icon={<TeamOutlined />} style={{ fontSize: '11px' }} onClick={() => handleBulkAllocate(projectResources)}>Bulk Allocate ({selectedSNOs.size})</Button>
                             </>
                           )}
                           {isFilterApplied && (
@@ -1252,6 +1466,20 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                                 <Select size="small" placeholder="All" allowClear value={unifiedFilters.engagement || undefined} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, engagement: value || '' }))} options={engagementOptions.map(eng => ({ label: eng, value: eng }))} style={{ width: '100%', fontSize: '11px' }} />
                               </div>
                               <div>
+                                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline ID</div>
+                                <Select
+                                  size="small"
+                                  placeholder="All"
+                                  allowClear
+                                  showSearch
+                                  value={unifiedFilters.beelineId || undefined}
+                                  onChange={(value) => setUnifiedFilters(prev => ({ ...prev, beelineId: value || '' }))}
+                                  style={{ width: '100%', fontSize: '11px' }}
+                                  options={Array.from(new Set(cachedResources.map(r => r.beelineId).filter(Boolean))).map(id => ({ value: id, label: id }))}
+                                  notFoundContent={<span style={{ fontSize: '11px' }}>No Beeline IDs linked</span>}
+                                />
+                              </div>
+                              <div>
                                 <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Experience: {unifiedFilters.workexRange[0]}-{unifiedFilters.workexRange[1]} yrs</div>
                                 <Slider range min={0} max={50} value={unifiedFilters.workexRange} onChange={(value) => setUnifiedFilters(prev => ({ ...prev, workexRange: value as [number, number] }))} />
                               </div>
@@ -1263,195 +1491,199 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                         </div>
                       </div>
                     </>
+                    </div>
                   ),
                 },
                 {
                   key: 'insights',
                   label: <span style={{ fontSize: '11px' }}><BarChartOutlined /> Utilization Insights</span>,
-                  children: (
-                    <div>
-                      {/* Insights toolbar */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-                        <Tooltip title="Export Insights as PNG" overlayInnerStyle={{ fontSize: '11px' }}>
-                          <Button
-                            size="small"
-                            icon={<DownloadOutlined />}
-                            loading={exportingInsights}
-                            onClick={async () => {
-                              if (!insightsRef.current) return;
-                              setExportingInsights(true);
-                              try {
-                                const canvas = await html2canvas(insightsRef.current, { scale: 2, useCORS: true, backgroundColor: '#f5f6fa' });
-                                const link = document.createElement('a');
-                                link.download = `utilization-insights-${new Date().toISOString().slice(0, 10)}.png`;
-                                link.href = canvas.toDataURL('image/png');
-                                link.click();
-                              } finally {
-                                setExportingInsights(false);
+                  children: (() => {
+                    const CHART_COLORS = ['#1890ff','#52c41a','#faad14','#f5222d','#722ed1','#13c2c2','#eb2f96','#fa8c16','#a0d911','#096dd9'];
+                    const statusColorMap: Record<string, string> = { 'On Bench': '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#52c41a', Allocated: '#1890ff', 'Partially Allocated': '#096dd9', Resigned: '#f5222d', Released: '#fa541c' };
+
+                    // Allocation status data
+                    const statusMap: Record<string, number> = {};
+                    (cachedResources || []).forEach(r => {
+                      const s = r?.allocationStatus || 'Unknown';
+                      statusMap[s] = (statusMap[s] || 0) + 1;
+                    });
+                    const allocData = Object.entries(statusMap).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+
+                    // Engagement data
+                    const engMap: Record<string, number> = {};
+                    (cachedResources || []).forEach(r => {
+                      const e = r?.engagement || 'Unknown';
+                      engMap[e] = (engMap[e] || 0) + 1;
+                    });
+                    const engData = Object.entries(engMap).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+
+                    const kpis = [
+                      { label: 'Total', value: total, color: '#1890ff', bg: '#e6f7ff' },
+                      { label: 'Active', value: activeCount, color: '#52c41a', bg: '#f6ffed' },
+                      { label: 'Bench', value: filteredBenchResources.length, color: '#faad14', bg: '#fffbe6' },
+                      { label: 'Pipeline', value: shortlistedResources.length + offeredResources.length + selectedResources.length, color: '#13c2c2', bg: '#e6fffb' },
+                      { label: 'Utilization', value: `${utilizationPct}%`, color: utilizationPct >= 80 ? '#52c41a' : utilizationPct >= 60 ? '#faad14' : '#f5222d', bg: '#f9f0ff' },
+                    ];
+
+                    const renderPie = (data: { name: string; value: number }[], colors: Record<string, string>, fallbackColors: string[]) => (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <PieChart>
+                          <Pie data={data} cx="50%" cy="50%" innerRadius={50} outerRadius={85} dataKey="value" paddingAngle={2}>
+                            {data.map((entry, i) => <Cell key={i} fill={colors[entry.name] || fallbackColors[i % fallbackColors.length]} />)}
+                          </Pie>
+                          <Legend iconSize={9} wrapperStyle={{ fontSize: 11 }} />
+                          <RechartTooltip formatter={(v: number, name: string) => [`${v} (${total ? Math.round(v/total*100) : 0}%)`, name]} contentStyle={{ fontSize: 11 }} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    );
+
+                    const renderBar = (data: { name: string; value: number }[], colors: Record<string, string>, fallbackColors: string[]) => (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart data={data} margin={{ left: 0, right: 12, top: 4, bottom: 32 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                          <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-30} textAnchor="end" interval={0} />
+                          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                          <RechartTooltip formatter={(v: number, name: string) => [v, name]} contentStyle={{ fontSize: 11 }} />
+                          <Bar dataKey="value" radius={[4,4,0,0]}>
+                            {data.map((entry, i) => <Cell key={i} fill={colors[entry.name] || fallbackColors[i % fallbackColors.length]} />)}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    );
+
+                    return (
+                      <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+                        {/* Export */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+                          <Tooltip title="Export as PNG" overlayInnerStyle={{ fontSize: 11 }}>
+                            <Button size="small" icon={<DownloadOutlined />} loading={exportingInsights}
+                              onClick={async () => {
+                                if (!insightsRef.current) return;
+                                setExportingInsights(true);
+                                try {
+                                  const canvas = await html2canvas(insightsRef.current, { scale: 2, useCORS: true, backgroundColor: '#f5f6fa' });
+                                  const link = document.createElement('a');
+                                  link.download = `utilization-insights-${new Date().toISOString().slice(0,10)}.png`;
+                                  link.href = canvas.toDataURL('image/png'); link.click();
+                                } finally { setExportingInsights(false); }
+                              }} style={{ fontSize: 11 }} />
+                          </Tooltip>
+                        </div>
+                        <div ref={insightsRef}>
+                        {total === 0 ? (
+                          <Empty description="No resource data. Upload resources in the Information tab first." style={{ marginTop: 48 }} />
+                        ) : (
+                          <>
+                            {/* KPI strip */}
+                            <Row gutter={[10, 10]} style={{ marginBottom: 14 }}>
+                              {kpis.map(k => (
+                                <Col key={k.label} xs={12} sm={8} md={24/kpis.length}>
+                                  <div style={{ background: k.bg, border: `1px solid ${k.color}22`, borderRadius: 8, padding: '8px 12px', textAlign: 'center' }}>
+                                    <div style={{ fontSize: 20, fontWeight: 700, color: k.color }}>{k.value}</div>
+                                    <div style={{ fontSize: 10, color: '#666', marginTop: 2 }}>{k.label}</div>
+                                  </div>
+                                </Col>
+                              ))}
+                            </Row>
+
+                            {/* Two charts side by side */}
+                            <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                              {/* Left: Allocation Status */}
+                              <Col xs={24} md={12}>
+                                <Card size="small" bodyStyle={{ padding: '10px 14px' }} style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                    <Text strong style={{ fontSize: 12 }}>Breakdown by Allocation Status</Text>
+                                    <Space size={4}>
+                                      <Tooltip title="Pie Chart" overlayInnerStyle={{ fontSize: 10 }}>
+                                        <Button size="small" type={allocationChartType === 'pie' ? 'primary' : 'default'} icon={<PieChartOutlined />} onClick={() => setAllocationChartType('pie')} style={{ borderRadius: 4 }} />
+                                      </Tooltip>
+                                      <Tooltip title="Bar Chart" overlayInnerStyle={{ fontSize: 10 }}>
+                                        <Button size="small" type={allocationChartType === 'bar' ? 'primary' : 'default'} icon={<BarChartOutlined />} onClick={() => setAllocationChartType('bar')} style={{ borderRadius: 4 }} />
+                                      </Tooltip>
+                                    </Space>
+                                  </div>
+                                  {allocData.length === 0
+                                    ? <Text type="secondary" style={{ fontSize: 11 }}>No data</Text>
+                                    : allocationChartType === 'pie'
+                                      ? renderPie(allocData, statusColorMap, CHART_COLORS)
+                                      : renderBar(allocData, statusColorMap, CHART_COLORS)
+                                  }
+                                </Card>
+                              </Col>
+
+                              {/* Right: Engagement */}
+                              <Col xs={24} md={12}>
+                                <Card size="small" bodyStyle={{ padding: '10px 14px' }} style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                    <Text strong style={{ fontSize: 12 }}>Breakdown by Engagement</Text>
+                                    <Space size={4}>
+                                      <Tooltip title="Pie Chart" overlayInnerStyle={{ fontSize: 10 }}>
+                                        <Button size="small" type={engagementChartType === 'pie' ? 'primary' : 'default'} icon={<PieChartOutlined />} onClick={() => setEngagementChartType('pie')} style={{ borderRadius: 4 }} />
+                                      </Tooltip>
+                                      <Tooltip title="Bar Chart" overlayInnerStyle={{ fontSize: 10 }}>
+                                        <Button size="small" type={engagementChartType === 'bar' ? 'primary' : 'default'} icon={<BarChartOutlined />} onClick={() => setEngagementChartType('bar')} style={{ borderRadius: 4 }} />
+                                      </Tooltip>
+                                    </Space>
+                                  </div>
+                                  {engData.length === 0
+                                    ? <Text type="secondary" style={{ fontSize: 11 }}>No data</Text>
+                                    : engagementChartType === 'pie'
+                                      ? renderPie(engData, {}, CHART_COLORS)
+                                      : renderBar(engData, {}, CHART_COLORS)
+                                  }
+                                </Card>
+                              </Col>
+                            </Row>
+
+                            {/* Bench by Role/Domain */}
+                            <Card size="small" bodyStyle={{ padding: '10px 14px' }} style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                <Space size={6}>
+                                  <Text strong style={{ fontSize: 12 }}>Bench Resources by Role / Domain</Text>
+                                  <Tag color="warning" style={{ fontSize: 10 }}>{roleBreakdown.reduce((s, [,c]) => s + c, 0)} on bench</Tag>
+                                </Space>
+                                <Text type="secondary" style={{ fontSize: 10 }}>Click a role to filter</Text>
+                              </div>
+                              {roleBreakdown.length === 0
+                                ? <Text style={{ fontSize: 11, color: '#aaa' }}>No bench resources</Text>
+                                : (
+                                  <Row gutter={[8, 6]}>
+                                    {roleBreakdown.map(([role, count], i) => {
+                                      const benchTotal = roleBreakdown.reduce((s, [,c]) => s + c, 0);
+                                      const pct = benchTotal > 0 ? Math.round((count / benchTotal) * 100) : 0;
+                                      const color = CHART_COLORS[i % CHART_COLORS.length];
+                                      return (
+                                        <Col key={role} xs={24} sm={12} md={8}>
+                                          <div
+                                            onClick={() => { setMainTab('bench'); setUnifiedFilters({ ...DEFAULT_UNIFIED_FILTERS, roleOrDomain: role }); }}
+                                            style={{ cursor: 'pointer', borderRadius: 6, padding: '4px 8px', border: '1px solid #f0f0f0', transition: 'background 0.15s' }}
+                                            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#fffbe6'; }}
+                                            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                                          >
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                              <Text style={{ fontSize: 11, color: '#595959', maxWidth: '70%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{role}</Text>
+                                              <Text style={{ fontSize: 11, color, fontWeight: 600 }}>{count} <span style={{ color: '#999', fontWeight: 400 }}>({pct}%)</span></Text>
+                                            </div>
+                                            <div style={{ height: 5, background: '#f0f0f0', borderRadius: 3 }}>
+                                              <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 3, transition: 'width 0.4s' }} />
+                                            </div>
+                                          </div>
+                                        </Col>
+                                      );
+                                    })}
+                                  </Row>
+                                )
                               }
-                            }}
-                            style={{ fontSize: '11px' }}
-                          >
-                            Export PNG
-                          </Button>
-                        </Tooltip>
+                            </Card>
+                          </>
+                        )}
+                        </div>
                       </div>
-                      <div ref={insightsRef}>
-                      {total === 0 ? (
-                        <Empty description="No resource data. Upload resources in the Information tab first." style={{ marginTop: 48 }} />
-                      ) : (
-                        <>
-                          {/* KPI cards — add pipeline counts */}
-                          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-                            <Col xs={24} sm={12} md={6}>
-                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #e6f7ff' }}>
-                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>Total Resources</span>} value={total} valueStyle={{ color: '#1890ff', fontSize: '28px', fontWeight: 700 }} />
-                              </Card>
-                            </Col>
-                            <Col xs={24} sm={12} md={6}>
-                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #fffbe6' }}>
-                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>Available (Bench)</span>} value={filteredBenchResources.length} valueStyle={{ color: '#faad14', fontSize: '28px', fontWeight: 700 }} />
-                              </Card>
-                            </Col>
-                            <Col xs={24} sm={12} md={6}>
-                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #e6fffb' }}>
-                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>In Pipeline</span>} value={shortlistedResources.length + offeredResources.length + selectedResources.length} valueStyle={{ color: '#13c2c2', fontSize: '28px', fontWeight: 700 }} />
-                              </Card>
-                            </Col>
-                            <Col xs={24} sm={12} md={6}>
-                              <Card style={{ borderRadius: 8, textAlign: 'center', border: '1px solid #f9f0ff' }}>
-                                <Statistic title={<span style={{ fontSize: '12px', color: '#666' }}>Utilization %</span>} value={utilizationPct} suffix="%" valueStyle={{ color: utilizationPct >= 80 ? '#52c41a' : utilizationPct >= 60 ? '#faad14' : '#f5222d', fontSize: '28px', fontWeight: 700 }} />
-                              </Card>
-                            </Col>
-                          </Row>
-
-                          {/* Utilization bar */}
-                          <Card style={{ borderRadius: 8, marginBottom: 16 }} bodyStyle={{ padding: '16px 20px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                              <Text strong style={{ fontSize: '13px' }}>Overall Utilization</Text>
-                              <Text style={{ fontSize: '12px', color: '#666' }}>{activeCount} of {total} resources active</Text>
-                            </div>
-                            <Progress
-                              percent={utilizationPct}
-                              strokeColor={utilizationPct >= 80 ? '#52c41a' : utilizationPct >= 60 ? '#faad14' : '#f5222d'}
-                              trailColor="#fff1f0"
-                              strokeWidth={12}
-                              format={pct => <span style={{ fontSize: '12px' }}>{pct}%</span>}
-                            />
-                          </Card>
-
-                          {/* Breakdown by engagement */}
-                          <Card style={{ borderRadius: 8, marginBottom: 16 }} bodyStyle={{ padding: '16px 20px' }}>
-                            <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 16 }}>Breakdown by Engagement</Text>
-                            <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                              {engagementBreakdown.map(([eng, count]) => {
-                                const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-                                const isBench = eng === 'Bench';
-                                return (
-                                  <div key={eng}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                      <Space size={6}>
-                                        {isBench
-                                          ? <Tag color="warning" style={{ fontSize: '10px', margin: 0 }}>Bench</Tag>
-                                          : <Text style={{ fontSize: '12px' }}>{eng}</Text>
-                                        }
-                                      </Space>
-                                      <Text style={{ fontSize: '12px', color: '#666' }}>{count} ({pct}%)</Text>
-                                    </div>
-                                    <Progress
-                                      percent={pct}
-                                      size="small"
-                                      strokeColor={isBench ? '#faad14' : '#1890ff'}
-                                      showInfo={false}
-                                      style={{ margin: 0 }}
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </Space>
-                          </Card>
-
-                          {/* Breakdown by Allocation Status */}
-                          <Card style={{ borderRadius: 8, marginBottom: 16 }} bodyStyle={{ padding: '16px 20px' }}>
-                            <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 16 }}>Breakdown by Allocation Status</Text>
-                            <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                              {(() => {
-                                const statusColorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
-                                const statusMap: Record<string, number> = {};
-                                (cachedResources || []).forEach(r => {
-                                  const s = r?.allocationStatus || 'Available';
-                                  statusMap[s] = (statusMap[s] || 0) + 1;
-                                });
-                                const order = ['Available', 'Shortlisted', 'Offered', 'Selected', 'Joined'];
-                                const entries = order.filter(s => statusMap[s]).map(s => [s, statusMap[s]] as [string, number]);
-                                // add any unexpected statuses
-                                Object.entries(statusMap).forEach(([s, c]) => { if (!order.includes(s)) entries.push([s, c]); });
-                                return entries.map(([status, count]) => {
-                                  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-                                  const color = statusColorMap[status] || '#8c8c8c';
-                                  return (
-                                    <div key={status}>
-                                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                        <span style={{ fontSize: '12px', color, fontWeight: 600 }}>{status}</span>
-                                        <Text style={{ fontSize: '12px', color: '#666' }}>{count} ({pct}%)</Text>
-                                      </div>
-                                      <Progress percent={pct} size="small" strokeColor={color} showInfo={false} style={{ margin: 0 }} />
-                                    </div>
-                                  );
-                                });
-                              })()}
-                            </Space>
-                          </Card>
-
-                          {/* Role-wise breakdown with navigation */}
-                          <Card style={{ borderRadius: 8 }} bodyStyle={{ padding: '16px 20px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                              <Space size={8}>
-                                <Text strong style={{ fontSize: '13px' }}>Bench Resources by Role/Domain</Text>
-                                <Tag color="warning" style={{ fontSize: '10px' }}>{roleBreakdown.reduce((s, [, c]) => s + c, 0)} on bench</Tag>
-                              </Space>
-                              <Text style={{ fontSize: '11px', color: '#8c8c8c' }}>Click a role to view filtered resources</Text>
-                            </div>
-                            {roleBreakdown.length === 0 ? (
-                              <Text style={{ fontSize: '12px', color: '#aaa' }}>No bench resources</Text>
-                            ) : (
-                            <Space direction="vertical" style={{ width: '100%' }} size={10}>
-                              {roleBreakdown.map(([role, count], i) => {
-                                const benchTotal = roleBreakdown.reduce((s, [, c]) => s + c, 0);
-                                const pct = benchTotal > 0 ? Math.round((count / benchTotal) * 100) : 0;
-                                const COLORS = ['#faad14', '#f5222d', '#eb2f96', '#722ed1', '#1890ff', '#13c2c2', '#52c41a', '#fa8c16'];
-                                const color = COLORS[i % COLORS.length];
-                                return (
-                                  <div key={role}
-                                    onClick={() => {
-                                      setMainTab('bench');
-                                      setUnifiedFilters({ ...DEFAULT_UNIFIED_FILTERS, roleOrDomain: role });
-                                    }}
-                                    style={{ cursor: 'pointer', borderRadius: 6, padding: '4px 6px', transition: 'background 0.15s' }}
-                                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#fffbe6'; }}
-                                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                                  >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                                      <Text style={{ fontSize: '12px', color: '#d48806' }}>{role}</Text>
-                                      <Text style={{ fontSize: '12px', color: '#666' }}>{count} ({pct}%)</Text>
-                                    </div>
-                                    <Progress percent={pct} size="small" strokeColor={color} showInfo={false} style={{ margin: 0 }} />
-                                  </div>
-                                );
-                              })}
-                            </Space>
-                            )}
-                          </Card>
-                        </>
-                      )}
-                      </div>
-                    </div>
-                  ),
+                    );
+                  })(),
                 },
               ]}
             />
-          </div>
-        </Space>
       </div>
 
       <Drawer
@@ -1461,7 +1693,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
             : <span>Bulk Allocate  -  {pendingAllocResources.length} Resources</span>
         }
         placement="right"
-        onClose={() => { setAllocationDrawer(false); setAllocationForm({ clientName: '', engagementName: '', notes: '' }); setPendingAllocResources([]); }}
+        onClose={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '' }); setPendingAllocResources([]); }}
         open={allocationDrawer}
         width={420}
       >
@@ -1498,21 +1730,26 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
           </div>
 
           <div>
-            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Client Name</label>
-            <Input
-              placeholder="Enter client name (optional)"
-              value={allocationForm.clientName}
-              onChange={(e) => setAllocationForm({ ...allocationForm, clientName: e.target.value })}
+            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Link Beeline ID <span style={{ fontWeight: 400, color: '#8c8c8c' }}>(optional)</span></label>
+            <Select
+              showSearch
+              allowClear
+              placeholder="Select Beeline ID to link"
+              value={allocationForm.beelineId || undefined}
+              onChange={(v) => setAllocationForm({ ...allocationForm, beelineId: v || '' })}
+              style={{ width: '100%' }}
+              options={beelineRequestOptions}
+              filterOption={(input, option) => String(option?.value || '').toLowerCase().includes(input.toLowerCase())}
             />
           </div>
 
           <div>
-            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Notes</label>
+            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Notes <span style={{ fontWeight: 400, color: '#8c8c8c' }}>(saved to resource comments)</span></label>
             <Input.TextArea
-              placeholder="Add notes"
+              placeholder="Add notes — will be auto-saved as a comment on the resource"
               value={allocationForm.notes}
               onChange={(e) => setAllocationForm({ ...allocationForm, notes: e.target.value })}
-              rows={2}
+              rows={3}
             />
           </div>
 
@@ -1525,107 +1762,169 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
           <Space style={{ width: '100%' }} size="small">
             <Button type="primary" loading={savingAllocation} onClick={handleSaveAllocation} style={{ flex: 1 }}>{pendingTargetStatus === 'Offered' ? 'Move to Offered' : 'Shortlist'}</Button>
-            <Button onClick={() => { setAllocationDrawer(false); setAllocationForm({ clientName: '', engagementName: '', notes: '' }); }} style={{ flex: 1 }}>Cancel</Button>
+            <Button onClick={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '' }); }} style={{ flex: 1 }}>Cancel</Button>
           </Space>
         </Space>
       </Drawer>
 
       {selectedDetailResource && (
         <Drawer
-          title={`${selectedDetailResource.raId} - ${selectedDetailResource.empName}`}
+          title={null}
           placement="right"
           onClose={() => {
             setDetailsModalOpen(false);
             setSelectedDetailResource(null);
+            setDetailExpanded(false);
           }}
           open={detailsModalOpen}
-          width={500}
+          width={detailExpanded ? 1100 : 680}
+          extra={
+            <Tooltip title={detailExpanded ? 'Collapse' : 'Expand'}>
+              <Button
+                type="text"
+                icon={detailExpanded ? <ShrinkOutlined /> : <ExpandAltOutlined />}
+                onClick={() => setDetailExpanded(v => !v)}
+              />
+            </Tooltip>
+          }
         >
-          <Space direction="vertical" style={{ width: '100%' }} size="large">
-            {/* Identity */}
-            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>S.No</Text>
-                  <div style={{ fontSize: '14px', fontWeight: 600 }}>{String(selectedDetailResource.sno || '—')}</div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>RA ID</Text>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#1890ff' }}>{String(selectedDetailResource.raId || '—')}</div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Email</Text>
-                  <div style={{ fontSize: '14px' }}>{String(selectedDetailResource.emailId || '—')}</div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>PIW Role</Text>
-                  <div style={{ fontSize: '14px' }}>{String(selectedDetailResource.piwRole || '—')}</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Professional Info */}
-            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
-              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Professional Information</Text>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Role / Domain</Text>
-                  <div style={{ marginTop: 4 }}>
-                    <Tag color="cyan">{String(selectedDetailResource.roleOrDomain || '—')}</Tag>
-                  </div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Previous Experience</Text>
-                  <div style={{ fontSize: '14px', fontWeight: 600 }}>{String(selectedDetailResource.previousWorkex || '—')}</div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Date of Joining</Text>
-                  <div style={{ fontSize: '14px' }}>{String(selectedDetailResource.doj || '—')}</div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Total Experience</Text>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#1890ff' }}>{String(selectedDetailResource.totalWorkex || '—')}</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Skills */}
-            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
-              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Technical Skills</Text>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {String(selectedDetailResource.skills || '').split(',').filter(s => s.trim()).map((skill, idx) => (
-                  <Tag key={idx} color="blue">{skill.trim()}</Tag>
-                ))}
-              </div>
-            </div>
-
-            {/* Engagement & Allocation Status */}
-            <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8 }}>
-              <Text style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 12 }}>Current Engagement</Text>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Engagement</Text>
-                  <div style={{ fontSize: '14px', marginTop: 4 }}>
-                    <Tag color={selectedDetailResource.engagement === 'Bench' ? 'warning' : 'blue'}>
-                      {String(selectedDetailResource.engagement || '—')}
-                    </Tag>
-                  </div>
-                </div>
-                <div>
-                  <Text type="secondary" style={{ fontSize: '12px' }}>Allocation Status</Text>
-                  <div style={{ marginTop: 4 }}>
-                    {(() => {
-                      const colorMap: Record<string, string> = { Available: '#faad14', Shortlisted: '#13c2c2', Offered: '#722ed1', Selected: '#1890ff', Joined: '#389e0d' };
-                      const s = selectedDetailResource.allocationStatus || '';
-                      return <span style={{ fontWeight: 600, color: colorMap[s] || '#595959' }}>{s || '—'}</span>;
-                    })()}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Space>
+          <ResourceDetailPanel
+            resource={selectedDetailResource}
+            currentUser={currentUser?.username}
+            expanded={detailExpanded}
+            onToggleExpand={() => setDetailExpanded(v => !v)}
+            onNavigateToRequest={onNavigateToRequest}
+            onNavigateToInsights={onNavigateToInsights ? () => { setSelectedDetailResource(null); onNavigateToInsights(); } : undefined}
+          />
         </Drawer>
       )}
+
+      {/* ── Release-to-bench comment modal ─────────────────────────── */}
+      <Modal
+        open={releaseModal}
+        title={
+          <span style={{ color: '#ff4d4f' }}>
+            🔁 Release Resource{releaseTargets.length > 1 ? `s (${releaseTargets.length})` : ''} to Bench
+          </span>
+        }
+        onCancel={() => { if (!savingRelease) setReleaseModal(false); }}
+        footer={null}
+        width={480}
+        maskClosable={!savingRelease}
+      >
+        <div style={{ paddingTop: 8 }}>
+          {/* Who's being released */}
+          <div style={{ background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 6, padding: '10px 14px', marginBottom: 16 }}>
+            {releaseTargets.length === 1 ? (
+              <>
+                <div style={{ fontWeight: 600, fontSize: '14px' }}>{releaseTargets[0].empName}</div>
+                <div style={{ color: '#888', fontSize: '12px' }}>
+                  {releaseTargets[0].raId} · Current status: <strong>{releaseTargets[0].allocationStatus || 'Active'}</strong>
+                  {releaseTargets[0].engagement ? ` · ${releaseTargets[0].engagement}` : ''}
+                </div>
+              </>
+            ) : (
+              <div style={{ fontWeight: 600, fontSize: '14px' }}>
+                {releaseTargets.length} resources will be released to bench
+              </div>
+            )}
+          </div>
+
+          {/* Tag selector */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: 6 }}>
+              <MessageOutlined style={{ marginRight: 6, color: '#1890ff' }} />
+              Reason / Tag <span style={{ color: '#ff4d4f' }}>*</span>
+            </div>
+            <Select
+              value={releaseTag}
+              onChange={v => setReleaseTag(v)}
+              style={{ width: '100%' }}
+              options={[
+                { value: 'Rejected by Client',   label: 'Rejected by Client' },
+                { value: 'Project Ended',         label: 'Project Ended' },
+                { value: 'Candidate Declined',    label: 'Candidate Declined' },
+                { value: 'Budget Constraints',    label: 'Budget Constraints' },
+                { value: 'Role No Longer Open',   label: 'Role No Longer Open' },
+                { value: 'Skill Mismatch',        label: 'Skill Mismatch' },
+                { value: 'On Hold',               label: 'On Hold' },
+                { value: 'Other',                 label: 'Other' },
+              ]}
+            />
+          </div>
+
+          {/* Comment box */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: '12px', fontWeight: 600, marginBottom: 6 }}>
+              Additional Notes (optional)
+            </div>
+            <Input.TextArea
+              rows={3}
+              placeholder="Add any notes about this release decision…"
+              value={releaseComment}
+              onChange={e => setReleaseComment(e.target.value)}
+              maxLength={500}
+              showCount
+            />
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <Button
+              disabled={savingRelease}
+              onClick={() => setReleaseModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="primary"
+              danger
+              loading={savingRelease}
+              onClick={confirmRelease}
+              style={{ color: '#fff', fontWeight: 600 }}
+            >
+              Confirm Release to Bench
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* ── Beeline Link Modal ─────────────────────────────────── */}
+      <Modal
+        title={<Space><LinkOutlined style={{ color: '#1890ff' }} /><span>Link to Beeline Request</span></Space>}
+        open={beelineLinkModal.open}
+        onCancel={() => setBeelineLinkModal({ open: false, resource: null })}
+        onOk={saveBeelineLink}
+        okText="Save Link"
+        confirmLoading={beelineSaving}
+        width={420}
+      >
+        {beelineLinkModal.resource && (
+          <div style={{ paddingTop: 8 }}>
+            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f5f5f5', borderRadius: 6 }}>
+              <div style={{ fontSize: '12px', fontWeight: 600 }}>{beelineLinkModal.resource.empName}</div>
+              <div style={{ fontSize: '11px', color: '#8c8c8c' }}>{beelineLinkModal.resource.raId}</div>
+            </div>
+            <div style={{ marginBottom: 6, fontSize: '12px', color: '#595959' }}>Select Beeline ID to link:</div>
+            <Select
+              showSearch
+              allowClear
+              style={{ width: '100%' }}
+              placeholder="Search Beeline ID…"
+              value={selectedBeelineId || undefined}
+              onChange={v => setSelectedBeelineId(v || '')}
+              options={beelineRequestOptions}
+              filterOption={(input, opt) => (opt?.value as string || '').toLowerCase().includes(input.toLowerCase())}
+              size="middle"
+            />
+            {beelineLinkModal.resource.beelineId && (
+              <div style={{ marginTop: 8, fontSize: '11px', color: '#8c8c8c' }}>
+                Currently linked: <Tag color="blue" style={{ fontSize: '10px' }}>{beelineLinkModal.resource.beelineId}</Tag>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
