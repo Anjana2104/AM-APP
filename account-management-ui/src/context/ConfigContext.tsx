@@ -28,6 +28,16 @@ const DEFAULT_APP_VALUES: AppValue[] = [
     description: 'SharePoint folder URL where employee resumes are stored',
   },
   {
+    key: 'RESOURCE_TYPES',
+    value: 'Developer,QA,BA,PM,Architect,DevOps,Data Engineer',
+    description: 'Comma-separated list of resource types available for PIW generation',
+  },
+  {
+    key: 'ENGAGEMENT_NAMES',
+    value: '',
+    description: 'Comma-separated list of project/engagement names for PIW generation (e.g., Next Gen Operations Support 2026,UCB Resource Allocation Q1 2026)',
+  },
+  {
     key: 'UTIL_LOW_THRESHOLD',
     value: '70',
     description: 'Resource utilisation % below which bench/utilisation stats are highlighted red (default: 70)',
@@ -95,6 +105,7 @@ export const AVAILABLE_LINK_TARGETS: LinkTarget[] = [
   { id: 'request_overall_status_field', label: 'Overall Status dropdown',   section: 'Request Management', module: 'Request Management',   description: 'Inline edit + filters' },
   // ── Internal Process ───────────────────────────────────────────────
   { id: 'ra_process_account_anchor_field', label: 'Account Anchor dropdown', section: 'Internal Process', module: 'Internal Process',     description: 'Inline allocation edit' },
+  { id: 'piw_engagement_field',            label: 'PIW — Project / Engagement Name dropdown', section: 'Internal Process', module: 'PIW Generation', description: 'Project/Engagement name dropdown in PIW generation form' },
   // ── Resources → Comment Tags ───────────────────────────────────────
   { id: 'resource_comment_tag_field',   label: 'Comment Tag dropdown',      section: 'Resources',          module: 'Resource Information & Engagement Mapping', description: 'Tag picker when adding comments in resource detail view' },
 ];

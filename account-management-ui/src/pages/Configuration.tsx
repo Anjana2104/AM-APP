@@ -16,7 +16,7 @@ import {
   PlusOutlined, DeleteOutlined, EditOutlined, SettingOutlined,
   SaveOutlined, CloseOutlined, UploadOutlined, DownloadOutlined,
   LinkOutlined, AppstoreOutlined, TableOutlined, BellOutlined,
-  HolderOutlined,
+  HolderOutlined, FileProtectOutlined,
 } from '@ant-design/icons';
 import {
   DndContext,
@@ -48,6 +48,7 @@ import {
   reorderNotificationTriggers,
 } from '../api/notificationTriggerApi';
 import { getUserGroups, UserGroup } from '../api/notificationApi';
+import { TemplatesTab } from '../components/TemplatesTab';
 
 const { Title, Text } = Typography;
 
@@ -94,6 +95,11 @@ export function Configuration() {
                 key: 'triggers',
                 label: <span><BellOutlined /> Notification Triggers</span>,
                 children: <NotificationTriggersTab />,
+              },
+              {
+                key: 'templates',
+                label: <span><FileProtectOutlined /> Templates</span>,
+                children: <TemplatesTab />,
               },
             ]}
           />

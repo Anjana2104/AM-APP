@@ -650,7 +650,7 @@ export default function App() {
         case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} onNavigate={(page, roleFilter) => { setResourceInfoRoleFilter(roleFilter); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
         case 'resources_insights':    return <ResourceInsights resources={resources} onNavigate={(page, raId) => { if (raId) setResourceInfoRaIdFilter(raId); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateWithFilter={(type, value) => { setResourceInfoFilterType(type); setResourceInfoFilterValue(value); navigateTo('resources_info', PAGE_SECTION_MAP['resources_info']); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} />;
         case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} onFilterApplied={() => setRequestsBeelineFilter(undefined)} />;
-        case 'clientmgmt_connects':   return <InternalProcess />;
+        case 'clientmgmt_connects':   return <InternalProcess resources={resources} />;
         case 'information_ratecard':      return <RateCard />;
         case 'information_teamhierarchy': return <TeamHierarchy />;
         case 'information_codeguide':        return <CodeGuide />;

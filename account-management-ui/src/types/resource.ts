@@ -13,6 +13,9 @@ export type ResourceRow = {
   doj: string;
   totalWorkex: string;
   skills: string;
+  skillType?: string;              // 'Commodity' | 'Specialized'
+  engagementStartDate?: string;    // Engagement start date for this resource
+  engagementEndDate?: string;      // Engagement end date for this resource
   engagement?: string;
   allocationStatus?: string;
   beelineId?: string;

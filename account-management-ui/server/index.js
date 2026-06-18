@@ -26,6 +26,9 @@ const notificationTriggerRoutes = require('./routes/notification-triggers');
 const userPreferencesRoutes = require('./routes/user-preferences');
 const resourceInsightsRoutes = require('./routes/resource-insights');
 const aiRoutes = require('./routes/ai');
+const templatesRoutes = require('./routes/templates');
+const piwGenerationRoutes = require('./routes/piwGeneration');
+const sowGenerationRoutes = require('./routes/sowGeneration');
 const { hashPassword } = require('./routes/auth');
 
 const PORT = process.env.PORT || 3001;
@@ -34,7 +37,10 @@ const app = express();
 
 // ── Run DB migrations on startup ─────────────────────────────────────
 async function runMigrations() {
+  console.log('🔄 Running database migrations...');
   const db = await getDb();
+  console.log('✅ Database connection established');
+  
   // finance_projects base table
   db.run(`CREATE TABLE IF NOT EXISTS finance_projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
@@ -261,6 +267,25 @@ async function runMigrations() {
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`);
+
+  // ── Templates table (PIW, SOW, Holiday Calendar) ────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS templates (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_size INTEGER DEFAULT 0,
+    file_data BLOB,
+    mime_type TEXT DEFAULT "",
+    uploaded_by TEXT DEFAULT "system",
+    uploaded_at TEXT NOT NULL,
+    description TEXT DEFAULT "",
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(type)
+  )`);
+  // Create index on type for faster filtering
+  db.run(`CREATE INDEX IF NOT EXISTS idx_templates_type ON templates(type)`);
+
   // Seed default Admin role and admin user if they don't exist
   const adminRole = db.get("SELECT id FROM roles WHERE name = 'Admin'");
   let adminRoleId = adminRole ? adminRole.id : null;
@@ -318,14 +343,18 @@ async function runMigrations() {
     );
   }
 
+  console.log('✅ Database migrations completed');
 }
 
 // ── Global error handlers ─────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
-  process.exit(1);
+  console.error('❌ Uncaught exception:', err.message || err);
+  console.error(err.stack);
+  // Don't exit — keep server alive for non-fatal errors
 });
 process.on('unhandledRejection', (reason) => {
-  process.exit(1);
+  console.error('❌ Unhandled rejection:', reason);
+  // Don't exit — keep server alive; individual request errors are handled in routes
 });
 
 // ── Request logger ────────────────────────────────────────────────────
@@ -365,6 +394,9 @@ app.use('/api/notification-triggers', notificationTriggerRoutes);
 app.use('/api/user-preferences', userPreferencesRoutes);
 app.use('/api/resource-insights', resourceInsightsRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/templates', templatesRoutes);
+app.use('/api/piwGeneration', piwGenerationRoutes);
+app.use('/api/sowGeneration', sowGenerationRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────────────
 app.use((req, res) => {
@@ -379,6 +411,16 @@ app.use((err, req, res, _next) => {
 // ── Start ─────────────────────────────────────────────────────────────
 runMigrations().then(() => {
   app.listen(PORT, () => {
-    const dbConfig = require('./config/database');
+    try {
+      const dbConfig = require('./config/database');
+      console.log(`✅ Server running on http://localhost:${PORT}`);
+      console.log(`📦 Database: ${dbConfig.client}`);
+    } catch (e) {
+      console.log(`✅ Server running on http://localhost:${PORT}`);
+    }
   });
-}).catch(err => { process.exit(1); });
+}).catch(err => { 
+  console.error('❌ Server startup failed:', err.message || err);
+  console.error(err.stack);
+  process.exit(1);
+});

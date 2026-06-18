@@ -85,11 +85,13 @@ router.post("/bulk", async (req, res) => {
         db.run(
           `UPDATE resources SET sno=?, emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
            previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?, allocation_status=?,
+           skill_type=?, engagement_start_date=?, engagement_end_date=?,
            updated_at=? WHERE id=?`,
           [r.sno || existing.sno, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
            r.totalWorkex || "", r.engagement || "", r.skills || "",
-           allocStatus, ts, existing.id]
+           allocStatus, r.skillType || "", r.engagementStartDate || "", r.engagementEndDate || "",
+           ts, existing.id]
         );
         // Audit: log changed fields
         const recordName = `${raId} - ${r.empName || existing.emp_name}`;
@@ -282,6 +284,30 @@ router.put("/batch", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// PUT /api/resources/:id/process-link — set or clear process_id for a resource
+// MUST be registered before PUT /:id
+router.put("/:id/process-link", async (req, res) => {
+  const { id } = req.params;
+  const { processId = null, changedBy = 'system' } = req.body;
+  try {
+    const db = await getDb();
+    const existing = db.get("SELECT * FROM resources WHERE id=?", [parseInt(id, 10)]);
+    if (!existing) return res.status(404).json({ error: 'Resource not found' });
+    const ts = new Date().toISOString();
+    const newProcessId = processId ? parseInt(processId, 10) : null;
+    db.run(`UPDATE resources SET process_id=?, updated_at=? WHERE id=?`, [newProcessId, ts, parseInt(id, 10)]);
+    const oldVal = existing.process_id != null ? String(existing.process_id) : '';
+    const newVal = newProcessId != null ? String(newProcessId) : '';
+    if (oldVal !== newVal) {
+      db.run(
+        `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at) VALUES (?,?,?,?,?,?,?,?)`,
+        ['resources', parseInt(id, 10), `${existing.ra_id} - ${existing.emp_name}`, 'Process Link', oldVal, newVal, changedBy, ts]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // PUT /api/resources/:id/beeline-link — set or clear beeline_id for a resource

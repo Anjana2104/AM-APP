@@ -22,6 +22,7 @@ export interface ResourcePayload {
   skills: string;
   allocationStatus?: string;
   beelineId?: string;
+  processId?: number | null;
 }
 
 let _serverAvailable: boolean | null = null;
@@ -148,6 +149,18 @@ export async function deleteResourceComment(resourceId: number, commentId: numbe
   const online = await isServerAvailable();
   if (!online) return false;
   const res = await fetch(`${BASE}/${resourceId}/comments/${commentId}`, { method: 'DELETE' });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+export async function setProcessLink(resourceId: number, processId: number | null, changedBy?: string): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/${resourceId}/process-link`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ processId, changedBy: changedBy || 'system' }),
+  });
   const data = await res.json();
   return data.ok === true;
 }

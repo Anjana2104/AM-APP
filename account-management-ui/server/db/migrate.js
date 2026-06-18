@@ -94,6 +94,13 @@ async function migrate() {
   `);
   // Add allocation_status to existing tables (idempotent)
   try { db.run(`ALTER TABLE resources ADD COLUMN allocation_status TEXT DEFAULT ''`); } catch (_) {}
+  // Add skill_type column (Commodity / Specialized) — idempotent
+  try { db.run(`ALTER TABLE resources ADD COLUMN skill_type TEXT DEFAULT ''`); } catch (_) {}
+  // Add per-resource engagement date range columns — idempotent
+  try { db.run(`ALTER TABLE resources ADD COLUMN engagement_start_date TEXT DEFAULT ''`); } catch (_) {}
+  try { db.run(`ALTER TABLE resources ADD COLUMN engagement_end_date TEXT DEFAULT ''`); } catch (_) {}
+  // Add process_id to link a resource to a process (idempotent)
+  try { db.run(`ALTER TABLE resources ADD COLUMN process_id INTEGER DEFAULT NULL`); } catch (_) {}
   // Backfill: active resources → 'Joined', bench → 'Available'
   db.run(`UPDATE resources SET allocation_status = 'Joined' WHERE (allocation_status IS NULL OR allocation_status = '') AND LOWER(TRIM(engagement)) != 'bench' AND engagement != ''`);
   db.run(`UPDATE resources SET allocation_status = 'Available' WHERE (allocation_status IS NULL OR allocation_status = '') AND (LOWER(TRIM(engagement)) = 'bench' OR engagement = '')`);

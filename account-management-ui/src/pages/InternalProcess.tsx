@@ -8,16 +8,25 @@
  */
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import * as processApi from '../api/processApi';
+import * as templateApi from '../api/templateApi';
+import * as piwApi from '../api/piwApi';
+import * as sowApi from '../api/sowApi';
+import * as resourceApi from '../api/resourceApi';
+import ProcessDetailPanel from '../components/ProcessDetailPanel';
 import {
   Tabs, Typography, Empty, Table, Button, Space, Tooltip, Upload, message,
-  Drawer, Checkbox, Input, Select, Modal, Form, Tag, Popconfirm, Switch,
+  Drawer, Checkbox, Input, Select, Modal, Form, Tag, Popconfirm, Switch, Card,
+  Steps, Dropdown, Spin, Divider, Row, Col,
 } from 'antd';
 import {
   NodeIndexOutlined, FileProtectOutlined, IdcardOutlined,
   UploadOutlined, DownloadOutlined, ColumnHeightOutlined, FilterOutlined,
   PlusOutlined, EditOutlined, DeleteOutlined, TableOutlined,
-  ClearOutlined, EyeOutlined, CheckCircleFilled, RightOutlined,
-  BarChartOutlined, InboxOutlined,
+  ClearOutlined, CheckCircleFilled, RightOutlined,
+  BarChartOutlined, InboxOutlined, UserOutlined, EllipsisOutlined,
+  ShareAltOutlined, FileExcelOutlined, FileWordOutlined,
+  LinkOutlined, TeamOutlined, MoreOutlined, ExpandAltOutlined, ShrinkOutlined,
+  HistoryOutlined, CommentOutlined, InfoCircleOutlined, StopOutlined, CheckOutlined,
 } from '@ant-design/icons';
 import { useConfig } from '../context/ConfigContext';
 import {
@@ -28,8 +37,47 @@ import * as XLSX from 'xlsx';
 import '../style.css';
 import { useAuth } from '../context/AuthContext';
 import { useUserPreferences } from '../context/UserPreferencesContext';
+import type { ResourceRow } from '../types/resource';
 
 const { Title, Text } = Typography;
+
+// ─── Rate Lookup — commodity vs specialized (mirrors RateCard.tsx RATES) ────
+const RATE_BANDS = [
+  { maxYears: 3,        c_inr: 14769, s_inr: 16000, c_usd: 192, s_usd: 208 },
+  { maxYears: 5,        c_inr: 18462, s_inr: 21538, c_usd: 240, s_usd: 280 },
+  { maxYears: 8,        c_inr: 22769, s_inr: 24615, c_usd: 296, s_usd: 320 },
+  { maxYears: 10,       c_inr: 27692, s_inr: 30769, c_usd: 360, s_usd: 400 },
+  { maxYears: Infinity, c_inr: 30769, s_inr: 36923, c_usd: 400, s_usd: 480 },
+];
+
+function parseWorkexToYears(totalWorkex: string): number {
+  const yr = totalWorkex?.match(/(\d[\d.]*)\s*[Yy]r|(\d[\d.]*)\s*[Yy]ear/);
+  const mo = totalWorkex?.match(/(\d[\d.]*)\s*[Mm]o|(\d[\d.]*)\s*[Mm]onth/);
+  const years  = yr ? parseFloat(yr[1] ?? yr[2]) : 0;
+  const months = mo ? parseFloat(mo[1] ?? mo[2]) : 0;
+  return years + months / 12;
+}
+
+function lookupDailyRate(totalWorkex: string, skillType: string = 'Commodity', currency: string = 'INR'): number {
+  const years = parseWorkexToYears(totalWorkex);
+  const band = RATE_BANDS.find(b => years < b.maxYears) ?? RATE_BANDS[RATE_BANDS.length - 1];
+  const spec = skillType === 'Specialized';
+  return currency === 'USD' ? (spec ? band.s_usd : band.c_usd) : (spec ? band.s_inr : band.c_inr);
+}
+
+// ─── PIW Resource Row type ──────────────────────────────────────────────────
+interface PiwResourceEntry {
+  key: string;
+  raidId: string;
+  empName: string;
+  piwRole: string;
+  totalWorkex: string;
+  skillType: string;            // 'Commodity' | 'Specialized'
+  dailyRate: number;
+  manualDailyRate: string;      // user override; empty = use auto-looked-up dailyRate
+  resourceStartDate: string;
+  resourceEndDate: string;
+}
 
 // --- Types ---
 interface ProcessRow {
@@ -77,7 +125,7 @@ const COL_KEYS: { key: keyof ProcessRow; label: string }[] = [
   { key: 'active',       label: 'Active' },
   { key: 'salesforceId', label: 'Salesforce ID' },
   { key: 'promsId',      label: 'PROMS ID' },
-  { key: 'budget',       label: 'Budget' },
+  { key: 'budget',       label: 'Budget (INR)' },
   { key: 'openAirCode',  label: 'Open Air Code' },
   { key: 'comments',     label: 'Comments' },
   { key: 'accountAnchor', label: 'Account Anchor' },
@@ -161,46 +209,72 @@ function downloadTemplate() {
 }
 
 // --- Pipeline Card ---
-function PipelineCard({ r, onEdit, onView, onDelete, canEdit, canDelete }: { r: ProcessRow; onEdit: () => void; onView: () => void; onDelete: () => void; canEdit?: boolean; canDelete?: boolean }) {
+function PipelineCard({ r, onView, onEdit, onDelete, onLinkResources, onToggleActive, onAssignAnchor, canEdit, canDelete, linkedCount, setDetailRow }: {
+  r: ProcessRow; onView: () => void; onEdit: () => void; onDelete: () => void;
+  onLinkResources: () => void; onToggleActive: () => void; onAssignAnchor: () => void;
+  canEdit?: boolean; canDelete?: boolean; linkedCount?: number;
+  setDetailRow: (r: ProcessRow | null) => void;
+}) {
   const status = deriveStatus(r);
   const statusColor = STATUS_COLORS[status];
+  const isInactive = r.active !== 'Yes';
 
   return (
-    <div style={{
-      background: '#fff', borderRadius: 10,
-      border: `1px solid ${statusColor}33`,
-      borderLeft: `4px solid ${statusColor}`,
-      boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
-      padding: '14px 16px', marginBottom: 12,
-    }}>
+    <div
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, [class*="ant-dropdown"], .ant-dropdown')) return;
+        onView();
+      }}
+      style={{
+        background: isInactive ? '#fff7e6' : '#fff',
+        borderRadius: 10,
+        border: isInactive ? '1px solid #ffe7ba' : `1px solid ${statusColor}33`,
+        borderLeft: isInactive ? '4px solid #fa8c16' : `4px solid ${statusColor}`,
+        boxShadow: '0 2px 10px rgba(0,0,0,0.06)',
+        padding: '14px 16px', marginBottom: 12,
+        cursor: 'pointer',
+        opacity: isInactive ? 0.85 : 1,
+        transition: 'box-shadow 0.15s',
+      }}
+      onMouseEnter={e => (e.currentTarget.style.boxShadow = '0 4px 16px rgba(24,144,255,0.13)')}
+      onMouseLeave={e => (e.currentTarget.style.boxShadow = '0 2px 10px rgba(0,0,0,0.06)')}
+    >
       {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
         <div style={{ flex: 1, paddingRight: 12 }}>
           <div style={{ fontSize: '13px', fontWeight: 700, color: '#262626' }}>{r.sow || '—'}</div>
-          {r.accountAnchor && (
-            <div style={{ marginTop: 3 }}>
-              <Tag color="purple" style={{ fontSize: '10px' }}>{r.accountAnchor}</Tag>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4, alignItems: 'center' }}>
+            {isInactive
+              ? <Tag color="orange" style={{ fontSize: '10px', margin: 0 }}>Inactive</Tag>
+              : <Tag style={{ fontSize: '10px', margin: 0, background: `${statusColor}18`, color: statusColor, border: `1px solid ${statusColor}44` }}>{status}</Tag>
+            }
+            {r.accountAnchor && <Tag color="purple" style={{ fontSize: '10px', margin: 0 }}>{r.accountAnchor}</Tag>}
+            {!!linkedCount && <Tag icon={<TeamOutlined />} color="blue" style={{ fontSize: '10px', margin: 0 }}>{linkedCount} resource{linkedCount !== 1 ? 's' : ''}</Tag>}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
-          <Tooltip title="View" overlayInnerStyle={{ fontSize: '11px' }}>
-            <Button icon={<EyeOutlined />} size="small" onClick={onView} style={{ borderRadius: 6 }} />
-          </Tooltip>
-          {(canEdit ?? true) && (
-          <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}>
-            <Button icon={<EditOutlined />} size="small" onClick={onEdit} style={{ borderRadius: 6 }} />
-          </Tooltip>
-          )}
-          {(canDelete ?? true) && (
-          <Popconfirm title="Delete this record?" description="This action cannot be undone." onConfirm={onDelete}
-            okText="Delete" cancelText="Cancel" okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
-            <Tooltip title="Delete" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} />
-            </Tooltip>
-          </Popconfirm>
-          )}
-        </div>
+        <Dropdown
+          menu={{
+            items: [
+              (canEdit ?? true) ? { key: 'edit', label: <span style={{ fontSize: '11px' }}>Edit</span>, icon: <EditOutlined style={{ fontSize: '11px' }} />, onClick: () => { setDetailRow(null); onEdit(); } } : null,
+              (canEdit ?? true) ? { key: 'toggleActive', label: <span style={{ fontSize: '11px' }}>{r.active === 'Yes' ? 'Mark Inactive' : 'Mark Active'}</span>, icon: r.active === 'Yes' ? <StopOutlined style={{ fontSize: '11px', color: '#ff4d4f' }} /> : <CheckOutlined style={{ fontSize: '11px', color: '#52c41a' }} />, onClick: () => onToggleActive() } : null,
+              { key: 'link', label: <span style={{ fontSize: '11px' }}>Link Resources</span>, icon: <LinkOutlined style={{ fontSize: '11px' }} />, onClick: () => onLinkResources() },
+              { key: 'anchor', label: <span style={{ fontSize: '11px' }}>Assign Anchor</span>, icon: <IdcardOutlined style={{ fontSize: '11px' }} />, onClick: () => onAssignAnchor() },
+              { type: 'divider' as const },
+              (canDelete ?? true) ? {
+                key: 'delete', label: <span style={{ fontSize: '11px' }}>Delete</span>,
+                icon: <DeleteOutlined style={{ fontSize: '11px' }} />, danger: true,
+                onClick: () => Modal.confirm({
+                  title: 'Delete this record?', content: 'This action cannot be undone.',
+                  okText: 'Delete', okButtonProps: { danger: true, size: 'small' },
+                  cancelButtonProps: { size: 'small' }, onOk: onDelete,
+                }),
+              } : null,
+            ].filter(Boolean) as any[],
+          }}
+          trigger={['click']}
+        >
+          <Button type="text" size="small" icon={<EllipsisOutlined />} style={{ padding: '0 4px', borderRadius: 6 }} onClick={e => e.stopPropagation()} />
+        </Dropdown>
       </div>
 
       {/* Pipeline steps */}
@@ -211,11 +285,8 @@ function PipelineCard({ r, onEdit, onView, onDelete, canEdit, canDelete }: { r: 
           const value = stage.field(r)?.trim();
           return (
             <React.Fragment key={stage.key}>
-              <Tooltip
-                title={done && value ? <span style={{ fontSize: '11px' }}>{value}</span> : null}
-                overlayInnerStyle={{ fontSize: '11px' }}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 80, cursor: 'default' }}>
+              <Tooltip title={done && value ? <span style={{ fontSize: '11px' }}>{value}</span> : null} overlayInnerStyle={{ fontSize: '11px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 80, cursor: 'default' }} onClick={e => e.stopPropagation()}>
                   <div style={{
                     width: 32, height: 32, borderRadius: '50%',
                     background: done ? color : '#f5f5f5',
@@ -224,14 +295,9 @@ function PipelineCard({ r, onEdit, onView, onDelete, canEdit, canDelete }: { r: 
                     fontSize: '14px', marginBottom: 4,
                     boxShadow: done ? `0 0 0 3px ${color}22` : 'none',
                   }}>
-                    {done
-                      ? <CheckCircleFilled style={{ color: '#fff', fontSize: '16px' }} />
-                      : <span style={{ color: '#bfbfbf', fontSize: '11px', fontWeight: 700 }}>{idx + 1}</span>
-                    }
+                    {done ? <CheckCircleFilled style={{ color: '#fff', fontSize: '16px' }} /> : <span style={{ color: '#bfbfbf', fontSize: '11px', fontWeight: 700 }}>{idx + 1}</span>}
                   </div>
-                  <span style={{ fontSize: '10px', fontWeight: done ? 700 : 400, color: done ? color : '#bfbfbf', textAlign: 'center', lineHeight: 1.2, maxWidth: 72 }}>
-                    {stage.label}
-                  </span>
+                  <span style={{ fontSize: '10px', fontWeight: done ? 700 : 400, color: done ? color : '#bfbfbf', textAlign: 'center', lineHeight: 1.2, maxWidth: 72 }}>{stage.label}</span>
                 </div>
               </Tooltip>
               {idx < PIPELINE_STAGES.length - 1 && (
@@ -248,30 +314,74 @@ function PipelineCard({ r, onEdit, onView, onDelete, canEdit, canDelete }: { r: 
 }
 
 // --- Process Insights Tab ---
-function ProcessInsights({ rows }: { rows: ProcessRow[] }) {
-  const monthData = useMemo(() => {
-    const map = new Map<string, { total: number; notStarted: number; inProgress: number; completed: number }>();
+function ProcessInsights({ rows, onNavigate }: { rows: ProcessRow[]; onNavigate?: (filters: Record<string, any>) => void }) {
+  const [activeFilter, setActiveFilter] = useState<string | null>(null);
+
+  const navigate = (filters: Record<string, any>) => {
+    if (onNavigate) onNavigate(filters);
+  };
+
+  const analytics = useMemo(() => {
+    const total = rows.length;
+    const active = rows.filter(r => r.active === 'Yes').length;
+    const inactive = rows.filter(r => r.active !== 'Yes').length;
+    const notStarted = rows.filter(r => deriveStatus(r) === 'Not Started').length;
+    const inProgress = rows.filter(r => deriveStatus(r) === 'In Progress').length;
+    const completed = rows.filter(r => deriveStatus(r) === 'Completed').length;
+    const withSignedSow = rows.filter(r => r.signedSow === 'Yes').length;
+    const withPiw = rows.filter(r => !!r.piw?.trim()).length;
+    const withSalesforce = rows.filter(r => !!r.salesforceId?.trim()).length;
+    const withProms = rows.filter(r => !!r.promsId?.trim()).length;
+    const withBudget = rows.filter(r => !!r.budget?.trim()).length;
+    const withOpenAir = rows.filter(r => !!r.openAirCode?.trim()).length;
+    const withAnchor = rows.filter(r => !!r.accountAnchor?.trim()).length;
+
+    // By anchor
+    const anchorMap: Record<string, number> = {};
+    rows.forEach(r => {
+      const a = r.accountAnchor || 'Unassigned';
+      anchorMap[a] = (anchorMap[a] || 0) + 1;
+    });
+
+    // By month
+    const monthMap = new Map<string, { notStarted: number; inProgress: number; completed: number; total: number }>();
     rows.forEach(r => {
       const month = parseMonthYear(r.startDate) || 'Unknown';
       const s = deriveStatus(r);
-      const e = map.get(month) || { total: 0, notStarted: 0, inProgress: 0, completed: 0 };
+      const e = monthMap.get(month) || { notStarted: 0, inProgress: 0, completed: 0, total: 0 };
       e.total++;
       if (s === 'Not Started') e.notStarted++;
       else if (s === 'In Progress') e.inProgress++;
       else e.completed++;
-      map.set(month, e);
+      monthMap.set(month, e);
     });
-    return Array.from(map.entries())
+    const monthData = Array.from(monthMap.entries())
       .map(([month, d]) => ({ month, ...d }))
       .sort((a, b) => monthSortKey(a.month) - monthSortKey(b.month));
-  }, [rows]);
 
-  const totals = useMemo(() => ({
-    total:      rows.length,
-    notStarted: rows.filter(r => deriveStatus(r) === 'Not Started').length,
-    inProgress: rows.filter(r => deriveStatus(r) === 'In Progress').length,
-    completed:  rows.filter(r => deriveStatus(r) === 'Completed').length,
-  }), [rows]);
+    // Completion rate
+    const completionRate = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const activationRate = total > 0 ? Math.round((active / total) * 100) : 0;
+
+    // SOW doc coverage (have signed SOW)
+    const signedRate = total > 0 ? Math.round((withSignedSow / total) * 100) : 0;
+    const pipelineHealth = total > 0 ? Math.round(((withPiw + withSalesforce + withProms) / (total * 3)) * 100) : 0;
+
+    // Recently added (last 3 months)
+    const recentRows = rows.filter(r => {
+      if (!r.startDate) return false;
+      const key = monthSortKey(parseMonthYear(r.startDate) || '');
+      const now = monthSortKey(parseMonthYear(new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })) || '');
+      return now - key <= 3 && key > 0;
+    });
+
+    return {
+      total, active, inactive, notStarted, inProgress, completed,
+      withSignedSow, withPiw, withSalesforce, withProms, withBudget, withOpenAir, withAnchor,
+      anchorMap, monthData, completionRate, activationRate, signedRate, pipelineHealth,
+      recentCount: recentRows.length,
+    };
+  }, [rows]);
 
   if (rows.length === 0) {
     return (
@@ -283,64 +393,156 @@ function ProcessInsights({ rows }: { rows: ProcessRow[] }) {
     );
   }
 
-  const hStyle = { fontSize: '11px', fontWeight: 700 as const };
-  const cStyle = { fontSize: '11px' };
-
-  const insightCols = [
-    { title: 'Month', dataIndex: 'month', key: 'month', width: 120, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, fontWeight: 600 }}>{v}</span> },
-    { title: 'Total', dataIndex: 'total', key: 'total', width: 70, onHeaderCell: () => ({ style: hStyle }), render: (v: number) => <span style={{ ...cStyle, fontWeight: 700 }}>{v}</span> },
-    { title: 'Not Started', dataIndex: 'notStarted', key: 'notStarted', width: 100, onHeaderCell: () => ({ style: hStyle }),
-      render: (v: number) => v ? <Tag style={{ fontSize: '10px', background: '#8c8c8c18', color: '#8c8c8c', border: '1px solid #8c8c8c44' }}>{v}</Tag> : <span style={cStyle}>—</span> },
-    { title: 'In Progress', dataIndex: 'inProgress', key: 'inProgress', width: 100, onHeaderCell: () => ({ style: hStyle }),
-      render: (v: number) => v ? <Tag style={{ fontSize: '10px', background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44' }}>{v}</Tag> : <span style={cStyle}>—</span> },
-    { title: 'Completed', dataIndex: 'completed', key: 'completed', width: 100, onHeaderCell: () => ({ style: hStyle }),
-      render: (v: number) => v ? <Tag style={{ fontSize: '10px', background: '#52c41a18', color: '#52c41a', border: '1px solid #52c41a44' }}>{v}</Tag> : <span style={cStyle}>—</span> },
+  const kpi1 = [
+    { label: 'Total Processes', value: analytics.total, color: '#1890ff', bg: '#e6f7ff', border: '#91d5ff', filterKey: null },
+    { label: 'Active', value: analytics.active, color: '#52c41a', bg: '#f6ffed', border: '#b7eb8f', filterKey: 'active' },
+    { label: 'Inactive', value: analytics.inactive, color: '#fa8c16', bg: '#fff7e6', border: '#ffe7ba', filterKey: 'inactive' },
+    { label: 'Completed', value: analytics.completed, color: '#52c41a', bg: '#f6ffed', border: '#b7eb8f', filterKey: 'completed' },
+  ];
+  const kpi2 = [
+    { label: 'In Progress', value: analytics.inProgress, color: '#1890ff', bg: '#f0f5ff', border: '#d6e4ff', filterKey: 'inProgress' },
+    { label: 'Not Started', value: analytics.notStarted, color: '#8c8c8c', bg: '#fafafa', border: '#d9d9d9', filterKey: 'notStarted' },
+    { label: 'With Account Anchor', value: analytics.withAnchor, color: '#722ed1', bg: '#f9f0ff', border: '#d3adf7', filterKey: null },
+    { label: 'Completion Rate', value: `${analytics.completionRate}%`, color: analytics.completionRate >= 50 ? '#52c41a' : '#faad14', bg: '#fafafa', border: '#f0f0f0', filterKey: null, noClick: true },
   ];
 
-  return (
-    <div>
-      {/* KPI strip */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
-        {[
-          { label: 'Total Opportunities', count: totals.total,      color: '#262626' },
-          { label: 'Not Started',         count: totals.notStarted, color: '#8c8c8c' },
-          { label: 'In Progress',         count: totals.inProgress, color: '#1890ff' },
-          { label: 'Completed',           count: totals.completed,  color: '#52c41a' },
-        ].map(s => (
-          <div key={s.label} style={{ background: '#fff', border: `1px solid ${s.color}33`, borderLeft: `3px solid ${s.color}`, borderRadius: 6, padding: '8px 18px', display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span style={{ fontSize: '11px', color: '#8c8c8c' }}>{s.label}</span>
-            <span style={{ fontSize: '20px', fontWeight: 700, color: s.color }}>{s.count}</span>
-          </div>
-        ))}
-      </div>
+  const pipelineItems = [
+    { label: 'Signed SOW', count: analytics.withSignedSow, total: analytics.total, color: '#1890ff' },
+    { label: 'PIW Created', count: analytics.withPiw, total: analytics.total, color: '#722ed1' },
+    { label: 'Salesforce ID', count: analytics.withSalesforce, total: analytics.total, color: '#13c2c2' },
+    { label: 'PROMS ID', count: analytics.withProms, total: analytics.total, color: '#52c41a' },
+    { label: 'Budget Set', count: analytics.withBudget, total: analytics.total, color: '#fa8c16' },
+    { label: 'Open Air Code', count: analytics.withOpenAir, total: analytics.total, color: '#eb2f96' },
+  ];
 
-      {/* Stacked bar chart */}
-      <div style={{ background: '#fafafa', borderRadius: 8, padding: '14px 16px', marginBottom: 20, border: '1px solid #f0f0f0' }}>
-        <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 12 }}>Opportunities by Month (grouped by status)</Text>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={monthData} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
-            <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-            <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={28} />
-            <RechartTooltip
-              contentStyle={{ fontSize: '11px', borderRadius: 6, border: '1px solid #f0f0f0' }}
-              formatter={(val: any, name: string) => [val, name]}
-            />
-            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: 8 }} />
+  const anchorRows = Object.entries(analytics.anchorMap)
+    .sort(([, a], [, b]) => b - a)
+    .map(([anchor, count]) => ({ anchor, count, pct: Math.round((count / analytics.total) * 100) }));
+
+  return (
+    <div style={{ padding: '4px 0' }}>
+      {/* KPI Row 1 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
+        {kpi1.map(k => (
+          <Col xs={12} sm={6} key={k.label}>
+            <Card
+              size="small" hoverable={!k.filterKey === false || !!k.filterKey}
+              style={{ borderRadius: 8, cursor: k.filterKey ? 'pointer' : 'default', background: k.bg, border: `1px solid ${k.border}`, transition: 'all 0.2s' }}
+              onClick={() => k.filterKey && navigate({ status: k.filterKey })}
+            >
+              <div style={{ fontSize: '11px', color: k.color, fontWeight: 600, marginBottom: 4 }}>{k.label}</div>
+              <div style={{ fontSize: '26px', fontWeight: 700, color: k.color, lineHeight: 1 }}>{k.value}</div>
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      {/* KPI Row 2 */}
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {kpi2.map(k => (
+          <Col xs={12} sm={6} key={k.label}>
+            <Card
+              size="small" hoverable={!k.noClick}
+              style={{ borderRadius: 8, cursor: k.noClick ? 'default' : (k.filterKey ? 'pointer' : 'default'), background: k.bg, border: `1px solid ${k.border}`, transition: 'all 0.2s' }}
+              onClick={() => k.filterKey && navigate({ status: k.filterKey })}
+            >
+              <div style={{ fontSize: '11px', color: k.color, fontWeight: 600, marginBottom: 4 }}>{k.label}</div>
+              <div style={{ fontSize: '26px', fontWeight: 700, color: k.color, lineHeight: 1 }}>{k.value}</div>
+            </Card>
+          </Col>
+        ))}
+      </Row>
+
+      <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+        {/* Pipeline Coverage */}
+        <Col xs={24} md={12}>
+          <Card
+            size="small"
+            title={<span style={{ fontSize: '12px', fontWeight: 700 }}>📋 Pipeline Coverage</span>}
+            style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}
+            bodyStyle={{ padding: '10px 14px' }}
+          >
+            {pipelineItems.map(item => (
+              <div key={item.label} style={{ marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                  <Text style={{ fontSize: '11px' }}>{item.label}</Text>
+                  <Text style={{ fontSize: '11px', fontWeight: 600, color: item.color }}>{item.count} / {item.total}</Text>
+                </div>
+                <div style={{ background: '#f5f5f5', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+                  <div style={{ width: `${item.total > 0 ? Math.round((item.count / item.total) * 100) : 0}%`, height: '100%', background: item.color, borderRadius: 4, transition: 'width 0.5s' }} />
+                </div>
+              </div>
+            ))}
+          </Card>
+        </Col>
+
+        {/* By Account Anchor */}
+        <Col xs={24} md={12}>
+          <Card
+            size="small"
+            title={<span style={{ fontSize: '12px', fontWeight: 700 }}>👤 By Account Anchor</span>}
+            style={{ borderRadius: 8, border: '1px solid #f0f0f0', height: '100%' }}
+            bodyStyle={{ padding: '10px 14px', maxHeight: 240, overflowY: 'auto' }}
+          >
+            {anchorRows.map(({ anchor, count, pct }) => (
+              <div key={anchor} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Tag color={anchor === 'Unassigned' ? 'default' : 'purple'} style={{ fontSize: '10px', minWidth: 80, textAlign: 'center' }}>{anchor}</Tag>
+                <div style={{ flex: 1, background: '#f5f5f5', borderRadius: 4, height: 6, overflow: 'hidden' }}>
+                  <div style={{ width: `${pct}%`, height: '100%', background: anchor === 'Unassigned' ? '#d9d9d9' : '#722ed1', borderRadius: 4 }} />
+                </div>
+                <Text style={{ fontSize: '11px', fontWeight: 600, width: 28, textAlign: 'right' }}>{count}</Text>
+              </div>
+            ))}
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Monthly trend chart */}
+      <Card
+        size="small"
+        title={<span style={{ fontSize: '12px', fontWeight: 700 }}>📅 Monthly Trend — Opportunities by Status</span>}
+        style={{ borderRadius: 8, border: '1px solid #f0f0f0', marginBottom: 16 }}
+        bodyStyle={{ padding: '10px 14px' }}
+      >
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={analytics.monthData} margin={{ top: 4, right: 12, left: 0, bottom: 4 }}>
+            <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={24} />
+            <RechartTooltip contentStyle={{ fontSize: '11px', borderRadius: 6 }} />
+            <Legend wrapperStyle={{ fontSize: '11px', paddingTop: 6 }} />
             <Bar dataKey="notStarted" name="Not Started" stackId="a" fill="#8c8c8c" />
-            <Bar dataKey="inProgress"  name="In Progress"  stackId="a" fill="#1890ff" />
-            <Bar dataKey="completed"   name="Completed"    stackId="a" fill="#52c41a" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="inProgress" name="In Progress" stackId="a" fill="#1890ff" />
+            <Bar dataKey="completed" name="Completed" stackId="a" fill="#52c41a" radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
-      </div>
+      </Card>
 
       {/* Monthly breakdown table */}
-      <div className="compact-table">
+      <Card
+        size="small"
+        title={<span style={{ fontSize: '12px', fontWeight: 700 }}>📊 Monthly Breakdown</span>}
+        style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}
+        bodyStyle={{ padding: 0 }}
+      >
         <Table
-          dataSource={monthData} columns={insightCols} rowKey="month"
-          size="small" pagination={false}
-          style={{ background: '#fff', borderRadius: 8 }}
+          size="small"
+          dataSource={analytics.monthData}
+          rowKey="month"
+          pagination={false}
+          style={{ borderRadius: 8 }}
+          columns={[
+            { title: 'Month', dataIndex: 'month', key: 'month', width: 100, render: v => <span style={{ fontSize: '11px', fontWeight: 600 }}>{v}</span> },
+            { title: 'Total', dataIndex: 'total', key: 'total', width: 60, render: v => <span style={{ fontSize: '11px', fontWeight: 700 }}>{v}</span> },
+            { title: 'Not Started', dataIndex: 'notStarted', key: 'ns', width: 90, render: v => v ? <Tag style={{ fontSize: '10px', background: '#8c8c8c18', color: '#8c8c8c', border: '1px solid #8c8c8c44' }}>{v}</Tag> : <span style={{ fontSize: '11px', color: '#d9d9d9' }}>—</span> },
+            { title: 'In Progress', dataIndex: 'inProgress', key: 'ip', width: 90, render: v => v ? <Tag style={{ fontSize: '10px', background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44' }}>{v}</Tag> : <span style={{ fontSize: '11px', color: '#d9d9d9' }}>—</span> },
+            { title: 'Completed', dataIndex: 'completed', key: 'cp', width: 90, render: v => v ? <Tag style={{ fontSize: '10px', background: '#52c41a18', color: '#52c41a', border: '1px solid #52c41a44' }}>{v}</Tag> : <span style={{ fontSize: '11px', color: '#d9d9d9' }}>—</span> },
+            { title: '% Done', key: 'pct', width: 80, render: (_: any, r: any) => {
+              const pct = r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0;
+              return <Tag color={pct >= 100 ? 'success' : pct >= 50 ? 'processing' : 'default'} style={{ fontSize: '10px' }}>{pct}%</Tag>;
+            }},
+          ]}
         />
-      </div>
+      </Card>
     </div>
   );
 }
@@ -363,17 +565,39 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
   const [columnDrawer, setColumnDrawer] = useState(false);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [filters, setFilters] = useState<Record<string, string>>({});
-  const [pendingFilters, setPendingFilters] = useState<Record<string, string>>({});
   const [editModal, setEditModal] = useState(false);
   const [editingRow, setEditingRow] = useState<ProcessRow | null>(null);
-  const [viewModal, setViewModal] = useState(false);
-  const [viewingRow, setViewingRow] = useState<ProcessRow | null>(null);
+  const [detailRow, setDetailRow] = useState<ProcessRow | null>(null);
+  const [panelExpanded, setPanelExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [allocateModal, setAllocateModal] = useState(false);
   const [allocateAnchor, setAllocateAnchor] = useState('');
   const [allocateSelected, setAllocateSelected] = useState<string[]>([]);
+  const [allocateSingleRow, setAllocateSingleRow] = useState<ProcessRow | null>(null);
   const [form] = Form.useForm();
   const filterPanelRef = useRef<HTMLDivElement>(null);
+
+  // ── Linked Resources state ──────────────────────────────────────────────────
+  type ProcRes = { id: number; raId: string; empName: string; piwRole: string; processId: number | null };
+  const [allProcResources, setAllProcResources] = useState<ProcRes[]>([]);
+  const [linkModal, setLinkModal] = useState<{ open: boolean; row: ProcessRow | null }>({ open: false, row: null });
+  const [linkChecked, setLinkChecked] = useState<Set<number>>(new Set());
+  const [loadingLink, setLoadingLink] = useState(false);
+  const [savingLink, setSavingLink] = useState(false);
+
+  const linkedCountMap = useMemo(() => {
+    const map: Record<number, number> = {};
+    allProcResources.forEach(r => { if (r.processId) map[r.processId] = (map[r.processId] || 0) + 1; });
+    return map;
+  }, [allProcResources]);
+
+  const mapProcRes = (r: any): ProcRes => ({
+    id: r.id,
+    raId: r.ra_id || r.raId || '',
+    empName: r.emp_name || r.empName || '',
+    piwRole: r.piw_role || r.piwRole || '',
+    processId: r.process_id != null ? Number(r.process_id) : (r.processId != null ? Number(r.processId) : null),
+  });
 
   const [visibleColumns, setVisibleColumnsState] = useState<Record<string, boolean>>(
     Object.fromEntries(COL_KEYS.map(c => [c.key, true]))
@@ -393,11 +617,6 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
 
   const isFilterApplied = Object.values(filters).some(Boolean);
 
-  // Sync pendingFilters with applied filters when panel opens
-  useEffect(() => {
-    if (showFilterPanel) setPendingFilters(filters);
-  }, [showFilterPanel]);
-
   useEffect(() => {
     if (!showFilterPanel) return;
     const handler = (e: MouseEvent) => {
@@ -410,8 +629,43 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     return () => document.removeEventListener('mousedown', handler);
   }, [showFilterPanel]);
 
-  const applyFilters = () => {
-    setFilters(pendingFilters);
+  // Load linked resources for count badges
+  const loadProcResources = () => {
+    resourceApi.getResources().then(({ resources }) => setAllProcResources(resources.map(mapProcRes)));
+  };
+  useEffect(() => { loadProcResources(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Open link resources modal
+  const openLinkModal = async (row: ProcessRow) => {
+    if (row.active !== 'Yes') {
+      message.warning('Cannot link resources to an inactive process. Activate it first.');
+      return;
+    }
+    setLinkModal({ open: true, row });
+    setLoadingLink(true);
+    setLinkChecked(new Set());
+    const { resources } = await resourceApi.getResources();
+    const mapped = resources.map(mapProcRes);
+    setAllProcResources(mapped);
+    setLinkChecked(new Set(mapped.filter(r => r.processId === row.id && r.id != null).map(r => r.id)));
+    setLoadingLink(false);
+  };
+
+  const handleSaveLinks = async () => {
+    if (!linkModal.row?.id) return;
+    const processId = linkModal.row.id;
+    setSavingLink(true);
+    const prevLinked = new Set<number>(allProcResources.filter(r => r.processId === processId).map(r => r.id));
+    const toLink   = [...linkChecked].filter(id => !prevLinked.has(id));
+    const toUnlink = [...prevLinked].filter(id => !linkChecked.has(id));
+    await Promise.all([
+      ...toLink.map(id => resourceApi.setProcessLink(id, processId, currentUser?.username || 'system')),
+      ...toUnlink.map(id => resourceApi.setProcessLink(id, null, currentUser?.username || 'system')),
+    ]);
+    loadProcResources();
+    setSavingLink(false);
+    message.success('Resource links updated');
+    setLinkModal({ open: false, row: null });
   };
 
   // Upload — upsert by SOW (append new, overwrite existing by SOW key)
@@ -495,36 +749,71 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
 
   // Add / Edit / Delete
   const openAdd = () => { setEditingRow(null); form.resetFields(); setEditModal(true); };
-  const openEdit = (r: ProcessRow) => { setEditingRow(r); form.setFieldsValue(r); setEditModal(true); };
-  const openView = (r: ProcessRow) => { setViewingRow(r); setViewModal(true); };
+  // openEdit from table/pipeline ellipsis: close detail panel first (no overlap needed)
+  const openEdit = (r: ProcessRow) => { setEditingRow(r); form.setFieldsValue({ ...r, newComment: undefined }); setEditModal(true); };
+  // openEditFromPanel: close detail panel first, then open edit drawer
+  const openEditFromPanel = (r: ProcessRow) => { setDetailRow(null); setPanelExpanded(false); setEditingRow(r); form.setFieldsValue({ ...r, newComment: undefined }); setEditModal(true); };
+  const openView = (r: ProcessRow) => { setDetailRow(r); setPanelExpanded(false); };
   const handleDelete = (r: ProcessRow) => {
     setRows(prev => prev.filter(pr => pr.key !== r.key).map((pr, i) => ({ ...pr, sno: i + 1 })));
     if (r.id) processApi.deleteProcess(r.id, currentUser?.username);
   };
+
+  // Toggle active/inactive
+  const handleToggleActive = async (row: ProcessRow) => {
+    if (!row.id) return;
+    const newIsActive = row.active !== 'Yes';
+    const result = await processApi.setActiveStatus(row.id, newIsActive, currentUser?.username);
+    if (!result.ok) { message.error(result.error || 'Failed to update status'); return; }
+    const newVal = newIsActive ? 'Yes' : 'No';
+    setRows(prev => prev.map(r => r.key === row.key ? { ...r, active: newVal } : r));
+    if (detailRow && detailRow.key === row.key) setDetailRow(prev => prev ? { ...prev, active: newVal } : prev);
+    message.success(`Marked as ${newIsActive ? 'Active' : 'Inactive'}`);
+  };
   const handleSave = () => {
-    form.validateFields().then(vals => {
+    form.validateFields().then(async vals => {
+      // Cannot deactivate if resources are linked
+      if (editingRow?.id && editingRow.active === 'Yes' && vals.active !== 'Yes') {
+        const count = linkedCountMap[editingRow.id] || 0;
+        if (count > 0) {
+          message.error(`Cannot deactivate — ${count} resource(s) are still linked to this process. Remove resource links first.`);
+          return;
+        }
+      }
+      const commentText: string = (vals.newComment || '').trim();
+      const { newComment: _nc, ...rowVals } = vals;
       if (editingRow) {
-        setRows(prev => prev.map(r => r.key === editingRow.key ? { ...r, ...vals } : r));
-        if (editingRow.id) processApi.updateProcess(editingRow.id, {
-          startDate: vals.startDate || '', signedSow: vals.signedSow || '',
-          piw: vals.piw || '', active: vals.active || '',
-          salesforceId: vals.salesforceId || '', promsId: vals.promsId || '',
-          budget: vals.budget || '', openAirCode: vals.openAirCode || '',
-          comments: vals.comments || '', accountAnchor: vals.accountAnchor || '',
-        });
+        const updatedRow = { ...editingRow, ...rowVals };
+        setRows(prev => prev.map(r => r.key === editingRow.key ? updatedRow : r));
+        // If detail panel is open for this record, refresh it in-place
+        if (detailRow && detailRow.key === editingRow.key) setDetailRow(updatedRow);
+        if (editingRow.id) {
+          await processApi.updateProcess(editingRow.id, {
+            startDate: rowVals.startDate || '', signedSow: rowVals.signedSow || '',
+            piw: rowVals.piw || '', active: rowVals.active || '',
+            salesforceId: rowVals.salesforceId || '', promsId: rowVals.promsId || '',
+            budget: rowVals.budget || '', openAirCode: rowVals.openAirCode || '',
+            comments: rowVals.comments || '', accountAnchor: rowVals.accountAnchor || '',
+            changedBy: currentUser?.username,
+          });
+          if (commentText) {
+            await processApi.addComment(editingRow.id, { author: currentUser?.username || 'Unknown', body: commentText });
+          }
+        }
       } else {
         const tempKey = `pr_${Date.now()}`;
         setRows(prev => [...prev, {
           key: tempKey, sno: prev.length + 1,
           startDate: '', signedSow: '', piw: '', active: '', salesforceId: '', promsId: '',
-          budget: '', openAirCode: '', comments: '', sow: '', ...vals,
+          budget: '', openAirCode: '', comments: '', sow: '', ...rowVals,
         }]);
         processApi.createProcess({
-          sow: vals.sow || '', sno: 0, startDate: vals.startDate || '',
-          signedSow: vals.signedSow || '', piw: vals.piw || '', active: vals.active || '',
-          salesforceId: vals.salesforceId || '', promsId: vals.promsId || '',
-          budget: vals.budget || '', openAirCode: vals.openAirCode || '',
-          comments: vals.comments || '', accountAnchor: vals.accountAnchor || '',
+          sow: rowVals.sow || '', sno: 0, startDate: rowVals.startDate || '',
+          signedSow: rowVals.signedSow || '', piw: rowVals.piw || '', active: rowVals.active || '',
+          salesforceId: rowVals.salesforceId || '', promsId: rowVals.promsId || '',
+          budget: rowVals.budget || '', openAirCode: rowVals.openAirCode || '',
+          comments: rowVals.comments || '', accountAnchor: rowVals.accountAnchor || '',
+          changedBy: currentUser?.username,
         }).then(res => {
           if (res.ok && res.id) {
             setRows(prev => prev.map(r => r.key === tempKey ? { ...r, id: res.id } : r));
@@ -533,6 +822,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         });
       }
       setEditModal(false);
+      setDetailRow(null);
       form.resetFields();
     });
   };
@@ -544,13 +834,15 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     if (filters.status && deriveStatus(r) !== filters.status) return false;
     if (filters.active && r.active !== filters.active) return false;
     if (filters.accountAnchor && (r.accountAnchor || '') !== filters.accountAnchor) return false;
+    if (filters.resourceName && r.id) {
+      const linked = allProcResources.filter(res => res.processId === r.id);
+      if (!linked.some(res => res.empName.toLowerCase().includes(filters.resourceName!.toLowerCase()))) return false;
+    }
     return true;
-  }), [rows, filters]);
+  }), [rows, filters, allProcResources]);
 
   // Pipeline view: Active=Yes + (showAll or not Completed)
-  const pipelineRows = useMemo(() =>
-    displayed.filter(r => r.active === 'Yes' && (showAll || deriveStatus(r) !== 'Completed')),
-    [displayed, showAll]);
+  const pipelineRows = displayed;
 
   // Account anchor options: from config linked to ra_process_account_anchor_field, fallback to row-derived
   const anchorOptions = useMemo(() => {
@@ -568,15 +860,25 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
 
   const handleAllocateSave = () => {
     if (!allocateAnchor) { message.warning('Select an account anchor'); return; }
-    if (!allocateSelected.length) { message.warning('Select at least one process entry'); return; }
-    setRows(prev => prev.map(r => allocateSelected.includes(r.key) ? { ...r, accountAnchor: allocateAnchor } : r));
-    message.success(`${allocateSelected.length} record(s) assigned to ${allocateAnchor}`);
+    if (allocateSingleRow) {
+      // Single-record mode: assign only this row
+      setRows(prev => prev.map(r => r.key === allocateSingleRow.key ? { ...r, accountAnchor: allocateAnchor } : r));
+      if (allocateSingleRow.id) processApi.updateProcess(allocateSingleRow.id, { accountAnchor: allocateAnchor, changedBy: currentUser?.username });
+      message.success(`Anchor assigned to ${allocateSingleRow.sow || 'record'}`);
+    } else {
+      if (!allocateSelected.length) { message.warning('Select at least one process entry'); return; }
+      setRows(prev => prev.map(r => allocateSelected.includes(r.key) ? { ...r, accountAnchor: allocateAnchor } : r));
+      const toUpdate = rows.filter(r => allocateSelected.includes(r.key) && r.id);
+      toUpdate.forEach(r => processApi.updateProcess(r.id!, { accountAnchor: allocateAnchor, changedBy: currentUser?.username }));
+      message.success(`${allocateSelected.length} record(s) assigned to ${allocateAnchor}`);
+    }
     setAllocateModal(false);
     setAllocateAnchor('');
     setAllocateSelected([]);
+    setAllocateSingleRow(null);
   };
 
-  const clearFilters = () => { setFilters({}); setPendingFilters({}); };
+  const clearFilters = () => { setFilters({}); };
 
   const handleClearAll = () => {
     processApi.clearAll(currentUser?.username);
@@ -621,68 +923,83 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
       render: (_: any, r: ProcessRow) => { const s = deriveStatus(r); return <Tag style={{ fontSize: '10px', background: `${STATUS_COLORS[s]}18`, color: STATUS_COLORS[s], border: `1px solid ${STATUS_COLORS[s]}44` }}>{s}</Tag>; }
     },
     {
-      title: 'Actions', key: 'actions', width: 88, fixed: 'right' as const,
+      title: 'Actions', key: 'actions', width: 60, fixed: 'right' as const,
       onHeaderCell: () => ({ style: hStyle }),
       render: (_: any, r: ProcessRow) => (
-        <Space size={3}>
-          <Tooltip title="View" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<EyeOutlined />} size="small" onClick={() => openView(r)} style={{ borderRadius: 6 }} /></Tooltip>
-          {canEdit && <Tooltip title="Edit" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<EditOutlined />} size="small" onClick={() => openEdit(r)} style={{ borderRadius: 6 }} /></Tooltip>}
-          {canDelete && (
-          <Popconfirm title="Delete this record?" description="This action cannot be undone." onConfirm={() => handleDelete(r)} okText="Delete" cancelText="Cancel" okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
-            <Tooltip title="Delete" overlayInnerStyle={{ fontSize: '11px' }}><Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} /></Tooltip>
-          </Popconfirm>
-          )}
-        </Space>
+        <Dropdown
+          menu={{
+            items: [
+              canEdit ? { key: 'edit', label: <span style={{ fontSize: '11px' }}>Edit</span>, icon: <EditOutlined style={{ fontSize: '11px' }} />, onClick: () => { setDetailRow(null); openEdit(r); } } : null,
+              canEdit ? { key: 'toggleActive', label: <span style={{ fontSize: '11px' }}>{r.active === 'Yes' ? 'Mark Inactive' : 'Mark Active'}</span>, icon: r.active === 'Yes' ? <StopOutlined style={{ fontSize: '11px', color: '#ff4d4f' }} /> : <CheckOutlined style={{ fontSize: '11px', color: '#52c41a' }} />, onClick: () => handleToggleActive(r) } : null,
+              { key: 'link', label: <span style={{ fontSize: '11px' }}>Link Resources</span>, icon: <LinkOutlined style={{ fontSize: '11px' }} />, onClick: () => openLinkModal(r) },
+              { key: 'anchor', label: <span style={{ fontSize: '11px' }}>Assign Anchor</span>, icon: <IdcardOutlined style={{ fontSize: '11px' }} />, onClick: () => { setAllocateSingleRow(r); setAllocateAnchor(r.accountAnchor || ''); setAllocateModal(true); } },
+              { type: 'divider' as const },
+              canDelete ? {
+                key: 'delete', label: <span style={{ fontSize: '11px' }}>Delete</span>,
+                icon: <DeleteOutlined style={{ fontSize: '11px' }} />, danger: true,
+                onClick: () => Modal.confirm({
+                  title: 'Delete this record?', content: 'This action cannot be undone.',
+                  okText: 'Delete', okButtonProps: { danger: true, size: 'small' },
+                  cancelButtonProps: { size: 'small' }, onOk: () => handleDelete(r),
+                }),
+              } : null,
+            ].filter(Boolean) as any[],
+          }}
+          trigger={['click']}
+        >
+          <Button type="text" size="small" icon={<EllipsisOutlined />} style={{ padding: '0 4px' }} onClick={e => e.stopPropagation()} />
+        </Dropdown>
       ),
     },
   ].filter(Boolean) as any[];
 
-  // Filter panel — uses pendingFilters; applied on Enter or Apply button
+  // Filter panel — live filter (no Apply button), same pattern as client request tab
   const filterPanel = showFilterPanel && (
-    <div ref={filterPanelRef} style={{ width: 230, flexShrink: 0, background: '#fafafa', borderRadius: 8, padding: 16, border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+    <div ref={filterPanelRef} style={{ width: 240, flexShrink: 0, background: '#fafafa', borderRadius: 8, padding: 16, border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <Text strong style={{ fontSize: '12px' }}>Filters</Text>
         <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={clearFilters}>Clear all</Button>
       </div>
       <Space direction="vertical" style={{ width: '100%' }} size={8}>
         <div>
           <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>SOW</div>
-          <Input size="small" placeholder="Search..." value={pendingFilters.sow || ''}
-            onChange={e => setPendingFilters(f => ({ ...f, sow: e.target.value }))}
-            onPressEnter={applyFilters}
+          <Input size="small" placeholder="Search..." value={filters.sow || ''}
+            onChange={e => setFilters(f => ({ ...f, sow: e.target.value }))}
             style={{ fontSize: '11px' }} allowClear />
         </div>
         <div>
           <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>PIW</div>
-          <Input size="small" placeholder="Search..." value={pendingFilters.piw || ''}
-            onChange={e => setPendingFilters(f => ({ ...f, piw: e.target.value }))}
-            onPressEnter={applyFilters}
+          <Input size="small" placeholder="Search..." value={filters.piw || ''}
+            onChange={e => setFilters(f => ({ ...f, piw: e.target.value }))}
             style={{ fontSize: '11px' }} allowClear />
         </div>
         <div>
           <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Status</div>
-          <Select size="small" placeholder="All" allowClear value={pendingFilters.status || undefined}
-            onChange={v => { const nf = { ...pendingFilters, status: v || '' }; setPendingFilters(nf); setFilters(nf); }}
+          <Select size="small" placeholder="All" allowClear value={filters.status || undefined}
+            onChange={v => setFilters(f => ({ ...f, status: v || '' }))}
             style={{ width: '100%', fontSize: '11px' }}
             options={['Not Started', 'In Progress', 'Completed'].map(s => ({ label: s, value: s }))} />
         </div>
         <div>
           <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Active</div>
-          <Select size="small" placeholder="All" allowClear value={pendingFilters.active || undefined}
-            onChange={v => { const nf = { ...pendingFilters, active: v || '' }; setPendingFilters(nf); setFilters(nf); }}
+          <Select size="small" placeholder="All" allowClear value={filters.active || undefined}
+            onChange={v => setFilters(f => ({ ...f, active: v || '' }))}
             style={{ width: '100%', fontSize: '11px' }}
             options={ACTIVE_OPTIONS.map(s => ({ label: s, value: s }))} />
         </div>
         <div>
           <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Account Anchor</div>
-          <Select size="small" placeholder="All" allowClear value={pendingFilters.accountAnchor || undefined}
-            onChange={v => { const nf = { ...pendingFilters, accountAnchor: v || '' }; setPendingFilters(nf); setFilters(nf); }}
+          <Select size="small" placeholder="All" allowClear value={filters.accountAnchor || undefined}
+            onChange={v => setFilters(f => ({ ...f, accountAnchor: v || '' }))}
             style={{ width: '100%', fontSize: '11px' }}
             options={anchorOptions} />
         </div>
-        <Button type="primary" size="small" block style={{ borderRadius: 6, fontSize: '11px', marginTop: 4 }} onClick={applyFilters}>
-          Apply
-        </Button>
+        <div>
+          <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 4 }}>Resource Name</div>
+          <Input size="small" placeholder="Search linked resource..." value={filters.resourceName || ''}
+            onChange={e => setFilters(f => ({ ...f, resourceName: e.target.value }))}
+            style={{ fontSize: '11px' }} allowClear />
+        </div>
       </Space>
     </div>
   );
@@ -692,109 +1009,64 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
       {/* Toolbar */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
         <Text type="secondary" style={{ fontSize: '12px' }}>
-          {viewMode === 'pipeline'
-            ? <>Showing: <strong>{pipelineRows.length}</strong> active{pipelineRows.length !== rows.length ? ` / ${rows.length} total` : ''}</>
-            : <>Showing: <strong>{displayed.length}</strong>{displayed.length !== rows.length ? ` / ${rows.length}` : ''}</>
-          }
+          Showing: <strong>{displayed.length}</strong>{displayed.length !== rows.length ? ` / ${rows.length} total` : ''}
         </Text>
-        <Space size={0} wrap style={{ alignItems: 'center' }}>
-          {/* ── Priority Controls (highlighted section) ── */}
-          <Space
-            size={8}
-            style={{
-              background: '#f0f5ff',
-              border: '1px solid #d6e4ff',
-              borderRadius: 8,
-              padding: '5px 10px',
-              marginRight: 8,
-            }}
-          >
-            {/* Pending Only toggle — only in pipeline view */}
-            {viewMode === 'pipeline' && (
-              <Tooltip title={!showAll ? 'Showing only pending (not completed) — click to show all' : 'Showing all — click to show only pending'} overlayInnerStyle={{ fontSize: '11px' }}>
-                <Space size={5} style={{ cursor: 'pointer' }} onClick={() => setShowAll(p => !p)}>
-                  <Switch
-                    checked={!showAll}
-                    size="small"
-                    style={{ background: !showAll ? '#1890ff' : '#bfbfbf' }}
-                  />
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: !showAll ? '#1890ff' : '#8c8c8c', whiteSpace: 'nowrap' }}>
-                    Pending Only
-                  </span>
-                </Space>
-              </Tooltip>
-            )}
-
-            {/* Assign Anchor */}
-            <Tooltip title="Assign to Account Anchor" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button
-                icon={<IdcardOutlined />}
-                size="small"
-                onClick={() => setAllocateModal(true)}
-                style={{
-                  borderRadius: 6,
-                  background: '#fff',
-                  borderColor: '#1890ff',
-                  color: '#1890ff',
-                  fontWeight: 600,
-                  fontSize: '11px',
-                }}
-              >
-                Assign Anchor
-              </Button>
+        <Space size={6} wrap style={{ alignItems: 'center' }}>
+          {isFilterApplied && (
+            <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={clearFilters}>
+              <ClearOutlined /> Clear Filters
+            </Button>
+          )}
+          <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
+            <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(p => !p)} style={{ borderRadius: 6 }} />
+          </Tooltip>
+          {/* Single view toggle */}
+          <Tooltip title={viewMode === 'pipeline' ? 'Switch to Table View' : 'Switch to Pipeline View'} overlayInnerStyle={{ fontSize: '11px' }}>
+            <Button
+              icon={viewMode === 'pipeline' ? <TableOutlined /> : <NodeIndexOutlined />}
+              size="small" onClick={() => setViewMode(m => m === 'pipeline' ? 'table' : 'pipeline')}
+              style={{ borderRadius: 6 }}
+            />
+          </Tooltip>
+          {viewMode === 'table' && (
+            <Tooltip title="Column Settings" overlayInnerStyle={{ fontSize: '11px' }}>
+              <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: 6 }} />
             </Tooltip>
-          </Space>
-
-          {/* ── Standard Controls ── */}
-          <Space size={6} wrap>
-            {isFilterApplied && (
-              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#ff4d4f' }} onClick={clearFilters}>
-                <ClearOutlined /> Clear Filters
-              </Button>
-            )}
-            <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(p => !p)} style={{ borderRadius: 6 }} />
-            </Tooltip>
-            <Tooltip title="Pipeline View" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button icon={<NodeIndexOutlined />} type={viewMode === 'pipeline' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('pipeline')} style={{ borderRadius: 6 }} />
-            </Tooltip>
-            <Tooltip title="Table View" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button icon={<TableOutlined />} type={viewMode === 'table' ? 'primary' : 'default'} size="small" onClick={() => setViewMode('table')} style={{ borderRadius: 6 }} />
-            </Tooltip>
-            {viewMode === 'table' && (
-              <Tooltip title="Column Settings" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button icon={<ColumnHeightOutlined />} size="small" onClick={() => setColumnDrawer(true)} style={{ borderRadius: 6 }} />
-              </Tooltip>
-            )}
-            {canEdit && (
-            <Tooltip title="Upload from Excel" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Upload accept=".xlsx,.xls" beforeUpload={handleUpload} showUploadList={false}>
-                <Button icon={<UploadOutlined />} size="small" style={{ borderRadius: 6 }} />
-              </Upload>
-            </Tooltip>
-            )}
-            <Tooltip title="Download Template" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} style={{ borderRadius: 6 }} />
-            </Tooltip>
-            {rows.length > 0 && (
-              <Tooltip title="Export Data" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button icon={<DownloadOutlined />} size="small" onClick={handleDownload} style={{ borderRadius: 6, color: '#52c41a', borderColor: '#52c41a' }} />
-              </Tooltip>
-            )}
-            {rows.length > 0 && canDelete && (
-              <Popconfirm
-                title="Delete all process records?"
-                description="This will permanently remove all records from the database."
-                onConfirm={handleClearAll}
-                okText="Delete All" cancelText="Cancel"
-                okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
-                <Tooltip title="Delete All Records" overlayInnerStyle={{ fontSize: '11px' }}>
-                  <Button icon={<DeleteOutlined />} size="small" danger style={{ borderRadius: 6 }} />
-                </Tooltip>
-              </Popconfirm>
-            )}
-            {canEdit && <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openAdd} style={{ borderRadius: 6, fontSize: '11px' }}>Add New</Button>}
-          </Space>
+          )}
+          {/* ⋯ CRUD ellipsis — same pattern as client request tab */}
+          <Dropdown trigger={['click']} menu={{ items: [
+            canEdit ? { key: 'add', label: <span style={{ fontSize: '11px' }}>Add New Record</span>, icon: <PlusOutlined style={{ fontSize: '11px' }} />, onClick: openAdd } : null,
+            { type: 'divider' as const },
+            { key: 'dlTemplate', label: <span style={{ fontSize: '11px' }}>Download Template</span>, icon: <DownloadOutlined style={{ fontSize: '11px' }} />, onClick: downloadTemplate },
+            canEdit ? {
+              key: 'upload',
+              label: <span style={{ fontSize: '11px' }}>Upload from Excel</span>,
+              icon: <UploadOutlined style={{ fontSize: '11px' }} />,
+              onClick: () => {
+                const inp = document.createElement('input');
+                inp.type = 'file'; inp.accept = '.xlsx,.xls';
+                inp.onchange = (ev) => { const f = (ev.target as HTMLInputElement).files?.[0]; if (f) handleUpload(f); };
+                inp.click();
+              },
+            } : null,
+            rows.length > 0 ? { key: 'export', label: <span style={{ fontSize: '11px' }}>Export Data</span>, icon: <FileExcelOutlined style={{ fontSize: '11px', color: '#52c41a' }} />, onClick: handleDownload } : null,
+            canDelete && rows.length > 0 ? { type: 'divider' as const } : null,
+            canDelete && rows.length > 0 ? {
+              key: 'deleteAll',
+              label: <span style={{ fontSize: '11px' }}>Delete All Records</span>,
+              icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+              danger: true,
+              onClick: () => Modal.confirm({
+                title: 'Delete all process records?',
+                content: 'This will permanently remove all records from the database.',
+                okText: 'Yes, delete all', cancelText: 'Cancel',
+                okButtonProps: { danger: true, size: 'small' },
+                onOk: handleClearAll,
+              }),
+            } : null,
+          ].filter(Boolean) as any[] }}>
+            <Button icon={<MoreOutlined />} size="small" style={{ borderRadius: 6 }} />
+          </Dropdown>
         </Space>
       </div>
 
@@ -815,6 +1087,14 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                   scroll={{ x: 'max-content', y: 420 }}
                   style={{ background: '#fff', borderRadius: 8 }}
                   locale={{ emptyText: 'No records match your filters' }}
+                  onRow={r => ({
+                    onClick: (e) => {
+                      const target = e.target as HTMLElement;
+                      if (target.closest('button, .ant-dropdown, [class*="ant-dropdown"], .ant-checkbox-wrapper')) return;
+                      openView(r);
+                    },
+                    style: { cursor: 'pointer' },
+                  })}
                 />
               </div>
             ) : (
@@ -831,8 +1111,13 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                       onEdit={() => openEdit(r)}
                       onView={() => openView(r)}
                       onDelete={() => handleDelete(r)}
+                      onLinkResources={() => openLinkModal(r)}
+                      onToggleActive={() => handleToggleActive(r)}
+                      onAssignAnchor={() => { setAllocateSingleRow(r); setAllocateAnchor(r.accountAnchor || ''); setAllocateModal(true); }}
+                      setDetailRow={setDetailRow}
                       canEdit={canEdit}
                       canDelete={canDelete}
+                      linkedCount={r.id ? linkedCountMap[r.id] || 0 : 0}
                     />
                   ))
                 )}
@@ -854,15 +1139,25 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         </Space>
       </Drawer>
 
-      {/* Add / Edit Modal */}
-      <Modal
-        title={<span style={{ fontSize: '13px' }}>{editingRow ? 'Edit Record' : 'Add New Record'}</span>}
-        open={editModal} onOk={handleSave} onCancel={() => { setEditModal(false); form.resetFields(); }}
-        okText="Save" width={560}
-        okButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
-        cancelButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
+      {/* Add / Edit Drawer */}
+      <Drawer
+        title={
+          <span style={{ fontSize: '13px', fontWeight: 600 }}>
+            {editingRow ? `Edit — ${editingRow.sow || 'Record'}` : 'Add New Record'}
+          </span>
+        }
+        placement="right"
+        width={600}
+        open={editModal}
+        onClose={() => { setEditModal(false); setDetailRow(null); form.resetFields(); }}
+        styles={{ body: { paddingTop: 8 } }}
+        extra={
+          <Button type="primary" size="small" onClick={handleSave} style={{ borderRadius: 6, fontSize: '12px' }}>
+            Save
+          </Button>
+        }
       >
-        <Form form={form} layout="vertical" size="small" style={{ marginTop: 12 }}>
+        <Form form={form} layout="vertical" size="small">
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 12px' }}>
             <Form.Item name="startDate" label={<span style={{ fontSize: '11px' }}>Start Date</span>}>
               <Input placeholder="e.g. 03-Jan-26" style={{ fontSize: '12px' }} />
@@ -887,128 +1182,233 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
             <Form.Item name="promsId" label={<span style={{ fontSize: '11px' }}>PROMS ID</span>}>
               <Input style={{ fontSize: '12px' }} />
             </Form.Item>
-            <Form.Item name="budget" label={<span style={{ fontSize: '11px' }}>Budget</span>}>
+            <Form.Item name="budget" label={<span style={{ fontSize: '11px' }}>Budget (INR)</span>}>
               <Input placeholder="e.g. 45,08,307.00" style={{ fontSize: '12px' }} />
             </Form.Item>
-            <Form.Item name="comments" label={<span style={{ fontSize: '11px' }}>Comments</span>}>
-              <Input style={{ fontSize: '12px' }} />
+            <Form.Item name="accountAnchor" label={<span style={{ fontSize: '11px' }}>Account Anchor</span>}>
+              <Select
+                showSearch allowClear placeholder="Select anchor"
+                style={{ fontSize: '12px' }}
+                options={anchorOptions}
+                notFoundContent={<span style={{ fontSize: '11px', color: '#8c8c8c' }}>No anchors configured</span>}
+              />
             </Form.Item>
           </div>
           <Form.Item name="openAirCode" label={<span style={{ fontSize: '11px' }}>Open Air Code</span>}>
             <Input placeholder="e.g. ZSUS0341 - Next Gen Operations Support 2026" style={{ fontSize: '12px' }} />
           </Form.Item>
-        </Form>
-        <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '8px 12px', fontSize: '11px', color: '#389e0d', marginTop: 4 }}>
-          Status auto-derived: <b>Not Started</b> → <b>In Progress</b> (Signed SOW = Yes or PIW/SF/PROMS added) → <b>Completed</b> (OA Code added)
-        </div>
-      </Modal>
-
-      {/* View Modal */}
-      <Modal title={<span style={{ fontSize: '13px' }}>Record Details</span>} open={viewModal} onCancel={() => setViewModal(false)} footer={null} width={520}>
-        {viewingRow && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, fontSize: '12px' }}>
-              <span style={{ color: '#8c8c8c', fontWeight: 600 }}>Status</span>
-              <span>{(() => { const s = deriveStatus(viewingRow); return <Tag style={{ fontSize: '11px', background: `${STATUS_COLORS[s]}18`, color: STATUS_COLORS[s], border: `1px solid ${STATUS_COLORS[s]}44` }}>{s}</Tag>; })()}</span>
-            </div>
-            {COL_KEYS.filter(c => c.key !== 'sno').map(({ key, label }) => {
-              const val = viewingRow[key as keyof ProcessRow];
-              if (!val || val instanceof File) return null;
-              return (
-                <div key={key} style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, fontSize: '12px', alignItems: 'flex-start' }}>
-                  <span style={{ color: '#8c8c8c', fontWeight: 600 }}>{label}</span>
-                  <span style={{ color: '#262626', wordBreak: 'break-word' }}>
-                    {(key === 'active' || key === 'signedSow')
-                      ? <Tag color={val === 'Yes' ? 'green' : 'orange'} style={{ fontSize: '11px' }}>{val}</Tag>
-                      : String(val)}
-                  </span>
-                </div>
-              );
-            })}
-            {viewingRow.sowFile && (
-              <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 8, fontSize: '12px', alignItems: 'center' }}>
-                <span style={{ color: '#8c8c8c', fontWeight: 600 }}>SOW Document</span>
-                <Button size="small" icon={<DownloadOutlined />} onClick={() => downloadFile(viewingRow.sowFile!)} style={{ borderRadius: 6, width: 'fit-content' }}>
-                  {viewingRow.sowFile.name}
-                </Button>
-              </div>
-            )}
+          {editingRow && (
+            <Form.Item
+              name="newComment"
+              label={<span style={{ fontSize: '11px' }}>Add Comment (optional)</span>}
+              extra={<span style={{ fontSize: '10px', color: '#8c8c8c' }}>Will be saved to the Comments section of this record.</span>}
+            >
+              <Input.TextArea rows={2} placeholder="Leave a note about this change…" style={{ fontSize: '12px' }} />
+            </Form.Item>
+          )}
+          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '8px 12px', fontSize: '11px', color: '#389e0d', marginTop: 4 }}>
+            Status auto-derived: <b>Not Started</b> → <b>In Progress</b> (Signed SOW = Yes or PIW/SF/PROMS added) → <b>Completed</b> (OA Code added)
           </div>
+        </Form>
+      </Drawer>
+
+      {/* Detail Drawer */}
+      <Drawer
+        open={!!detailRow}
+        onClose={() => { setDetailRow(null); setPanelExpanded(false); }}
+        placement="right"
+        width={panelExpanded ? 900 : 520}
+        title={
+          detailRow ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: '13px', fontWeight: 700, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {detailRow.sow || 'Record Details'}
+              </span>
+              <Space size={4} onClick={e => e.stopPropagation()}>
+                {canEdit && <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openEditFromPanel(detailRow)} style={{ borderRadius: 6 }} />}
+                <Button size="small" type="text" icon={panelExpanded ? <ShrinkOutlined /> : <ExpandAltOutlined />} onClick={() => setPanelExpanded(p => !p)} style={{ borderRadius: 6 }} />
+                <Button size="small" type="text" onClick={() => { setDetailRow(null); setPanelExpanded(false); }} style={{ borderRadius: 6 }}>✕</Button>
+              </Space>
+            </div>
+          ) : 'Record Details'
+        }
+        styles={{ body: { padding: '0 16px 16px' } }}
+        closeIcon={null}
+      >
+        {detailRow && (
+          <ProcessDetailPanel
+            row={detailRow}
+            currentUser={currentUser?.username || currentUser?.name || 'Unknown'}
+            canEdit={canEdit}
+            canDelete={canDelete}
+            linkedResources={allProcResources.filter(r => r.processId === detailRow.id).map(r => ({ id: r.id, raId: r.raId, empName: r.empName, piwRole: r.piwRole }))}
+            onEdit={() => openEditFromPanel(detailRow)}
+            onToggleActive={() => handleToggleActive(detailRow)}
+            onLinkResources={() => openLinkModal(detailRow)}
+          />
         )}
-      </Modal>
+      </Drawer>
+
       {/* Allocate to Account Anchor Modal */}
       <Modal
-        title={<span style={{ fontSize: '13px' }}>Allocate to Account Anchor</span>}
+        title={<span style={{ fontSize: '13px' }}>{allocateSingleRow ? `Assign Anchor — ${allocateSingleRow.sow || 'Record'}` : 'Allocate to Account Anchor'}</span>}
         open={allocateModal}
         onOk={handleAllocateSave}
-        onCancel={() => { setAllocateModal(false); setAllocateAnchor(''); setAllocateSelected([]); }}
+        onCancel={() => { setAllocateModal(false); setAllocateAnchor(''); setAllocateSelected([]); setAllocateSingleRow(null); }}
         okText="Assign"
-        width={560}
+        width={allocateSingleRow ? 420 : 560}
         okButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
         cancelButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
       >
         <div style={{ marginTop: 12 }}>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 6 }}>Account Anchor</div>
-            <Select
-              showSearch allowClear
-              placeholder="Select or type anchor name"
-              value={allocateAnchor || undefined}
-              onChange={v => setAllocateAnchor(v || '')}
-              style={{ width: '100%' }}
-              options={anchorOptions}
-              notFoundContent={
-                <div style={{ padding: '8px 12px', fontSize: '11px', color: '#8c8c8c' }}>
-                  No anchors configured — add them in Configuration → Account Anchors
-                </div>
-              }
-            />
-          </div>
-
-          <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>
-            Select process entries to assign — showing {unassignedRows.length} unassigned record(s)
-          </div>
-
-          {unassignedRows.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '20px 0', color: '#8c8c8c', fontSize: '12px' }}>
-              All records are already assigned to an anchor.
+          {allocateSingleRow ? (
+            /* Single-record mode: just pick an anchor */
+            <div>
+              <div style={{ background: '#f0f5ff', borderRadius: 6, padding: '8px 12px', marginBottom: 14, fontSize: '12px', color: '#262626' }}>
+                <span style={{ color: '#8c8c8c', fontSize: '11px' }}>Process: </span>
+                <strong>{allocateSingleRow.sow || '—'}</strong>
+                {allocateSingleRow.accountAnchor && (
+                  <span style={{ marginLeft: 8, fontSize: '11px', color: '#8c8c8c' }}>
+                    (currently: <Tag color="purple" style={{ fontSize: '10px' }}>{allocateSingleRow.accountAnchor}</Tag>)
+                  </span>
+                )}
+              </div>
+              <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 6 }}>Account Anchor</div>
+              <Select
+                showSearch allowClear
+                placeholder="Select or type anchor name"
+                value={allocateAnchor || undefined}
+                onChange={v => setAllocateAnchor(v || '')}
+                style={{ width: '100%' }}
+                options={anchorOptions}
+                notFoundContent={
+                  <div style={{ padding: '8px 12px', fontSize: '11px', color: '#8c8c8c' }}>
+                    No anchors configured — add them in Configuration → Account Anchors
+                  </div>
+                }
+              />
             </div>
           ) : (
-            <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
-              {unassignedRows.map(r => (
-                <div key={r.key} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 12px', borderBottom: '1px solid #fafafa',
-                  cursor: 'pointer', background: allocateSelected.includes(r.key) ? '#f0f5ff' : '#fff',
-                }}
-                  onClick={() => setAllocateSelected(prev =>
-                    prev.includes(r.key) ? prev.filter(k => k !== r.key) : [...prev, r.key]
-                  )}>
-                  <Checkbox checked={allocateSelected.includes(r.key)} onChange={() => {}} />
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>{r.sow || '—'}</div>
-                    <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 1 }}>
-                      {r.startDate && `Started: ${r.startDate} · `}
-                      Status: {deriveStatus(r)}
+            /* Bulk mode: anchor + process checklist */
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 6 }}>Account Anchor</div>
+                <Select
+                  showSearch allowClear
+                  placeholder="Select or type anchor name"
+                  value={allocateAnchor || undefined}
+                  onChange={v => setAllocateAnchor(v || '')}
+                  style={{ width: '100%' }}
+                  options={anchorOptions}
+                  notFoundContent={
+                    <div style={{ padding: '8px 12px', fontSize: '11px', color: '#8c8c8c' }}>
+                      No anchors configured — add them in Configuration → Account Anchors
+                    </div>
+                  }
+                />
+              </div>
+
+              <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>
+                Select process entries to assign — showing {unassignedRows.length} unassigned record(s)
+              </div>
+
+              {unassignedRows.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px 0', color: '#8c8c8c', fontSize: '12px' }}>
+                  All records are already assigned to an anchor.
+                </div>
+              ) : (
+                <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+                  {unassignedRows.map(r => (
+                    <div key={r.key} style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderBottom: '1px solid #fafafa',
+                      cursor: 'pointer', background: allocateSelected.includes(r.key) ? '#f0f5ff' : '#fff',
+                    }}
+                      onClick={() => setAllocateSelected(prev =>
+                        prev.includes(r.key) ? prev.filter(k => k !== r.key) : [...prev, r.key]
+                      )}>
+                      <Checkbox checked={allocateSelected.includes(r.key)} onChange={() => {}} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>{r.sow || '—'}</div>
+                        <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 1 }}>
+                          {r.startDate && `Started: ${r.startDate} · `}
+                          Status: {deriveStatus(r)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </Modal>
+
+      {/* ── Link Resources Modal ───────────────────────────────────────── */}
+      <Modal
+        title={<span style={{ fontSize: '13px' }}><LinkOutlined style={{ marginRight: 6, color: '#1890ff' }} />Link Resources — {linkModal.row?.sow}</span>}
+        open={linkModal.open}
+        onCancel={() => setLinkModal({ open: false, row: null })}
+        onOk={handleSaveLinks}
+        okText="Save Links"
+        confirmLoading={savingLink}
+        width={560}
+        okButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
+        cancelButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
+      >
+        <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 10, background: '#f0f5ff', borderRadius: 6, padding: '8px 12px' }}>
+          Select resources to link. One resource can only be linked to one active process at a time.{' '}
+          Resources already linked to another process are marked with a warning.
+        </div>
+        <Spin spinning={loadingLink} tip="Loading resources…" size="small">
+          {!loadingLink && allProcResources.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '20px 0', color: '#8c8c8c', fontSize: '12px' }}>
+              No resources found. Upload resources in the Resource Hub.
+            </div>
+          ) : (
+            <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+              {allProcResources.map(res => {
+                const isChecked = linkChecked.has(res.id);
+                const linkedElsewhere = res.processId != null && linkModal.row?.id != null && res.processId !== linkModal.row.id;
+                const otherSow = linkedElsewhere ? (rows.find(r => r.id === res.processId)?.sow || `Process #${res.processId}`) : null;
+                return (
+                  <div
+                    key={res.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px', borderBottom: '1px solid #fafafa',
+                      cursor: 'pointer',
+                      background: isChecked ? '#f0f5ff' : '#fff',
+                    }}
+                    onClick={() => {
+                      const next = new Set(linkChecked);
+                      if (next.has(res.id)) next.delete(res.id); else next.add(res.id);
+                      setLinkChecked(next);
+                    }}
+                  >
+                    <Checkbox checked={isChecked} onChange={() => {}} />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>
+                        {res.empName}{' '}
+                        <span style={{ color: '#8c8c8c', fontFamily: 'monospace', fontSize: '10px' }}>({res.raId})</span>
+                      </div>
+                      <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 1 }}>
+                        {res.piwRole}
+                        {linkedElsewhere && (
+                          <span style={{ marginLeft: 8, color: '#fa8c16', fontWeight: 500 }}>
+                            ⚠ Linked to: {otherSow}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
-
-          {rows.some(r => r.accountAnchor) && (
-            <div style={{ marginTop: 14 }}>
-              <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 8 }}>Already assigned:</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {Array.from(new Set(rows.filter(r => r.accountAnchor).map(r => r.accountAnchor!))).map(anchor => (
-                  <Tag key={anchor} color="purple" style={{ fontSize: '11px' }}>
-                    {anchor} ({rows.filter(r => r.accountAnchor === anchor).length})
-                  </Tag>
-                ))}
-              </div>
-            </div>
-          )}
+        </Spin>
+        <div style={{ marginTop: 10, fontSize: '11px', color: '#8c8c8c' }}>
+          {linkChecked.size} resource(s) selected
         </div>
       </Modal>
     </div>
@@ -1048,47 +1448,65 @@ function SowTab({ onUpload, onDelete }: { onUpload: (file: File, processKey: str
     return false;
   };
 
-  const handleDelete = (sowKey: string, processKey: string) => {
-    setSowList(prev => prev.filter(s => s.key !== sowKey));
+  const handleDelete = (key: string, processKey: string) => {
+    setSowList(prev => prev.filter(s => s.key !== key));
     onDelete(processKey);
-    message.success('SOW deleted and removed from Process');
+    message.success('SOW removed');
   };
 
   return (
     <div>
-      {/* SP Storage info banner */}
+      {/* SP banner */}
       {spUrl && (
-        <div style={{
-          background: '#f0f5ff',
-          border: '1px solid #d6e4ff',
-          borderRadius: 8,
-          padding: '10px 14px',
-          marginBottom: 16,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          fontSize: '12px',
-          color: '#1d3461',
-        }}>
-          <span style={{ flex: 1 }}>
-            📁 SOW documents should also be saved to the configured SharePoint folder.
-          </span>
-          <a href={spUrl} target="_blank" rel="noopener noreferrer"
-            style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap', fontSize: '12px' }}>
-            Open SharePoint Folder ↗
-          </a>
+        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
+          <span style={{ flex: 1 }}>📁 SOW documents should also be saved to the configured SharePoint folder.</span>
+          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>Open SharePoint Folder ↗</a>
         </div>
       )}
-      <Upload.Dragger multiple={false} beforeUpload={handleSowFile} showUploadList={false}
-        style={{ borderRadius: 8, marginBottom: 20 }}>
-        <p className="ant-upload-drag-icon">
-          <InboxOutlined style={{ fontSize: 36, color: '#1890ff' }} />
-        </p>
-        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>Click or drag SOW document to upload</p>
-        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
-          Supports PDF, Word, Excel, and all file types. Each upload auto-creates a Process entry with today's date as Start Date.
-        </p>
-      </Upload.Dragger>
+      {!spUrl && (
+        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
+          💡 Configure the <strong>SOW_STORAGE_URL</strong> in App Configuration to link to your SharePoint folder for centralized SOW document storage.
+        </div>
+      )}
+
+      {/* Template download */}
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Text style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>SOW Template</Text>
+        <Tooltip title="Download template" overlayInnerStyle={{ fontSize: '11px' }}>
+          <Button 
+            icon={<DownloadOutlined />}
+            size="small"
+            type="text"
+            onClick={async () => {
+              try {
+                const result = await templateApi.getTemplates('sow_template');
+                if (result.ok && result.data && result.data.length > 0) {
+                  const template = result.data[0];
+                  const fileName = template.file_name || template.fileName;
+                  await templateApi.downloadTemplate(template.id, fileName);
+                  message.success('SOW template downloaded');
+                } else {
+                  message.info('No SOW template uploaded yet. Upload one in Configuration > Templates');
+                }
+              } catch (e: any) {
+                message.error(e.message || 'Download failed');
+              }
+            }}
+           style={{ borderRadius: 4, color: '#1890ff' }}
+         />
+       </Tooltip>
+     </div>
+
+     {/* Upload dragger */}
+     <Upload.Dragger multiple={false} beforeUpload={handleSowFile} showUploadList={false} style={{ borderRadius: 8, marginBottom: 20 }}>
+       <p className="ant-upload-drag-icon">
+         <InboxOutlined style={{ fontSize: 36, color: '#1890ff' }} />
+       </p>
+       <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>Click or drag SOW document to upload</p>
+       <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
+         Supports PDF, Word, Excel, and all file types. Each upload auto-creates a Process entry with today's date as Start Date.
+       </p>
+     </Upload.Dragger>
 
       {sowList.length === 0 ? (
         <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '40px 0', textAlign: 'center' }}>
@@ -1153,114 +1571,1024 @@ function SowTab({ onUpload, onDelete }: { onUpload: (file: File, processKey: str
   );
 }
 
-// --- PIW Tab ---
-function PiwTab() {
-  const { getAppValue } = useConfig();
-  const spUrl = getAppValue('PIW_STORAGE_URL') || '';
-  const [piwList, setPiwList] = useState<{ key: string; file: File; uploadDate: string }[]>([]);
+// --- SOW Generate Tab ---
+interface SowGenTabProps {
+  resources: ResourceRow[];
+  processRows: ProcessRow[];
+  spUrl?: string;
+}
 
-  const downloadTemplate = () => {
-    // Empty PIW template with just headers
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['PIW Number', 'SOW Reference', 'Start Date', 'Employee Name', 'Role', 'Salesforce ID', 'PROMS ID', 'Status', 'Comments'],
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'PIW Template');
-    XLSX.writeFile(wb, 'PIW_Template.xlsx');
+// Extended resource row for SOW with extra editable fields
+interface SowResourceEntry extends PiwResourceEntry {
+  empId: string;
+  skill: string;
+  location: string;
+  overheadCategory: string;
+  manualDailyRate: string; // user override; empty = use auto-looked-up dailyRate
+}
+
+function SowGenerateTab({ resources = [], processRows = [], spUrl = '' }: SowGenTabProps) {
+  const { getAppValue } = useConfig();
+
+  // Auto SOW number: SOW - Jun 2026 - XXXX
+  const autoSowNumber = useMemo(() => {
+    const now = new Date();
+    const MONTHS_S = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const rand = Math.floor(1000 + Math.random() * 9000);
+    return `SOW - ${MONTHS_S[now.getMonth()]} ${now.getFullYear()} - ${rand}`;
+  }, []);
+
+  // Today's date formatted as "10 June 2026"
+  const todayFormatted = useMemo(() => {
+    const now = new Date();
+    const MONTHS_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    return `${now.getDate()} ${MONTHS_LONG[now.getMonth()]} ${now.getFullYear()}`;
+  }, []);
+
+  const [sowName,      setSowName]      = useState(autoSowNumber);  // download filename
+  const [sowNumber,    setSowNumber]    = useState('');              // Work Order field (optional, empty)
+  const [serviceProvider, setServiceProvider] = useState('Rockwell Automation Pvt Ltd');
+  const [workProduct,  setWorkProduct]  = useState('');
+  const [personnelNote, setPersonnelNote] = useState('');
+  const [generating,   setGenerating]   = useState(false);
+
+  const emptyRow = (): SowResourceEntry => ({
+    key: `sr${Date.now()}`,
+    raidId: '', empId: '', empName: '', piwRole: '', skill: '',
+    totalWorkex: '', location: 'Bengaluru', overheadCategory: '',
+    skillType: 'Commodity', dailyRate: 0, manualDailyRate: '',
+    resourceStartDate: '', resourceEndDate: '',
+  });
+
+  const [sowRows, setSowRows] = useState<SowResourceEntry[]>([emptyRow()]);
+
+  const handleRaidChange = (raidId: string, index: number) => {
+    const res = resources.find(r => r.raId === raidId);
+    setSowRows(prev => {
+      const next = [...prev];
+      const sk = next[index].skillType || 'Commodity';
+      if (res) {
+        next[index] = {
+          ...next[index], raidId,
+          empName: res.empName,
+          piwRole: res.piwRole || '',
+          totalWorkex: res.totalWorkex || '',
+          dailyRate: lookupDailyRate(res.totalWorkex || '', sk),
+        };
+      } else {
+        next[index] = { ...next[index], raidId, empName: '', piwRole: '', totalWorkex: '', dailyRate: 0 };
+      }
+      return next;
+    });
   };
 
-  const handleFile = (file: File) => {
-    setPiwList(prev => [...prev, { key: `piw_${Date.now()}`, file, uploadDate: todayDateStr() }]);
-    if (spUrl) {
-      message.success(
-        <span><strong>{file.name}</strong> added. Use <em>Save to SP ↗</em> to store in SharePoint.</span>,
-        5,
-      );
-    } else {
-      message.success(`${file.name} uploaded`);
-    }
+  const handleSkillTypeChange = (skillType: string, index: number) => {
+    setSowRows(prev => {
+      const next = [...prev]; const row = next[index];
+      next[index] = { ...row, skillType, dailyRate: row.totalWorkex ? lookupDailyRate(row.totalWorkex, skillType) : 0 };
+      return next;
+    });
+  };
+
+  const updateField = (index: number, field: keyof SowResourceEntry, value: string | number) =>
+    setSowRows(prev => { const next = [...prev]; (next[index] as any)[field] = value; return next; });
+
+  const handleGenerate = async () => {
+    const valid = sowRows.filter(r => r.raidId && r.empName);
+    if (valid.length === 0) { message.error('Please select at least one resource'); return; }
+    const missingDates = valid.filter(r => !r.resourceStartDate || !r.resourceEndDate);
+    if (missingDates.length > 0) { message.error(`Set start & end dates for: ${missingDates.map(r => r.empName).join(', ')}`); return; }
+
+    setGenerating(true);
+    try {
+      const formData: sowApi.SOWFormData = {
+        sowNumber:       sowNumber || '',          // Work Order field in template (optional)
+        serviceProvider: serviceProvider || 'Rockwell Automation Pvt Ltd',
+        workProduct,
+        resources: valid.map(r => ({
+          raId:             r.raidId,
+          empId:            r.empId || '',
+          name:             r.empName,
+          skill:            r.skill || r.piwRole || '',
+          location:         r.location || 'Bengaluru',
+          // Send parsed numeric years (e.g. "8.75") for clean display in the Word table
+          experience:       (() => { const y = parseWorkexToYears(r.totalWorkex || ''); return y > 0 ? String(Math.round(y * 100) / 100) : ''; })(),
+          overheadCategory: r.overheadCategory || '',
+          dailyRate:        r.manualDailyRate ? Number(r.manualDailyRate) : r.dailyRate,
+          resourceStartDate: r.resourceStartDate || undefined,
+          resourceEndDate:   r.resourceEndDate   || undefined,
+        })),
+      };
+      const blob = await sowApi.generateSOW(formData);
+      sowApi.downloadSOW(blob, sowName || autoSowNumber);
+      message.success('SOW downloaded');
+    } catch (e: any) {
+      message.error(e.message || 'Failed to generate SOW');
+    } finally { setGenerating(false); }
+  };
+
+  const handleReset = () => {
+    setSowName(autoSowNumber); setSowNumber('');
+    setServiceProvider('Rockwell Automation Pvt Ltd');
+    setWorkProduct(''); setPersonnelNote('');
+    setSowRows([emptyRow()]);
+  };
+
+  const fl = (txt: string, optional?: boolean) => (
+    <span style={{ fontSize: '11px', fontWeight: 500, color: '#595959' }}>
+      {txt}{optional && <span style={{ fontWeight: 400, color: '#bfbfbf', marginLeft: 4 }}>(optional)</span>}
+    </span>
+  );
+  const fld = (txt: string) => <span style={{ fontSize: '10px', color: '#8c8c8c' }}>{txt}</span>;
+
+  // Resource template download (SOW)
+  const downloadSowResourceTemplate = () => {
+    const ws = XLSX.utils.json_to_sheet([
+      { 'RAID': 'RA001', 'Employee ID': 'E001', 'Skill Type': 'Commodity', 'Skill': 'Java Developer', 'Location': 'Bengaluru', 'Overhead Category': 'C - Only Laptop Provided', 'Bill Rate (INR) Daily': '', 'Start Date': '2026-07-01', 'End Date': '2026-09-30' },
+      { 'RAID': 'RA002', 'Employee ID': 'E002', 'Skill Type': 'Specialized', 'Skill': 'Architect', 'Location': 'Bengaluru', 'Overhead Category': 'B - Laptop + Infra', 'Bill Rate (INR) Daily': '', 'Start Date': '2026-08-01', 'End Date': '2026-10-31' },
+    ]);
+    ws['!cols'] = [{ wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 30 }, { wch: 22 }, { wch: 14 }, { wch: 14 }];
+    const wb2 = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb2, ws, 'SOW Resources');
+    XLSX.writeFile(wb2, 'SOW_Resources_Template.xlsx');
+  };
+
+  const handleSowResourceUpload = (file: File) => {
+    const normalizeExcelDate = (s: any): string => {
+      if (!s) return '';
+      const str = String(s).trim();
+      // already ISO
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+      const mdy2 = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+      if (mdy2) return `${2000 + parseInt(mdy2[3])}-${mdy2[1].padStart(2,'0')}-${mdy2[2].padStart(2,'0')}`;
+      const mdy4 = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      if (mdy4) return `${mdy4[3]}-${mdy4[1].padStart(2,'0')}-${mdy4[2].padStart(2,'0')}`;
+      const dmy = str.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+      if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+      return str;
+    };
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target?.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { raw: false });
+        const newRows: SowResourceEntry[] = [];
+        const errors: string[] = [];
+        rows.forEach((row, i) => {
+          const raidId = String(row['RAID'] || row['RA ID'] || '').trim();
+          if (!raidId) { errors.push(`Row ${i + 2}: Missing RAID`); return; }
+          if (newRows.some(r => r.raidId === raidId)) { errors.push(`Row ${i + 2}: Duplicate RAID ${raidId}`); return; }
+          const res = resources.find(r => r.raId === raidId);
+          if (!res) { errors.push(`Row ${i + 2}: RAID "${raidId}" not found in Resource Hub`); return; }
+          const skillType = String(row['Skill Type'] || 'Commodity').toLowerCase().includes('spec') ? 'Specialized' : 'Commodity';
+          newRows.push({
+            key: `sr_xl_${Date.now()}_${i}`,
+            raidId,
+            empId:       String(row['Employee ID'] || '').trim(),
+            empName:     res.empName,
+            piwRole:     res.piwRole || '',
+            totalWorkex: res.totalWorkex || '',
+            skill:       String(row['Skill'] || res.piwRole || '').trim(),
+            location:    String(row['Location'] || 'Bengaluru').trim(),
+            overheadCategory: String(row['Overhead Category'] || '').trim(),
+            skillType,
+            dailyRate:   lookupDailyRate(res.totalWorkex || '', skillType),
+            manualDailyRate: String(row['Bill Rate'] || row['Bill Rate (INR) Daily'] || '').trim(),
+            resourceStartDate: normalizeExcelDate(row['Start Date'] || row['start_date']),
+            resourceEndDate:   normalizeExcelDate(row['End Date']   || row['end_date']),
+          });
+        });
+        if (newRows.length === 0 && errors.length > 0) {
+          Modal.error({ title: 'Upload Failed', content: <ul style={{ margin: 0, paddingLeft: 18 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '12px', color: '#f5222d' }}>{e}</li>)}</ul> });
+          return;
+        }
+        setSowRows(newRows);
+        if (errors.length > 0) {
+          Modal.warning({ title: `${newRows.length} resource(s) loaded — ${errors.length} skipped`, content: <ul style={{ margin: 0, paddingLeft: 18 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '12px' }}>{e}</li>)}</ul> });
+        } else {
+          message.success(`${newRows.length} resource(s) loaded from Excel`);
+        }
+      } catch (e: any) { message.error(e.message || 'Failed to parse file'); }
+    };
+    reader.readAsBinaryString(file);
     return false;
   };
 
-  const handleDelete = (key: string) => {
-    setPiwList(prev => prev.filter(p => p.key !== key));
-    message.success('PIW document removed');
-  };
+  // Ellipsis menu: SOW template download + open SP
+  const ellipsisItems = [
+    {
+      key: 'dl-tpl',
+      label: <span style={{ fontSize: '11px' }}>Download SOW Template</span>,
+      icon: <DownloadOutlined />,
+      onClick: async () => {
+        try {
+          const result = await templateApi.getTemplates('sow_template');
+          if (result.ok && result.data && result.data.length > 0) {
+            const tpl = result.data[0];
+            await templateApi.downloadTemplate(tpl.id, tpl.file_name || 'SOW_template.docx');
+            message.success('SOW template downloaded');
+          } else { message.info('No SOW template uploaded yet. Upload one in Configuration > Templates'); }
+        } catch (e: any) { message.error(e.message || 'Download failed'); }
+      },
+    },
+    ...(spUrl ? [{
+      key: 'sp',
+      label: <span style={{ fontSize: '11px' }}>Open SharePoint Folder ↗</span>,
+      icon: <ShareAltOutlined />,
+      onClick: () => window.open(spUrl, '_blank', 'noopener,noreferrer'),
+    }] : []),
+  ];
 
   return (
     <div>
-      {/* SP banner */}
-      {spUrl && (
-        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
-          <span style={{ flex: 1 }}>📁 PIW documents should also be saved to the configured SharePoint folder.</span>
-          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>Open SharePoint Folder ↗</a>
-        </div>
-      )}
-      {!spUrl && (
-        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
-          💡 Configure the <strong>PIW_STORAGE_URL</strong> in App Configuration to link to your SharePoint folder for centralized PIW document storage.
-        </div>
-      )}
-
-      {/* Template download */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} style={{ fontSize: '11px', borderRadius: 6 }}>
-          Download Template
-        </Button>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <Text style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>Generate SOW Document</Text>
+        <Space size={4}>
+          <Button type="primary" size="small" style={{ fontSize: '11px' }} icon={<FileWordOutlined />}
+            loading={generating} onClick={handleGenerate}>
+            Generate &amp; Download
+          </Button>
+          <Button size="small" style={{ fontSize: '11px' }} onClick={handleReset}>Reset</Button>
+          <Dropdown menu={{ items: ellipsisItems }} trigger={['click']} placement="bottomRight">
+            <Button size="small" icon={<EllipsisOutlined />} style={{ fontSize: '11px' }} />
+          </Dropdown>
+        </Space>
       </div>
 
-      {/* Upload dragger */}
-      <Upload.Dragger multiple={false} beforeUpload={handleFile} showUploadList={false} style={{ borderRadius: 8, marginBottom: 20 }}>
-        <p className="ant-upload-drag-icon">
-          <InboxOutlined style={{ fontSize: 36, color: '#1890ff' }} />
-        </p>
-        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>Click or drag PIW document to upload</p>
-        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
-          Supports PDF, Word, Excel, and all file types. Store centrally in the configured SharePoint folder.
-        </p>
-      </Upload.Dragger>
+      {/* SOW header fields — proper Ant Design Form */}
+      <Card bordered={false} style={{ background: '#fafafa', borderRadius: 8, marginBottom: 12 }}>
+        <Form layout="vertical" size="small">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 20px' }}>
+            <Form.Item label={<span style={{ fontSize: '11px', fontWeight: 500 }}>SOW Name</span>} style={{ marginBottom: 10 }}>
+              <Input size="small" value={sowName} onChange={e => setSowName(e.target.value)}
+                placeholder="Used as the download filename" style={{ fontSize: '11px' }} />
+            </Form.Item>
+            <Form.Item label={<span style={{ fontSize: '11px', fontWeight: 500 }}>Date</span>} style={{ marginBottom: 10 }}>
+              <Input size="small" value={todayFormatted} readOnly
+                style={{ fontSize: '11px', background: '#f5f5f5', color: '#595959' }} />
+            </Form.Item>
+            <Form.Item label={<span style={{ fontSize: '11px', fontWeight: 500 }}>Work Order (SOW)</span>} style={{ marginBottom: 10 }}>
+              <Input size="small" value={sowNumber} onChange={e => setSowNumber(e.target.value)}
+                placeholder="Leave blank if not assigned" style={{ fontSize: '11px' }} />
+            </Form.Item>
+            <Form.Item label={<span style={{ fontSize: '11px', fontWeight: 500 }}>Service Provider</span>} style={{ marginBottom: 10 }}>
+              <Input size="small" value={serviceProvider} onChange={e => setServiceProvider(e.target.value)}
+                style={{ fontSize: '11px' }} />
+            </Form.Item>
+            <Form.Item label={<span style={{ fontSize: '11px', fontWeight: 500 }}>Work Product / Service</span>} style={{ marginBottom: 10 }}>
+              <Input size="small" value={workProduct} onChange={e => setWorkProduct(e.target.value)}
+                placeholder="Describe the work product or service" style={{ fontSize: '11px' }} />
+            </Form.Item>
+            <Form.Item label={<span style={{ fontSize: '11px', fontWeight: 500 }}>Service Provider's Personnel to be assigned</span>} style={{ marginBottom: 10 }}>
+              <Input size="small" value={personnelNote} onChange={e => setPersonnelNote(e.target.value)}
+                placeholder="e.g. as per Schedule below" style={{ fontSize: '11px' }} />
+            </Form.Item>
+          </div>
+        </Form>
+      </Card>
 
-      {/* List */}
-      {piwList.length === 0 ? (
-        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '40px 0', textAlign: 'center' }}>
-          <IdcardOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 10, display: 'block' }} />
-          <Text type="secondary" style={{ fontSize: '12px' }}>No PIW documents uploaded yet.</Text>
-        </div>
-      ) : (
-        <div>
-          <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
-            Uploaded PIW Documents ({piwList.length})
-          </Text>
-          {piwList.map(({ key, file, uploadDate }) => (
-            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', borderLeft: '3px solid #1890ff', padding: '10px 14px', marginBottom: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-              <IdcardOutlined style={{ color: '#1890ff', fontSize: 20, flexShrink: 0 }} />
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
-                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: 2 }}>Uploaded: {uploadDate} &nbsp;·&nbsp; {(file.size / 1024).toFixed(1)} KB</div>
+      {/* Resources */}
+      <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: '11px', fontWeight: 600, color: '#262626' }}>Resources</Text>
+        <Space size={4}>
+          {resources.length === 0 && (
+            <span style={{ fontSize: '10px', color: '#cf1322' }}>⚠️ No resources in Resource Hub</span>
+          )}
+          <Button size="small" icon={<DownloadOutlined />} style={{ fontSize: '11px' }}
+            onClick={downloadSowResourceTemplate}>
+            Resource Template
+          </Button>
+          <Upload beforeUpload={handleSowResourceUpload} showUploadList={false} accept=".xlsx,.xls">
+            <Button size="small" icon={<UploadOutlined />} style={{ fontSize: '11px' }}>Resource Details</Button>
+          </Upload>
+        </Space>
+      </div>
+
+      {sowRows.map((row, index) => {
+        const selectedOther = new Set(sowRows.filter((_, i) => i !== index).map(r => r.raidId).filter(Boolean));
+        const dateStyle: React.CSSProperties = { width: '100%', padding: '3px 7px', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: '11px', color: '#595959', outline: 'none' };
+
+        return (
+          <Card key={row.key} bordered={false}
+            style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, marginBottom: 8, padding: 0 }}
+            bodyStyle={{ padding: '10px 12px' }}>
+
+            {/* Row header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 20, height: 20, borderRadius: '50%', background: '#fa8c16', color: '#fff', fontSize: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {index + 1}
+                </div>
+                <Select size="small" showSearch placeholder="Select RAID" value={row.raidId || undefined}
+                  onChange={v => handleRaidChange(v, index)} style={{ width: 180, fontSize: '11px' }}
+                  filterOption={(input, option) => String(option?.label || '').toLowerCase().includes(input.toLowerCase())}
+                  options={resources.map(r => ({ value: r.raId, label: `${r.raId} · ${r.empName}`, disabled: selectedOther.has(r.raId) }))}
+                />
               </div>
-              {spUrl && (
-                <Tooltip title="Downloads locally and opens SharePoint — drag the file into the SP folder" overlayInnerStyle={{ fontSize: '11px', maxWidth: 260 }}>
-                  <Button size="small" style={{ borderRadius: 6, fontSize: '10px', borderColor: '#1890ff', color: '#1890ff' }}
-                    onClick={() => { downloadFile(file); window.open(spUrl, '_blank', 'noopener,noreferrer'); }}>
-                    Save to SP ↗
-                  </Button>
-                </Tooltip>
+              {sowRows.length > 1 && (
+                <Button size="small" type="text" danger onClick={() => setSowRows(p => p.filter(r => r.key !== row.key))}
+                  style={{ padding: '0 4px', fontSize: '11px' }}>✕</Button>
               )}
-              <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFile(file)} style={{ borderRadius: 6 }} />
-              </Tooltip>
-              <Tooltip title="Remove" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(key)} style={{ borderRadius: 6 }} />
-              </Tooltip>
             </div>
-          ))}
-        </div>
+
+            {/* Row 1: Name, Employee ID, Skill Type, Skill */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 130px 130px 1fr', gap: 8, marginBottom: 6 }}>
+              <div>
+                {fld('Name')}
+                <Input size="small" value={row.empName} readOnly placeholder="Auto from RAID"
+                  style={{ marginTop: 2, fontSize: '11px', background: '#fafafa', color: '#595959' }} />
+              </div>
+              <div>
+                {fld('Employee ID')}
+                <Input size="small" value={row.empId} onChange={e => updateField(index, 'empId', e.target.value)}
+                  placeholder="Emp ID" style={{ marginTop: 2, fontSize: '11px' }} />
+              </div>
+              <div>
+                {fld('Skill Type')}
+                <Select size="small" value={row.skillType || 'Commodity'}
+                  onChange={v => handleSkillTypeChange(v, index)} style={{ width: '100%', marginTop: 2, fontSize: '11px' }}
+                  options={[{ value: 'Commodity', label: 'Commodity' }, { value: 'Specialized', label: 'Specialized' }]} />
+              </div>
+              <div>
+                {fld('Skill')}
+                <Input size="small" value={row.skill} onChange={e => updateField(index, 'skill', e.target.value)}
+                  placeholder="e.g. Java Developer" style={{ marginTop: 2, fontSize: '11px' }} />
+              </div>
+            </div>
+
+            {/* Row 2: Location, Year of Exp, Overhead Category, Bill Rate */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 1fr 140px', gap: 8, marginBottom: 6 }}>
+              <div>
+                {fld('Location')}
+                <Input size="small" value={row.location} onChange={e => updateField(index, 'location', e.target.value)}
+                  placeholder="Bengaluru" style={{ marginTop: 2, fontSize: '11px' }} />
+              </div>
+              <div>
+                {fld('Year of Experience')}
+                <Input size="small" value={row.totalWorkex} readOnly placeholder="Auto from RAID"
+                  style={{ marginTop: 2, fontSize: '11px', background: '#fafafa', color: '#595959' }} />
+              </div>
+              <div>
+                {fld('Overhead Category')}
+                <Input size="small" value={row.overheadCategory} onChange={e => updateField(index, 'overheadCategory', e.target.value)}
+                  placeholder="e.g. C - Only Laptop Provided" style={{ marginTop: 2, fontSize: '11px' }} />
+              </div>
+              <div>
+                {fld('Bill Rate (INR) Daily')}
+                <Input size="small"
+                  value={row.manualDailyRate}
+                  onChange={e => updateField(index, 'manualDailyRate', e.target.value.replace(/[^\d]/g, ''))}
+                  placeholder={row.dailyRate ? `Auto: ₹${row.dailyRate.toLocaleString()}` : 'Enter rate'}
+                  prefix={<span style={{ fontSize: '10px', color: '#389e0d' }}>₹</span>}
+                  style={{ marginTop: 2, fontSize: '11px', color: '#389e0d', fontWeight: 500 }} />
+              </div>
+            </div>
+
+            {/* Row 3: Start Date, End Date */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr', gap: 8 }}>
+              <div>
+                {fld('Start Date')}
+                <input type="date" value={row.resourceStartDate || ''}
+                  onChange={e => updateField(index, 'resourceStartDate', e.target.value)}
+                  style={{ ...dateStyle, marginTop: 2 }} />
+              </div>
+              <div>
+                {fld('End Date')}
+                <input type="date" value={row.resourceEndDate || ''}
+                  onChange={e => updateField(index, 'resourceEndDate', e.target.value)}
+                  style={{ ...dateStyle, marginTop: 2 }} />
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+
+      <Button type="dashed" size="small" block icon={<PlusOutlined />}
+        onClick={() => setSowRows(p => [...p, emptyRow()])}
+        style={{ marginTop: 2, marginBottom: 4, borderRadius: 6, fontSize: '11px' }}>
+        Add Resource
+      </Button>
+    </div>
+  );
+}
+
+// --- PIW Tab ---
+interface PiwTabProps {
+  resources: ResourceRow[];
+  processRows: ProcessRow[];
+  onUpdateProcessRow?: (key: string, updates: Partial<ProcessRow>) => void;
+}
+
+function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTabProps) {
+  const { getConfigByLink, getAppValue } = useConfig();
+  const spUrl = getAppValue('PIW_STORAGE_URL') || '';
+
+  // Get engagement names from linked config type (same mechanism as other dropdowns)
+  const engagementConfig = getConfigByLink('piw_engagement_field');
+  const engagementNames = engagementConfig?.items.map(i => i.label) ?? [];
+
+  const [step1Form]     = Form.useForm();
+  const [step2Form]     = Form.useForm();
+  const [currentStep, setCurrentStep]       = useState(0);
+  const [projectDetails, setProjectDetails] = useState<Record<string, any> | null>(null);
+  const [generating, setGenerating]         = useState(false);
+  const [generatedData, setGeneratedData]   = useState<{ formData: piwApi.PIWFormData; blob: Blob } | null>(null);
+  const [addCrmVisible, setAddCrmVisible]   = useState(false);
+  const [newCrmValue, setNewCrmValue]       = useState('');
+
+  const [resourceRows, setResourceRows] = useState<PiwResourceEntry[]>([
+    { key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, resourceStartDate: '', resourceEndDate: '' },
+  ]);
+
+  // SOW options from process overview
+  const sowOptions = useMemo(() =>
+    [...new Set(processRows.map(r => r.sow).filter(Boolean))],
+    [processRows]
+  );
+
+  // Auto-populate CRM from selected SOW
+  const handleSowChange = (sowName: string) => {
+    const match = processRows.find(r => r.sow === sowName);
+    if (match?.salesforceId) {
+      step1Form.setFieldValue('crmOpportunityId', match.salesforceId);
+      setAddCrmVisible(false);
+    } else {
+      step1Form.setFieldValue('crmOpportunityId', '');
+      setAddCrmVisible(true);
+    }
+  };
+
+  const handleRaidChange = (raidId: string, index: number) => {
+    const isDuplicate = resourceRows.some((r, i) => i !== index && r.raidId === raidId);
+    if (isDuplicate) {
+      const res = resources.find(r => r.raId === raidId);
+      message.error({
+        content: <span><strong>{res?.empName || raidId}</strong> is already added. Each resource can only appear once per PIW.</span>,
+        duration: 4,
+      });
+      return;
+    }
+    const res = resources.find(r => r.raId === raidId);
+    setResourceRows(prev => {
+      const next = [...prev];
+      if (res) {
+        const skillType = next[index].skillType || 'Commodity';
+        const rate = lookupDailyRate(res.totalWorkex, skillType);
+        next[index] = { ...next[index], raidId, empName: res.empName, piwRole: res.piwRole, totalWorkex: res.totalWorkex, dailyRate: rate };
+      } else {
+        next[index] = { ...next[index], raidId, empName: '', piwRole: '', totalWorkex: '', dailyRate: 0 };
+      }
+      return next;
+    });
+  };
+
+  const handleSkillTypeChange = (skillType: string, index: number) => {
+    setResourceRows(prev => {
+      const next = [...prev];
+      const row = next[index];
+      const rate = row.totalWorkex ? lookupDailyRate(row.totalWorkex, skillType) : 0;
+      next[index] = { ...row, skillType, dailyRate: rate };
+      return next;
+    });
+  };
+
+  const updateResourceRow = (index: number, field: keyof PiwResourceEntry, value: string | number) => {
+    setResourceRows(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const addResourceRow = () =>
+    setResourceRows(prev => [...prev, { key: `r${Date.now()}`, raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
+
+  const removeResourceRow = (key: string) =>
+    setResourceRows(prev => prev.filter(r => r.key !== key));
+
+  // Excel upload for resource rows
+  // Normalise Excel date values → 'YYYY-MM-DD' string.
+  // Strategy: use raw:false so XLSX gives us the pre-formatted display string (e.g. "1/1/26")
+  // which is always correct regardless of timezone.
+  const normalizeExcelDate = (val: any): string => {
+    if (!val) return '';
+    const s = String(val).trim();
+    // Already ISO YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    // M/D/YY or M/D/YYYY (Excel display format in en-US locale)
+    const mdy2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+    if (mdy2) return `${2000 + parseInt(mdy2[3])}-${mdy2[1].padStart(2,'0')}-${mdy2[2].padStart(2,'0')}`;
+    const mdy4 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (mdy4) return `${mdy4[3]}-${mdy4[1].padStart(2,'0')}-${mdy4[2].padStart(2,'0')}`;
+    // DD-MM-YYYY or DD/MM/YYYY (Indian locale)
+    const dmy = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+    if (dmy) return `${dmy[3]}-${dmy[2].padStart(2,'0')}-${dmy[1].padStart(2,'0')}`;
+    return s;
+  };
+
+  const handleResourceExcelUpload = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // raw:false → XLSX returns the pre-formatted display string for dates (e.g. "1/1/26")
+        // which is always timezone-correct (avoids UTC midnight IST → prev-day UTC bug)
+        const wb = XLSX.read(e.target?.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { raw: false });
+        const newRows: PiwResourceEntry[] = [];
+        const errors: string[] = [];
+
+        rows.forEach((row, i) => {
+          const raidId = String(row['RAID'] || row['RA ID'] || row['Ra Id'] || '').trim();
+          if (!raidId) { errors.push(`Row ${i + 2}: Missing RAID`); return; }
+
+          const isDuplicate = newRows.some(r => r.raidId === raidId);
+          if (isDuplicate) { errors.push(`Row ${i + 2}: Duplicate RAID ${raidId}`); return; }
+
+          const res = resources.find(r => r.raId === raidId);
+          if (!res) { errors.push(`Row ${i + 2}: RAID "${raidId}" not found in Resource Hub`); return; }
+
+          const skillType = String(row['Skill Type'] || row['skill_type'] || 'Commodity').trim();
+          const normalizedSkill = skillType.toLowerCase().includes('spec') ? 'Specialized' : 'Commodity';
+          const rateOverride = String(row['Daily Rate (INR)'] || row['Daily Rate'] || '').replace(/[^\d]/g, '');
+          const rate = lookupDailyRate(res.totalWorkex, normalizedSkill);
+
+          newRows.push({
+            key: `r_xl_${Date.now()}_${i}`,
+            raidId,
+            empName: res.empName,
+            piwRole: res.piwRole,
+            totalWorkex: res.totalWorkex,
+            skillType: normalizedSkill,
+            dailyRate: rate,
+            manualDailyRate: rateOverride,
+            resourceStartDate: normalizeExcelDate(row['Start Date'] || row['start_date']),
+            resourceEndDate:   normalizeExcelDate(row['End Date']   || row['end_date']),
+          });
+        });
+
+        if (newRows.length === 0 && errors.length > 0) {
+          Modal.error({ title: 'Upload Failed', content: <ul style={{ margin: 0, paddingLeft: 18 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '12px', color: '#f5222d' }}>{e}</li>)}</ul> });
+          return;
+        }
+
+        setResourceRows(newRows);
+        if (errors.length > 0) {
+          Modal.warning({
+            title: `${newRows.length} resource(s) loaded — ${errors.length} row(s) skipped`,
+            content: <ul style={{ margin: 0, paddingLeft: 18 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '12px' }}>{e}</li>)}</ul>,
+          });
+        } else {
+          message.success(`${newRows.length} resource(s) loaded from Excel`);
+        }
+      } catch (e: any) { message.error(e.message || 'Failed to parse file'); }
+    };
+    reader.readAsBinaryString(file);
+    return false;
+  };
+
+  const downloadResourceTemplate = () => {
+    const ws = XLSX.utils.json_to_sheet([
+      { 'RAID': 'RA001', 'Skill Type': 'Commodity', 'Daily Rate (INR)': '', 'Start Date': '2026-07-01', 'End Date': '2026-09-30' },
+      { 'RAID': 'RA002', 'Skill Type': 'Specialized', 'Daily Rate (INR)': '', 'Start Date': '2026-08-01', 'End Date': '2026-10-31' },
+    ]);
+    ws['!cols'] = [{ wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 14 }];
+    const wb2 = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb2, ws, 'PIW Resources');
+    XLSX.writeFile(wb2, 'PIW_Resources_Template.xlsx');
+  };
+
+  const handleStep1Next = async () => {
+    try {
+      const values = await step1Form.validateFields();
+      setProjectDetails(values);
+      setCurrentStep(1);
+    } catch { /* validation errors shown inline */ }
+  };
+
+  const handleGenerate = async () => {
+    const valid = resourceRows.filter(r => r.raidId && r.empName);
+    if (valid.length === 0) {
+      message.error('Please select at least one resource');
+      return;
+    }
+    // Validate every resource has start and end dates
+    const missingDates = valid.filter(r => !r.resourceStartDate || !r.resourceEndDate);
+    if (missingDates.length > 0) {
+      message.error(`Please set start and end dates for: ${missingDates.map(r => r.empName).join(', ')}`);
+      return;
+    }
+    // Validate end > start per resource
+    const invalidDates = valid.filter(r => new Date(r.resourceEndDate) <= new Date(r.resourceStartDate));
+    if (invalidDates.length > 0) {
+      message.error(`End date must be after start date for: ${invalidDates.map(r => r.empName).join(', ')}`);
+      return;
+    }
+    if (!projectDetails) return;
+
+    // Derive overall project dates from resource date ranges
+    const allStarts = valid.map(r => r.resourceStartDate).sort();
+    const allEnds   = valid.map(r => r.resourceEndDate).sort();
+    const overallStart = allStarts[0];
+    const overallEnd   = allEnds[allEnds.length - 1];
+
+    setGenerating(true);
+    try {
+      const formData: piwApi.PIWFormData = {
+        clientCompanyName: projectDetails.clientCompanyName || '',
+        projectName:       projectDetails.projectName,
+        sowNumber:         projectDetails.sowNumber,
+        crmOpportunityId:  projectDetails.crmOpportunityId,
+        contractType:      projectDetails.contractType,
+        currency:          projectDetails.currency || 'INR',
+        plannedStartDate:  overallStart,
+        plannedEndDate:    overallEnd,
+        resources: valid.map(r => ({
+          raId: r.raidId, name: r.empName, resourceType: r.piwRole,
+          skillType: r.skillType,
+          dailyRate: r.manualDailyRate ? Number(r.manualDailyRate) : r.dailyRate,
+          resourceStartDate: r.resourceStartDate || undefined,
+          resourceEndDate:   r.resourceEndDate   || undefined,
+        })),
+      };
+
+      const blob = await piwApi.generatePIW(formData);
+      setGeneratedData({ formData, blob });
+      setCurrentStep(2);
+      message.success('PIW generated — review below and download when ready');
+    } catch (e: any) {
+      message.error(e.message || 'Failed to generate PIW');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!generatedData) return;
+    const sow = generatedData.formData.sowNumber || '';
+    const piwName = 'PIW - ' + sow.replace(/^SOW\s*[-–—]?\s*/i, '').trim();
+    piwApi.downloadPIW(generatedData.blob, piwName);
+    message.success('PIW downloaded');
+  };
+
+  const handleReset = () => {
+    step1Form.resetFields();
+    step1Form.setFieldsValue({ projectName: 'TBD', sowNumber: 'TBD', crmOpportunityId: 'TBD' });
+    setCurrentStep(0);
+    setProjectDetails(null);
+    setGeneratedData(null);
+    setAddCrmVisible(false);
+    setResourceRows([{ key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
+  };
+
+  const inputStyle = { width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: '12px' };
+  const fl = (txt: string) => <span style={{ fontSize: '11px', fontWeight: 500, color: '#595959' }}>{txt}</span>;
+  const sectionTitle = (txt: string) => (
+    <Text style={{ fontSize: '12px', fontWeight: 600, color: '#262626', display: 'block', marginBottom: 12 }}>{txt}</Text>
+  );
+
+  return (
+    <div>
+      {/* ── Header: title + More Actions (⋯) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <Text style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>Fill the form to generate PIW</Text>
+        <Dropdown
+          trigger={['click']}
+          menu={{
+            items: [
+              {
+                key: 'download-resource-template',
+                icon: <DownloadOutlined style={{ fontSize: '11px' }} />,
+                label: <span style={{ fontSize: '11px' }}>Download Resource Upload Template</span>,
+                onClick: downloadResourceTemplate,
+              },
+              {
+                key: 'download-template',
+                icon: <FileExcelOutlined style={{ fontSize: '11px' }} />,
+                label: <span style={{ fontSize: '11px' }}>Download PIW Template</span>,
+                onClick: async () => {
+                  try {
+                    const result = await templateApi.getTemplates('piw_template');
+                    if (result.ok && result.data && result.data.length > 0) {
+                      const tpl = result.data[0];
+                      await templateApi.downloadTemplate(tpl.id, tpl.file_name || 'PIW_template.xlsm');
+                      message.success('PIW template downloaded');
+                    } else {
+                      message.info('No PIW template uploaded yet. Upload one in Configuration > Templates');
+                    }
+                  } catch (e: any) { message.error(e.message || 'Download failed'); }
+                },
+              },
+              ...(spUrl ? [{
+                key: 'open-sp',
+                icon: <ShareAltOutlined style={{ fontSize: '11px' }} />,
+                label: (
+                  <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: '11px', color: 'inherit' }}>
+                    Open SharePoint Folder ↗
+                  </a>
+                ),
+              }] : []),
+            ],
+          }}
+        >
+          <Button size="small" type="text" icon={<EllipsisOutlined />} style={{ fontSize: '11px', borderRadius: 4 }} />
+        </Dropdown>
+      </div>
+
+      {/* Steps indicator */}
+      <Steps current={currentStep} size="small" style={{ marginBottom: 16 }}>
+        <Steps.Step title={<span style={{ fontSize: '11px' }}>Project Details</span>} />
+        <Steps.Step title={<span style={{ fontSize: '11px' }}>Resources</span>} />
+        <Steps.Step title={<span style={{ fontSize: '11px' }}>Review & Download</span>} />
+      </Steps>
+
+      {/* ── STEP 1: Project Details ── */}
+      {currentStep === 0 && (
+        <Card bordered={false} style={{ background: '#fafafa', borderRadius: 8, marginBottom: 16 }}>
+          <Form form={step1Form} layout="vertical" size="small" initialValues={{ contractType: 'T&M', currency: 'INR', projectName: 'TBD', sowNumber: 'TBD', crmOpportunityId: 'TBD' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 20px' }}>
+              <Form.Item
+                label={
+                  <span style={{ fontSize: '11px', fontWeight: 500, color: '#595959' }}>
+                    Project / Engagement Name
+                    {!engagementConfig && (
+                      <span style={{ color: '#1890ff', fontSize: '10px', marginLeft: 6 }}>
+                        (Link a config type in <strong>Configuration</strong> → select type → Link to <em>"PIW — Project / Engagement Name"</em>)
+                      </span>
+                    )}
+                  </span>
+                }
+                name="projectName"
+                rules={[{ required: true, message: 'Required' }]}
+              >
+                {engagementNames.length > 0 ? (
+                  <Select placeholder="Select project" showSearch>
+                    {engagementNames.map(n => <Select.Option key={n} value={n}>{n}</Select.Option>)}
+                  </Select>
+                ) : (
+                  <Input placeholder="Enter project / engagement name" />
+                )}
+              </Form.Item>
+              <Form.Item label={fl('SOW Name')} name="sowNumber" rules={[{ required: true, message: 'Required' }]}>
+                <Select placeholder="Select SOW or type TBD" showSearch onChange={handleSowChange} allowClear
+                  dropdownRender={menu => (
+                    <>
+                      {menu}
+                      <div style={{ padding: '4px 8px', borderTop: '1px solid #f0f0f0' }}>
+                        <Input
+                          size="small"
+                          placeholder="Type manually (e.g. TBD)"
+                          style={{ fontSize: '11px' }}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              const v = (e.target as HTMLInputElement).value.trim();
+                              if (v) { step1Form.setFieldValue('sowNumber', v); handleSowChange(v); }
+                            }
+                          }}
+                        />
+                      </div>
+                    </>
+                  )}
+                >
+                  {sowOptions.map(s => <Select.Option key={s} value={s}>{s}</Select.Option>)}
+                </Select>
+              </Form.Item>
+              <Form.Item
+                label={fl('CRM Opportunity #')}
+                name="crmOpportunityId"
+                rules={[{ required: false }]}
+              >
+                <Input placeholder="Auto-populated from SOW · or enter manually" />
+              </Form.Item>
+              {addCrmVisible && (
+                <div style={{ gridColumn: '1 / -1', background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 6, padding: '8px 12px', marginBottom: 8, fontSize: '11px', color: '#873800' }}>
+                  ⚠️ No CRM Opportunity linked to this SOW.{' '}
+                  <span
+                    style={{ color: '#1890ff', cursor: 'pointer', textDecoration: 'underline' }}
+                    onClick={() => {
+                      const v = step1Form.getFieldValue('crmOpportunityId');
+                      const sow = step1Form.getFieldValue('sowNumber');
+                      if (v && sow && onUpdateProcessRow) {
+                        const row = processRows.find(r => r.sow === sow);
+                        if (row) { onUpdateProcessRow(row.key, { salesforceId: v }); message.success('CRM ID saved to Process Overview'); setAddCrmVisible(false); }
+                      } else if (!v) {
+                        message.warning('Enter a CRM ID above first');
+                      }
+                    }}
+                  >
+                    Save to Process Overview
+                  </span>
+                </div>
+              )}
+              <Form.Item label={fl('Contract Type')} name="contractType" rules={[{ required: true, message: 'Required' }]}>
+                <Select>
+                  <Select.Option value="T&M">T&M (Time &amp; Material)</Select.Option>
+                  <Select.Option value="Fixed Fee">Fixed Fee</Select.Option>
+                </Select>
+              </Form.Item>
+              <Form.Item label={fl('Currency')} name="currency">
+                <Select>
+                  <Select.Option value="INR">INR — Indian Rupee</Select.Option>
+                  <Select.Option value="USD">USD — US Dollar</Select.Option>
+                  <Select.Option value="EUR">EUR — Euro</Select.Option>
+                  <Select.Option value="GBP">GBP — British Pound</Select.Option>
+                </Select>
+              </Form.Item>
+            </div>
+            <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 8 }}>
+              📅 Overall project start &amp; end dates will be derived from the earliest and latest resource engagement dates set in the next step.
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+              <Button type="primary" size="small" style={{ fontSize: '11px' }} onClick={handleStep1Next}>Next → Resources</Button>
+            </div>
+          </Form>
+        </Card>
+      )}
+
+      {/* ── STEP 2: Resources ── */}
+      {currentStep === 1 && (
+        <Card bordered={false} style={{ background: '#fafafa', borderRadius: 8, marginBottom: 16 }}>
+          {/* Toolbar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <Text style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>Delivery Workstream — Select Resources</Text>
+            <Space>
+              <Upload beforeUpload={handleResourceExcelUpload} showUploadList={false} accept=".xlsx,.xls">
+                <Button size="small" icon={<UploadOutlined />} style={{ fontSize: '11px' }}>Upload Excel</Button>
+              </Upload>
+            </Space>
+          </div>
+
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 6, padding: '6px 12px', marginBottom: 12, fontSize: '11px', color: '#003eb3' }}>
+            <strong>{projectDetails?.projectName}</strong>&nbsp;·&nbsp;{projectDetails?.sowNumber}&nbsp;·&nbsp;
+            {projectDetails?.contractType}&nbsp;·&nbsp;INR
+          </div>
+          {resources.length === 0 && (
+            <div style={{ background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: '11px', color: '#cf1322' }}>
+              ⚠️ No resources found. Please add resources in <strong>Resource Hub</strong> first.
+            </div>
+          )}
+
+          {resourceRows.map((row, index) => {
+            const selectedInOtherRows = new Set(
+              resourceRows.filter((_, i) => i !== index).map(r => r.raidId).filter(Boolean)
+            );
+            const dateStyle: React.CSSProperties = { width: '100%', padding: '3px 7px', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: '11px', color: '#595959', outline: 'none' };
+            return (
+              <div key={row.key} style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 6, padding: '8px 10px', marginBottom: 6 }}>
+                {/* Row 1: S.No · RAID · Name · PIW Role · Delete */}
+                <div style={{ display: 'grid', gridTemplateColumns: '28px 180px 1fr 150px 24px', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+                  <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#1890ff', color: '#fff', fontSize: '10px', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    {index + 1}
+                  </div>
+                  <Select
+                    size="small" showSearch
+                    placeholder="Select RAID"
+                    value={row.raidId || undefined}
+                    onChange={v => handleRaidChange(v, index)}
+                    style={{ width: '100%', fontSize: '11px' }}
+                    filterOption={(input, option) => {
+                      const label = String(option?.label || '').toLowerCase();
+                      return label.includes(input.toLowerCase());
+                    }}
+                    options={resources.map(r => ({
+                      value: r.raId,
+                      label: `${r.raId} · ${r.empName}`,
+                      disabled: selectedInOtherRows.has(r.raId),
+                    }))}
+                  />
+                  <Input size="small" value={row.empName} readOnly placeholder="Name" style={{ background: '#fafafa', color: '#595959', fontSize: '11px' }} />
+                  <Input size="small" value={row.piwRole} readOnly placeholder="PIW Role" style={{ background: '#fafafa', color: '#595959', fontSize: '11px' }} />
+                  <Button size="small" type="text" danger onClick={() => removeResourceRow(row.key)} style={{ padding: '0 4px', fontSize: '11px' }}>✕</Button>
+                </div>
+                {/* Row 2: Skill Type · Daily Rate · Hourly Rate · Start Date · End Date */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 95px 75px 1fr 1fr', gap: 6, alignItems: 'center' }}>
+                  <Select
+                    size="small"
+                    value={row.skillType || 'Commodity'}
+                    onChange={v => handleSkillTypeChange(v, index)}
+                    style={{ fontSize: '11px' }}
+                    options={[
+                      { value: 'Commodity',   label: 'Commodity' },
+                      { value: 'Specialized', label: 'Specialized' },
+                    ]}
+                  />
+                  <Input size="small"
+                    value={row.manualDailyRate}
+                    onChange={e => updateResourceRow(index, 'manualDailyRate', e.target.value.replace(/[^\d]/g, ''))}
+                    placeholder={row.dailyRate ? `Auto: ${row.dailyRate.toLocaleString()}` : 'Daily rate'}
+                    prefix={<span style={{ fontSize: '10px', color: '#595959' }}>₹</span>}
+                    style={{ textAlign: 'right', color: '#595959', fontSize: '11px' }} />
+                  <Input size="small"
+                    value={(() => { const d = row.manualDailyRate ? Number(row.manualDailyRate) : row.dailyRate; return d ? (d / 8).toFixed(2) : ''; })()}
+                    readOnly
+                    style={{ background: '#f6ffed', textAlign: 'right', color: '#389e0d', fontWeight: 500, fontSize: '11px' }} />
+                  <input type="date" value={row.resourceStartDate || ''} placeholder="Start Date"
+                    onChange={e => updateResourceRow(index, 'resourceStartDate', e.target.value)}
+                    style={dateStyle} />
+                  <input type="date" value={row.resourceEndDate || ''} placeholder="End Date"
+                    onChange={e => updateResourceRow(index, 'resourceEndDate', e.target.value)}
+                    style={dateStyle} />
+                </div>
+                {/* Row 2 labels */}
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 95px 75px 1fr 1fr', gap: 6, marginTop: 2 }}>
+                  {['Skill Type', 'Daily Rate', 'Hourly Rate', 'Engagement Start', 'Engagement End'].map(h => (
+                    <span key={h} style={{ fontSize: '10px', color: '#bfbfbf' }}>{h}</span>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <Button type="dashed" size="small" block onClick={addResourceRow} icon={<PlusOutlined />}
+            style={{ marginTop: 4, marginBottom: 16, borderRadius: 4, fontSize: '11px' }}>
+            Add Resource
+          </Button>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button size="small" style={{ fontSize: '11px' }} onClick={() => setCurrentStep(0)}>← Back</Button>
+            <Space>
+              <Button size="small" style={{ fontSize: '11px' }} onClick={handleReset}>Reset</Button>
+              <Button type="primary" size="small" style={{ fontSize: '11px' }} loading={generating} onClick={handleGenerate}>Generate PIW</Button>
+            </Space>
+          </div>
+        </Card>
+      )}
+
+      {/* ── STEP 3: Preview & Download ── */}
+      {currentStep === 2 && generatedData && (
+        <Card bordered={false} style={{ background: '#fafafa', borderRadius: 8, marginBottom: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+            {sectionTitle('Generated PIW — Review & Download')}
+            <Space>
+              <Button size="small" style={{ fontSize: '11px' }} onClick={() => setCurrentStep(1)}>← Back to Resources</Button>
+              <Button type="primary" size="small" style={{ fontSize: '11px' }} icon={<DownloadOutlined />} onClick={handleDownload}>
+                Download PIW (.xlsm)
+              </Button>
+              <Button size="small" style={{ fontSize: '11px' }} onClick={handleReset}>New PIW</Button>
+            </Space>
+          </div>
+
+          {/* Front Page Summary */}
+          <div style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
+            <Text style={{ fontSize: '11px', fontWeight: 600, color: '#1890ff', display: 'block', marginBottom: 8 }}>📄 Front Page</Text>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 24px' }}>
+              {[
+                ['Project / Engagement', generatedData.formData.projectName],
+                ['SOW Name', generatedData.formData.sowNumber],
+                ['CRM Opportunity', generatedData.formData.crmOpportunityId || '—'],
+                ['Contract Type', generatedData.formData.contractType],
+                ['Currency', generatedData.formData.currency || 'INR'],
+                ['Overall Start Date', generatedData.formData.plannedStartDate],
+                ['Overall End Date', generatedData.formData.plannedEndDate],
+              ].map(([label, val]) => (
+                <div key={label} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: '11px' }}>
+                  <span style={{ color: '#8c8c8c', minWidth: 140 }}>{label}:</span>
+                  <span style={{ color: '#262626', fontWeight: 500 }}>{val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Delivery Workstream */}
+          <div style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 16px' }}>
+            <Text style={{ fontSize: '11px', fontWeight: 600, color: '#1890ff', display: 'block', marginBottom: 8 }}>
+              📊 Delivery Workstream ({generatedData.formData.resources.length} resource{generatedData.formData.resources.length !== 1 ? 's' : ''})
+            </Text>
+            <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 100px 90px 70px 95px 95px', gap: 4, marginBottom: 6 }}>
+              {['RAID', 'Resource Name', 'PIW Role', 'Daily Rate', 'Hrly Rate', 'Start Date', 'End Date'].map((h, hi) => (
+                <span key={h} style={{ fontSize: '10px', fontWeight: 500, color: '#8c8c8c', textAlign: hi === 3 || hi === 4 ? 'center' : 'left' }}>{h}</span>
+              ))}
+            </div>
+            {generatedData.formData.resources.map((r, i) => {
+              return (
+                <div key={i} style={{ padding: '6px 0', borderTop: '1px solid #f5f5f5' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 100px 90px 70px 95px 95px', gap: 4, alignItems: 'center' }}>
+                    <span style={{ fontSize: '10px', color: '#8c8c8c', fontFamily: 'monospace' }}>{r.raId || '—'}</span>
+                    <span style={{ fontSize: '11px', color: '#262626', fontWeight: 500 }}>{r.name}</span>
+                    <span style={{ fontSize: '11px', color: '#595959' }}>{r.resourceType}</span>
+                    <span style={{ fontSize: '11px', color: '#595959', textAlign: 'center' }}>₹{r.dailyRate?.toLocaleString()}</span>
+                    <span style={{ fontSize: '11px', color: '#389e0d', textAlign: 'center', fontWeight: 500 }}>
+                      {r.dailyRate ? (r.dailyRate / 8).toFixed(2) : '—'}
+                    </span>
+                    <span style={{ fontSize: '11px', color: '#595959' }}>{r.resourceStartDate || '—'}</span>
+                    <span style={{ fontSize: '11px', color: '#595959' }}>{r.resourceEndDate   || '—'}</span>
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 2, paddingLeft: 2 }}>
+                    {r.skillType ? <span style={{ color: r.skillType === 'Specialized' ? '#722ed1' : '#1890ff' }}>{r.skillType}</span> : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
       )}
     </div>
   );
 }
 
-export function InternalProcess() {
+export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] }) {
+  const { getAppValue } = useConfig();
   const [processRows, setProcessRows] = useState<ProcessRow[]>([]);
   const [fromServer, setFromServer] = useState(false);
 
@@ -1311,17 +2639,27 @@ export function InternalProcess() {
     setProcessRows(prev => prev.filter(r => r.key !== processKey).map((r, i) => ({ ...r, sno: i + 1 })));
   };
 
+  const handleUpdateProcessRow = (key: string, updates: Partial<ProcessRow>) => {
+    setProcessRows(prev => prev.map(r => r.key === key ? { ...r, ...updates } : r));
+  };
+
   return (
     <div style={{ padding: '20px 24px', maxWidth: 1360, margin: '0 auto' }}>
-      <div style={{ marginBottom: 20 }}>
-        <Title level={4} style={{ margin: 0, color: '#262626' }}>RA Process</Title>
-        <Text type="secondary" style={{ fontSize: '12px' }}>Standard processes, agreements and onboarding documentation</Text>
-      </div>
       <div style={{ background: '#fff', borderRadius: 10, padding: '0 20px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
         <Tabs
-          defaultActiveKey="process"
+          defaultActiveKey="sow"
           tabBarStyle={{ marginBottom: 16, paddingTop: 4 }}
           items={[
+            {
+              key: 'sow',
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><FileWordOutlined /> SOW</span>,
+              children: <SowGenerateTab resources={resources} processRows={processRows} spUrl={getAppValue('SOW_STORAGE_URL') || ''} />,
+            },
+            {
+              key: 'piw',
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><IdcardOutlined /> PIW</span>,
+              children: <PiwTab resources={resources} processRows={processRows} onUpdateProcessRow={handleUpdateProcessRow} />,
+            },
             {
               key: 'process',
               label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><NodeIndexOutlined /> Process Overview</span>,
@@ -1329,31 +2667,8 @@ export function InternalProcess() {
             },
             {
               key: 'insights',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><BarChartOutlined /> Process Insights</span>,
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><BarChartOutlined /> Insights</span>,
               children: <ProcessInsights rows={processRows} />,
-            },
-            {
-              key: 'sow-piw',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><FileProtectOutlined /> SOW &amp; PIW</span>,
-              children: (
-                <Tabs
-                  defaultActiveKey="sow"
-                  size="small"
-                  tabBarStyle={{ marginBottom: 12 }}
-                  items={[
-                    {
-                      key: 'sow',
-                      label: <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}><FileProtectOutlined /> SOW</span>,
-                      children: <SowTab onUpload={handleSowUpload} onDelete={handleSowDelete} />,
-                    },
-                    {
-                      key: 'piw',
-                      label: <span style={{ fontSize: '11px', display: 'flex', alignItems: 'center', gap: 4 }}><IdcardOutlined /> PIW</span>,
-                      children: <PiwTab />,
-                    },
-                  ]}
-                />
-              ),
             },
           ]}
         />

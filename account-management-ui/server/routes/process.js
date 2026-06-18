@@ -2,18 +2,323 @@
  * Internal Process (RA Process) API routes
  * Base path: /api/process
  *
- * GET    /api/process          - list all
- * POST   /api/process/bulk     - upsert by sow (append new, overwrite existing)
- * POST   /api/process          - create one
- * PUT    /api/process/:id      - update one
- * DELETE /api/process/:id      - delete one
- * DELETE /api/process          - delete ALL
+ * GET    /api/process                        - list all
+ * POST   /api/process/bulk                   - upsert by sow
+ * POST   /api/process                        - create one
+ * PUT    /api/process/:id                    - update one (writes audit_log)
+ * PATCH  /api/process/:id/active             - toggle active field
+ * GET    /api/process/:id/comments           - fetch comments
+ * POST   /api/process/:id/comments           - add comment
+ * DELETE /api/process/:id/comments/:cid      - delete comment
+ * DELETE /api/process/:id                    - delete one
+ * DELETE /api/process                        - delete ALL
  */
 
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/connection');
 const { evaluateTriggers } = require('../utils/triggerEvaluator');
+
+// Ensure process_comments table exists
+function ensureCommentTable(db) {
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS process_comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      process_id INTEGER NOT NULL,
+      author TEXT NOT NULL DEFAULT "",
+      body TEXT NOT NULL DEFAULT "",
+      created_at TEXT NOT NULL
+    )`);
+  } catch (_) {}
+}
+
+// Write changed fields to audit_log
+function writeAuditLog(db, processId, recordName, trackFields, oldRecord, changedBy) {
+  const now = new Date().toISOString();
+  for (const [field, newVal] of Object.entries(trackFields)) {
+    const oldVal = oldRecord && oldRecord[field] !== undefined ? String(oldRecord[field] ?? '') : '';
+    if (oldVal !== String(newVal ?? '')) {
+      try {
+        db.run(
+          `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          ['ra_process', processId, recordName, field, oldVal, String(newVal ?? ''), changedBy || 'system', now]
+        );
+      } catch (_) {}
+    }
+  }
+}
+
+// GET /api/process/:id/resources — resources linked to a process
+router.get('/:id/resources', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await getDb();
+    const rows = db.all(
+      `SELECT id, ra_id, emp_name, piw_role, allocation_status, process_id
+       FROM resources WHERE process_id=? ORDER BY sno`,
+      [parseInt(id, 10)]
+    );
+    res.json({ resources: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/process/:id/active — toggle active field
+router.patch('/:id/active', async (req, res) => {
+  const { id } = req.params;
+  const { isActive, changedBy = 'system' } = req.body;
+  try {
+    const db = await getDb();
+    const existing = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const newVal = isActive ? 'Yes' : 'No';
+    const oldVal = existing.active || '';
+    const now = new Date().toISOString();
+    db.run('UPDATE ra_process SET active=?, updated_at=? WHERE id=?', [newVal, now, parseInt(id, 10)]);
+    try {
+      db.run(
+        `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        ['ra_process', parseInt(id, 10), existing.sow || String(id), 'active', oldVal, newVal, changedBy, now]
+      );
+    } catch (_) {}
+    res.json({ ok: true, active: newVal });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/process/:id/comments
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const db = await getDb();
+    ensureCommentTable(db);
+    const rows = db.all(
+      'SELECT * FROM process_comments WHERE process_id=? ORDER BY created_at ASC',
+      [parseInt(req.params.id, 10)]
+    );
+    res.json({ comments: rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// POST /api/process/:id/comments
+router.post('/:id/comments', async (req, res) => {
+  const processId = parseInt(req.params.id, 10);
+  const author = String(req.body.author || 'Unknown').trim();
+  const body = String(req.body.body || '').trim();
+  if (!body) return res.status(400).json({ error: 'body required' });
+  try {
+    const db = await getDb();
+    ensureCommentTable(db);
+    db.run(
+      'INSERT INTO process_comments (process_id, author, body, created_at) VALUES (?,?,?,?)',
+      [processId, author, body, new Date().toISOString()]
+    );
+    const newId = db.lastId ? db.lastId() : null;
+    const inserted = newId ? db.get('SELECT * FROM process_comments WHERE id=?', [newId]) : null;
+    res.json({ ok: true, comment: inserted });
+  } catch (err) { res.status(500).json({ error: String(err.message || err) }); }
+});
+
+// DELETE /api/process/:id/comments/:cid
+router.delete('/:id/comments/:cid', async (req, res) => {
+  try {
+    const db = await getDb();
+    ensureCommentTable(db);
+    db.run('DELETE FROM process_comments WHERE id=? AND process_id=?', [req.params.cid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// GET /api/process
+router.get('/', async (req, res) => {
+  try {
+    const db = await getDb();
+    const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
+    res.json({ rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/process/bulk - upsert by sow
+router.post('/bulk', async (req, res) => {
+  const { rows } = req.body;
+  if (!Array.isArray(rows)) {
+    return res.status(400).json({ error: 'rows array required' });
+  }
+  try {
+    const db = await getDb();
+    let inserted = 0, updated = 0;
+    const now = new Date().toISOString();
+
+    for (const r of rows) {
+      const sow = String(r.sow || '').trim();
+      if (!sow) continue;
+
+      const existing = db.get('SELECT id, sno FROM ra_process WHERE LOWER(sow) = LOWER(?)', [sow]);
+
+      if (existing) {
+        db.run(
+          `UPDATE ra_process SET sno=?, start_date=?, signed_sow=?, piw=?, active=?,
+           salesforce_id=?, proms_id=?, budget=?, open_air_code=?, comments=?,
+           account_anchor=?, updated_at=? WHERE id=?`,
+          [r.sno || existing.sno, r.startDate || '', r.signedSow || '', r.piw || '',
+           r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
+           r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, existing.id]
+        );
+        updated++;
+      } else {
+        const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
+        const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
+        db.run(
+          `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
+           salesforce_id, proms_id, budget, open_air_code, comments, account_anchor, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [r.sno || sno, sow, r.startDate || '', r.signedSow || '', r.piw || '',
+           r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
+           r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, now]
+        );
+        inserted++;
+      }
+    }
+
+    if (inserted > 0) {
+      evaluateTriggers(db, 'ra_process', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+    }
+    res.json({ ok: true, inserted, updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/process - create one
+router.post('/', async (req, res) => {
+  const r = req.body;
+  try {
+    const db = await getDb();
+    const now = new Date().toISOString();
+    const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
+    const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
+    db.run(
+      `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
+       salesforce_id, proms_id, budget, open_air_code, comments, account_anchor, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [r.sno || sno, r.sow || '', r.startDate || '', r.signedSow || '', r.piw || '',
+       r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
+       r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, now]
+    );
+    const newId = db.lastId ? db.lastId() : null;
+    // Audit: record creation
+    if (newId) {
+      try {
+        db.run(
+          `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          ['ra_process', newId, r.sow || String(newId), 'Record', '', 'Created', r.changedBy || 'system', now]
+        );
+      } catch (_) {}
+    }
+    res.json({ ok: true, id: newId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/process/:id
+router.put('/:id', async (req, res) => {
+  const { id } = req.params;
+  const r = req.body;
+  try {
+    const db = await getDb();
+    const oldRecord = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+    const now = new Date().toISOString();
+    const trackFields = {
+      start_date: r.startDate || '',
+      signed_sow: r.signedSow || '',
+      piw: r.piw || '',
+      active: r.active || '',
+      salesforce_id: r.salesforceId || '',
+      proms_id: r.promsId || '',
+      budget: r.budget || '',
+      open_air_code: r.openAirCode || '',
+      comments: r.comments || '',
+      account_anchor: r.accountAnchor || '',
+    };
+    db.run(
+      `UPDATE ra_process SET start_date=?, signed_sow=?, piw=?, active=?,
+       salesforce_id=?, proms_id=?, budget=?, open_air_code=?, comments=?,
+       account_anchor=?, updated_at=? WHERE id=?`,
+      [...Object.values(trackFields), now, parseInt(id, 10)]
+    );
+    if (oldRecord) {
+      const changedValues = {};
+      for (const [field, newVal] of Object.entries(trackFields)) {
+        const oldVal = oldRecord[field] !== undefined ? String(oldRecord[field] ?? '') : '';
+        if (oldVal !== String(newVal ?? '')) changedValues[field] = newVal;
+      }
+      // Write audit_log for each changed field
+      writeAuditLog(db, parseInt(id, 10), oldRecord.sow || String(id), trackFields, oldRecord, r.changedBy || 'system');
+      const updatedRecord = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+      evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/process - clear ALL
+router.delete('/', async (req, res) => {
+  try {
+    const db = await getDb();
+    const count = db.get('SELECT COUNT(*) as c FROM ra_process');
+    evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    db.run('DELETE FROM ra_process');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/process/:id
+router.delete('/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await getDb();
+    const record = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+    if (record) {
+      const changedBy = req.query.changedBy || req.body?.changedBy || 'system';
+      const label = record.sow || String(record.id);
+      evaluateTriggers(db, 'ra_process', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+    }
+    db.run('DELETE FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;
+
+
+// GET /api/process/:id/resources — resources linked to a process
+router.get('/:id/resources', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const db = await getDb();
+    const rows = db.all(
+      `SELECT id, ra_id, emp_name, piw_role, allocation_status, process_id
+       FROM resources WHERE process_id=? ORDER BY sno`,
+      [parseInt(id, 10)]
+    );
+    res.json({ resources: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // GET /api/process
 router.get('/', async (req, res) => {

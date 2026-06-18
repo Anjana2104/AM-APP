@@ -19,6 +19,7 @@ export interface ProcessPayload {
   openAirCode: string;
   comments: string;
   accountAnchor?: string;
+  changedBy?: string;
 }
 
 let _serverAvailable: boolean | null = null;
@@ -102,3 +103,54 @@ export async function clearAll(changedBy?: string): Promise<boolean> {
   const data = await res.json();
   return data.ok === true;
 }
+
+export async function setActiveStatus(id: number, isActive: boolean, changedBy?: string): Promise<{ ok: boolean; error?: string }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false, error: 'Server unavailable' };
+  const res = await fetch(`${BASE}/${id}/active`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isActive, changedBy }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data.error || 'Failed' };
+  return { ok: true };
+}
+
+export interface ProcessComment {
+  id: number;
+  process_id: number;
+  author: string;
+  body: string;
+  created_at: string;
+}
+
+export async function getComments(id: number): Promise<ProcessComment[]> {
+  try {
+    const res = await fetch(`${BASE}/${id}/comments`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.comments || [];
+  } catch { return []; }
+}
+
+export async function addComment(id: number, payload: { author: string; body: string }): Promise<{ ok: boolean; comment?: ProcessComment; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/${id}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error };
+    return { ok: true, comment: data.comment };
+  } catch (e: any) { return { ok: false, error: e.message }; }
+}
+
+export async function deleteComment(processId: number, commentId: number): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/${processId}/comments/${commentId}`, { method: 'DELETE' });
+    return res.ok;
+  } catch { return false; }
+}
+
