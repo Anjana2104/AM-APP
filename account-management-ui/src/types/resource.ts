@@ -16,6 +16,7 @@ export type ResourceRow = {
   skillType?: string;              // 'Commodity' | 'Specialized'
   engagementStartDate?: string;    // Engagement start date for this resource
   engagementEndDate?: string;      // Engagement end date for this resource
+  sowName?: string;                // Linked SOW name (from ra_process)
   engagement?: string;
   allocationStatus?: string;
   beelineId?: string;

@@ -329,6 +329,25 @@ router.delete('/:id/comments/:commentId', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// DELETE /api/requests/all-comments  - delete ALL request comments
+router.delete('/all-comments', async (req, res) => {
+  try {
+    const db = await getDb();
+    await ensureCommentTable(db);
+    db.run('DELETE FROM request_comments');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/requests/all-audit  - delete ALL audit_log entries for requests module
+router.delete('/all-audit', async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM audit_log WHERE module='client_requests'");
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // DELETE /api/requests - clear ALL
 router.delete('/', async (req, res) => {
   try {

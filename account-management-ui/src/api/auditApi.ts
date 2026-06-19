@@ -29,6 +29,17 @@ export async function getAuditLog(module: string, recordId: number): Promise<Aud
   }
 }
 
+export async function getProcessResourceHistory(processId: number): Promise<AuditEntry[]> {
+  try {
+    const res = await fetch(`${BASE}/process-resources/${processId}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.entries || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function addAuditLog(entry: {
   module: string;
   record_id: number;

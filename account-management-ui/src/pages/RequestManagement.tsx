@@ -442,6 +442,22 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     message.success('All request data cleared');
   };
 
+  const handleClearAllAudit = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/requests/all-audit', { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      message.success('All request audit history deleted');
+    } catch { message.error('Failed to delete audit history'); }
+  };
+
+  const handleClearAllComments = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/requests/all-comments', { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      message.success('All request comments deleted');
+    } catch { message.error('Failed to delete comments'); }
+  };
+
   const handleExportExcel = () => {
     if (!typeFilteredRequests.length) { message.warning('No data to export'); return; }
     const headers = ['S.No', 'Beeline ID', 'Type', 'Description', 'Raised By', 'Processing Status', 'Overall Status', 'Account Anchor', 'Date Raised'];
@@ -706,6 +722,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
   const [allResources, setAllResources] = useState<ResourcePayload[]>([]);
   const [linkResourcesModal, setLinkResourcesModal] = useState<{ open: boolean; request: ClientRequest | null }>({ open: false, request: null });
   const [linkResourcesChecked, setLinkResourcesChecked] = useState<Set<number>>(new Set());
+  const [linkResourcesSearch, setLinkResourcesSearch] = useState('');
   const [savingLinks, setSavingLinks] = useState(false);
   const [loadingLinkResources, setLoadingLinkResources] = useState(false);
 
@@ -739,6 +756,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     setLinkResourcesModal({ open: true, request });
     setLoadingLinkResources(true);
     setLinkResourcesChecked(new Set()); // clear while loading
+    setLinkResourcesSearch('');
     // Refresh resources so beeline IDs are current
     const { resources: rawRes } = await resourceApi.getResources();
     const mapped = rawRes.map(mapResource);
@@ -954,6 +972,35 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
                                   cancelText: 'Cancel',
                                   okButtonProps: { danger: true, size: 'small' },
                                   onOk: handleClearAll,
+                                }),
+                              },
+                            ] : []),
+                            ...(canDelete ? [
+                              { type: 'divider' as const },
+                              {
+                                key: 'deleteAllAudit',
+                                label: <span style={{ fontSize: '11px' }}>Delete All Audit History</span>,
+                                icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+                                danger: true,
+                                onClick: () => Modal.confirm({
+                                  title: 'Delete all request audit history?',
+                                  content: 'This will permanently remove all audit log entries for requests.',
+                                  okText: 'Yes, delete all', cancelText: 'Cancel',
+                                  okButtonProps: { danger: true, size: 'small' },
+                                  onOk: handleClearAllAudit,
+                                }),
+                              },
+                              {
+                                key: 'deleteAllComments',
+                                label: <span style={{ fontSize: '11px' }}>Delete All Comments</span>,
+                                icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+                                danger: true,
+                                onClick: () => Modal.confirm({
+                                  title: 'Delete all request comments?',
+                                  content: 'This will permanently remove all comments across all request records.',
+                                  okText: 'Yes, delete all', cancelText: 'Cancel',
+                                  okButtonProps: { danger: true, size: 'small' },
+                                  onOk: handleClearAllComments,
                                 }),
                               },
                             ] : []),
@@ -1455,24 +1502,55 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
           </span>
         }
         open={linkResourcesModal.open}
-        onCancel={() => setLinkResourcesModal({ open: false, request: null })}
-        onOk={handleSaveLinks}
-        okText="Save Links"
-        confirmLoading={savingLinks}
-        width={480}
+        onCancel={() => { setLinkResourcesModal({ open: false, request: null }); setLinkResourcesSearch(''); }}
+        width={500}
         destroyOnClose
+        footer={[
+          <Button
+            key="unlink-all"
+            size="small"
+            danger
+            disabled={linkResourcesChecked.size === 0}
+            onClick={() => setLinkResourcesChecked(new Set())}
+            style={{ borderRadius: 6, fontSize: '11px', float: 'left' }}
+          >
+            Unlink All
+          </Button>,
+          <span key="count" style={{ fontSize: '11px', color: '#8c8c8c', float: 'left', lineHeight: '24px', marginLeft: 8 }}>
+            {linkResourcesChecked.size} selected
+          </span>,
+          <Button key="cancel" size="small" style={{ borderRadius: 6 }} onClick={() => { setLinkResourcesModal({ open: false, request: null }); setLinkResourcesSearch(''); }}>
+            Cancel
+          </Button>,
+          <Button key="ok" size="small" type="primary" loading={savingLinks} style={{ borderRadius: 6 }} onClick={handleSaveLinks}>
+            Save Links
+          </Button>,
+        ]}
       >
         {linkResourcesModal.request && (
           <Space direction="vertical" style={{ width: '100%' }} size={8}>
-            <div style={{ fontSize: '11px', color: '#8c8c8c' }}>
+            <div style={{ fontSize: '11px', color: '#8c8c8c', background: '#f0f5ff', borderRadius: 6, padding: '8px 12px' }}>
               Select resources to link to <strong>{linkResourcesModal.request.beelineId}</strong>.
               Resources already linked to another Beeline ID will be re-linked to this one.
             </div>
+            <Input.Search
+              placeholder="Search by name or RAID…"
+              size="small"
+              allowClear
+              value={linkResourcesSearch}
+              onChange={e => setLinkResourcesSearch(e.target.value)}
+            />
             <Spin spinning={loadingLinkResources} tip="Loading resources…" size="small">
-              <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, minHeight: 60 }}>
+              <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6, minHeight: 60 }}>
                 {!loadingLinkResources && allResources.length === 0 ? (
                   <div style={{ padding: '20px', textAlign: 'center', color: '#8c8c8c', fontSize: '12px' }}>No resources available</div>
-                ) : allResources.map((r: ResourcePayload) => {
+                ) : allResources
+                  .filter(r => {
+                    if (!linkResourcesSearch.trim()) return true;
+                    const q = linkResourcesSearch.toLowerCase();
+                    return (r.empName || '').toLowerCase().includes(q) || (r.raId || '').toLowerCase().includes(q) || (r.piwRole || r.roleOrDomain || '').toLowerCase().includes(q);
+                  })
+                  .map((r: ResourcePayload) => {
                   const rid = (r as any).id as number;
                   if (!rid) return null;
                   const isChecked = linkResourcesChecked.has(rid);
@@ -1501,9 +1579,6 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
                 })}
               </div>
             </Spin>
-            <div style={{ fontSize: '11px', color: '#595959', fontWeight: 500 }}>
-              {linkResourcesChecked.size} resource(s) selected
-            </div>
           </Space>
         )}
       </Modal>

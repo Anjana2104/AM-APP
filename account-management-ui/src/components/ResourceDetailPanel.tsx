@@ -35,6 +35,7 @@ interface Props {
   onToggleExpand?: () => void;
   onNavigateToRequest?: (beelineId: string) => void;
   onNavigateToInsights?: () => void;
+  onNavigateToProcess?: (sowName: string) => void;
 }
 
 // Clean raw DB audit values — handle null strings, JSON blobs, etc.
@@ -55,7 +56,7 @@ function cleanVal(v: string | null | undefined): string {
   }
 }
 
-export default function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequest, onNavigateToInsights }: Props) {
+export default function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }: Props) {
   const resourceId = resource.id;
   const { getConfigByLink } = useConfig();
 
@@ -171,15 +172,26 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
   };
 
-  const infoFields: Array<[string, string]> = [
+  const fmtDate = (iso: string) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const infoFields: Array<[string, string | React.ReactNode]> = [
     ['RA ID', resource.raId],
     ['Email', resource.emailId],
     ['Role / Domain', resource.roleOrDomain],
     ['Prev Experience', resource.previousWorkex],
-    ['Date of Joining', resource.doj],
+    ['Date of Joining', fmtDate(resource.doj)],
     ['Total Experience', resource.totalWorkex],
     ['Engagement', resource.engagement || '—'],
+    ['Eng. Start Date', fmtDate(resource.engagementStartDate || '')],
+    ['Eng. End Date', fmtDate(resource.engagementEndDate || '')],
     ['Allocation Status', resource.allocationStatus || '—'],
+    ...(resource.beelineId ? [['Beeline ID', <Tag icon={<LinkOutlined />} color="blue" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onNavigateToRequest?.(resource.beelineId!)}>{resource.beelineId}</Tag>] as [string, React.ReactNode]] : []),
+    ...(resource.sowName ? [['Linked SOW', <Tag icon={<LinkOutlined />} color="green" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onNavigateToProcess?.(resource.sowName!)}>{resource.sowName}</Tag>] as [string, React.ReactNode]] : []),
   ];
 
   const skillsList = resource.skills
@@ -356,6 +368,14 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
             </Tag>
           </div>
         )}
+        {resource.sowName && (
+          <div style={{ marginTop: resource.beelineId ? 4 : 6 }}>
+            <Tag icon={<LinkOutlined />} color="green" style={{ fontSize: 10, cursor: 'pointer' }}
+              onClick={() => onNavigateToProcess?.(resource.sowName!)}>
+              SOW: {resource.sowName}
+            </Tag>
+          </div>
+        )}
       </div>
 
       {/* Info grid */}
@@ -364,7 +384,9 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
           {infoFields.map(([label, value]) => (
             <div key={label}>
               <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{label}</Text>
-              <Text style={{ fontSize: 12, fontWeight: 500, wordBreak: 'break-all' }}>{value || '—'}</Text>
+              {typeof value === 'string' || value === undefined || value === null
+                ? <Text style={{ fontSize: 12, fontWeight: 500, wordBreak: 'break-all' }}>{(value as string) || '—'}</Text>
+                : <div style={{ fontSize: 12, fontWeight: 500 }}>{value}</div>}
             </div>
           ))}
         </div>
@@ -412,6 +434,12 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
                   {resource.beelineId}
                 </Tag>
               )}
+              {resource.sowName && (
+                <Tag icon={<LinkOutlined />} color="green" style={{ fontSize: 10, cursor: 'pointer' }}
+                  onClick={() => onNavigateToProcess?.(resource.sowName!)}>
+                  SOW: {resource.sowName}
+                </Tag>
+              )}
             </div>
           </div>
           {/* Info fields in a 4-column horizontal grid */}
@@ -419,7 +447,9 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
             {infoFields.map(([label, value]) => (
               <div key={label}>
                 <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{label}</Text>
-                <Text style={{ fontSize: 11, fontWeight: 500, wordBreak: 'break-all' }}>{value || '—'}</Text>
+                {typeof value === 'string' || value === undefined || value === null
+                  ? <Text style={{ fontSize: 11, fontWeight: 500, wordBreak: 'break-all' }}>{(value as string) || '—'}</Text>
+                  : <div style={{ fontSize: 11, fontWeight: 500 }}>{value}</div>}
               </div>
             ))}
           </div>

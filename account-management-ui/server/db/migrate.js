@@ -125,6 +125,15 @@ async function migrate() {
     )
   `);
 
+  // Add process_id (human-readable PK like P1, P2) to ra_process (idempotent)
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN process_id TEXT DEFAULT NULL`); } catch (_) {}
+  // Backfill existing rows: P1, P2, ... based on internal id
+  try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (_) {}
+  // Add eprev stage column (idempotent)
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN eprev TEXT DEFAULT ''`); } catch (_) {}
+  // Unique partial index for PIW name (non-empty) — prevents duplicate PIW names
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (_) {}
+
   db.run(`
     CREATE TABLE IF NOT EXISTS app_config_types (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -178,4 +187,4 @@ async function migrate() {
   resetDb();
 }
 
-migrate().then(() => process.exit(0)).catch(err => { process.exit(1); });
+migrate().then(() => process.exit(0)).catch(err => { console.error('Migration error:', err); process.exit(1); });

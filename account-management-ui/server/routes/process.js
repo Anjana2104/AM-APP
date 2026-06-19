@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Internal Process (RA Process) API routes
  * Base path: /api/process
  *
@@ -18,6 +18,22 @@ const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/connection');
 const { evaluateTriggers } = require('../utils/triggerEvaluator');
+
+// Ensure all ra_process columns exist (idempotent â€” safe to call on every request)
+function ensureProcessColumns(db) {
+  // Check existing columns first to avoid ALTER TABLE errors
+  const cols = db.all(`PRAGMA table_info(ra_process)`).map(r => r.name);
+  if (!cols.includes('eprev')) {
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN eprev TEXT DEFAULT ''`); } catch (e) { console.error('[ensureProcessColumns] eprev:', e.message); }
+  }
+  if (!cols.includes('process_id')) {
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN process_id TEXT DEFAULT NULL`); } catch (e) { console.error('[ensureProcessColumns] process_id:', e.message); }
+  }
+  try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (e) { console.error('[ensureProcessColumns] backfill:', e.message); }
+  // Unique partial index for PIW (non-empty)
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (_) {}
+}
+
 
 // Ensure process_comments table exists
 function ensureCommentTable(db) {
@@ -49,11 +65,12 @@ function writeAuditLog(db, processId, recordName, trackFields, oldRecord, change
   }
 }
 
-// GET /api/process/:id/resources — resources linked to a process
+// GET /api/process/:id/resources â€” resources linked to a process
 router.get('/:id/resources', async (req, res) => {
   const { id } = req.params;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const rows = db.all(
       `SELECT id, ra_id, emp_name, piw_role, allocation_status, process_id
        FROM resources WHERE process_id=? ORDER BY sno`,
@@ -65,12 +82,13 @@ router.get('/:id/resources', async (req, res) => {
   }
 });
 
-// PATCH /api/process/:id/active — toggle active field
+// PATCH /api/process/:id/active â€” toggle active field
 router.patch('/:id/active', async (req, res) => {
   const { id } = req.params;
   const { isActive, changedBy = 'system' } = req.body;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const existing = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
     if (!existing) return res.status(404).json({ error: 'Not found' });
     const newVal = isActive ? 'Yes' : 'No';
@@ -94,6 +112,7 @@ router.patch('/:id/active', async (req, res) => {
 router.get('/:id/comments', async (req, res) => {
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     ensureCommentTable(db);
     const rows = db.all(
       'SELECT * FROM process_comments WHERE process_id=? ORDER BY created_at ASC',
@@ -111,6 +130,7 @@ router.post('/:id/comments', async (req, res) => {
   if (!body) return res.status(400).json({ error: 'body required' });
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     ensureCommentTable(db);
     db.run(
       'INSERT INTO process_comments (process_id, author, body, created_at) VALUES (?,?,?,?)',
@@ -126,8 +146,31 @@ router.post('/:id/comments', async (req, res) => {
 router.delete('/:id/comments/:cid', async (req, res) => {
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     ensureCommentTable(db);
     db.run('DELETE FROM process_comments WHERE id=? AND process_id=?', [req.params.cid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/process/all-comments  - delete ALL process comments
+router.delete('/all-comments', async (req, res) => {
+  try {
+    const db = await getDb();
+    ensureCommentTable(db);
+    db.run('DELETE FROM process_comments');
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/process/all-audit  - delete ALL audit_log entries for the process module
+router.delete('/all-audit', async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM audit_log WHERE module='ra_process'");
+    db.run("DELETE FROM audit_log WHERE module='process'");
+    // Also clear resource Process Link audit entries
+    db.run("DELETE FROM audit_log WHERE module='resources' AND field='Process Link'");
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -136,6 +179,7 @@ router.delete('/:id/comments/:cid', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
     res.json({ rows });
   } catch (err) {
@@ -151,6 +195,7 @@ router.post('/bulk', async (req, res) => {
   }
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     let inserted = 0, updated = 0;
     const now = new Date().toISOString();
 
@@ -175,12 +220,14 @@ router.post('/bulk', async (req, res) => {
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
         db.run(
           `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-           salesforce_id, proms_id, budget, open_air_code, comments, account_anchor, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [r.sno || sno, sow, r.startDate || '', r.signedSow || '', r.piw || '',
            r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-           r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, now]
+           r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
         );
+        const _bid = db.lastId ? db.lastId() : null;
+        if (_bid) { try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${_bid}`, _bid]); } catch(_) {} }
         inserted++;
       }
     }
@@ -199,18 +246,34 @@ router.post('/', async (req, res) => {
   const r = req.body;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const now = new Date().toISOString();
+
+    // Duplicate SOW check (case-insensitive)
+    if (r.sow) {
+      const sowConflict = db.get('SELECT id FROM ra_process WHERE LOWER(sow) = LOWER(?)', [r.sow]);
+      if (sowConflict) return res.status(409).json({ error: `SOW name "${r.sow}" already exists. Please use a unique SOW name.` });
+    }
+    // Duplicate PIW check (non-empty, case-insensitive)
+    if (r.piw && r.piw.trim()) {
+      const piwConflict = db.get('SELECT id, sow FROM ra_process WHERE LOWER(piw) = LOWER(?)', [r.piw.trim()]);
+      if (piwConflict) return res.status(409).json({ error: `PIW name "${r.piw}" already exists (on SOW: ${piwConflict.sow}). Please use a unique PIW name.` });
+    }
     const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
     const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
     db.run(
       `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-       salesforce_id, proms_id, budget, open_air_code, comments, account_anchor, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [r.sno || sno, r.sow || '', r.startDate || '', r.signedSow || '', r.piw || '',
        r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-       r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, now]
+       r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
     );
     const newId = db.lastId ? db.lastId() : null;
+    // Set human-readable process_id: P1, P2, ...
+    if (newId) {
+      try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${newId}`, newId]); } catch (_) {}
+    }
     // Audit: record creation
     if (newId) {
       try {
@@ -233,9 +296,24 @@ router.put('/:id', async (req, res) => {
   const r = req.body;
   try {
     const db = await getDb();
-    const oldRecord = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+    ensureProcessColumns(db);
+    const numId = parseInt(id, 10);
+
+    // Duplicate SOW check (case-insensitive, excluding current record)
+    if (r.sow) {
+      const sowConflict = db.get('SELECT id FROM ra_process WHERE LOWER(sow) = LOWER(?) AND id != ?', [r.sow, numId]);
+      if (sowConflict) return res.status(409).json({ error: `SOW name "${r.sow}" already exists. Please use a unique SOW name.` });
+    }
+    // Duplicate PIW check (non-empty, case-insensitive, excluding current record)
+    if (r.piw && r.piw.trim()) {
+      const piwConflict = db.get('SELECT id, sow FROM ra_process WHERE LOWER(piw) = LOWER(?) AND id != ?', [r.piw.trim(), numId]);
+      if (piwConflict) return res.status(409).json({ error: `PIW name "${r.piw}" already exists (on SOW: ${piwConflict.sow}). Please use a unique PIW name.` });
+    }
+
+    const oldRecord = db.get('SELECT * FROM ra_process WHERE id=?', [numId]);
     const now = new Date().toISOString();
     const trackFields = {
+      sow: r.sow || '',
       start_date: r.startDate || '',
       signed_sow: r.signedSow || '',
       piw: r.piw || '',
@@ -244,14 +322,15 @@ router.put('/:id', async (req, res) => {
       proms_id: r.promsId || '',
       budget: r.budget || '',
       open_air_code: r.openAirCode || '',
+      eprev: r.eprev || '',
       comments: r.comments || '',
       account_anchor: r.accountAnchor || '',
     };
     db.run(
-      `UPDATE ra_process SET start_date=?, signed_sow=?, piw=?, active=?,
-       salesforce_id=?, proms_id=?, budget=?, open_air_code=?, comments=?,
+      `UPDATE ra_process SET sow=?, start_date=?, signed_sow=?, piw=?, active=?,
+       salesforce_id=?, proms_id=?, budget=?, open_air_code=?, eprev=?, comments=?,
        account_anchor=?, updated_at=? WHERE id=?`,
-      [...Object.values(trackFields), now, parseInt(id, 10)]
+      [...Object.values(trackFields), now, numId]
     );
     if (oldRecord) {
       const changedValues = {};
@@ -260,8 +339,8 @@ router.put('/:id', async (req, res) => {
         if (oldVal !== String(newVal ?? '')) changedValues[field] = newVal;
       }
       // Write audit_log for each changed field
-      writeAuditLog(db, parseInt(id, 10), oldRecord.sow || String(id), trackFields, oldRecord, r.changedBy || 'system');
-      const updatedRecord = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
+      writeAuditLog(db, numId, oldRecord.sow || String(id), trackFields, oldRecord, r.changedBy || 'system');
+      const updatedRecord = db.get('SELECT * FROM ra_process WHERE id=?', [numId]);
       evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
     }
     res.json({ ok: true });
@@ -274,6 +353,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/', async (req, res) => {
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const count = db.get('SELECT COUNT(*) as c FROM ra_process');
     evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
     db.run('DELETE FROM ra_process');
@@ -288,6 +368,7 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const record = db.get('SELECT * FROM ra_process WHERE id=?', [parseInt(id, 10)]);
     if (record) {
       const changedBy = req.query.changedBy || req.body?.changedBy || 'system';
@@ -304,11 +385,12 @@ router.delete('/:id', async (req, res) => {
 module.exports = router;
 
 
-// GET /api/process/:id/resources — resources linked to a process
+// GET /api/process/:id/resources â€” resources linked to a process
 router.get('/:id/resources', async (req, res) => {
   const { id } = req.params;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const rows = db.all(
       `SELECT id, ra_id, emp_name, piw_role, allocation_status, process_id
        FROM resources WHERE process_id=? ORDER BY sno`,
@@ -324,6 +406,7 @@ router.get('/:id/resources', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
     res.json({ rows });
   } catch (err) {
@@ -339,6 +422,7 @@ router.post('/bulk', async (req, res) => {
   }
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     let inserted = 0, updated = 0;
     const now = new Date().toISOString();
 
@@ -363,12 +447,14 @@ router.post('/bulk', async (req, res) => {
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
         db.run(
           `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-           salesforce_id, proms_id, budget, open_air_code, comments, account_anchor, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [r.sno || sno, sow, r.startDate || '', r.signedSow || '', r.piw || '',
            r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-           r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, now]
+           r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
         );
+        const _bid = db.lastId ? db.lastId() : null;
+        if (_bid) { try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${_bid}`, _bid]); } catch(_) {} }
         inserted++;
       }
     }
@@ -387,16 +473,17 @@ router.post('/', async (req, res) => {
   const r = req.body;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const now = new Date().toISOString();
     const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
     const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
     db.run(
       `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-       salesforce_id, proms_id, budget, open_air_code, comments, account_anchor, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [r.sno || sno, r.sow || '', r.startDate || '', r.signedSow || '', r.piw || '',
        r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-       r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, now]
+       r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
     );
     res.json({ ok: true, id: db.lastId() });
   } catch (err) {
@@ -410,6 +497,7 @@ router.put('/:id', async (req, res) => {
   const r = req.body;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const oldRecord = db.get('SELECT * FROM ra_process WHERE id=?', [id]);
     const now = new Date().toISOString();
     const trackFields = {
@@ -449,6 +537,7 @@ router.put('/:id', async (req, res) => {
 router.delete('/', async (req, res) => {
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const count = db.get('SELECT COUNT(*) as c FROM ra_process');
     evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
     db.run('DELETE FROM ra_process');
@@ -463,6 +552,7 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const db = await getDb();
+    ensureProcessColumns(db);
     const record = db.get('SELECT * FROM ra_process WHERE id=?', [id]);
     if (record) {
       const changedBy = req.query.changedBy || req.body?.changedBy || 'system';

@@ -562,6 +562,7 @@ export default function App() {
   const [resourceInfoFilterType, setResourceInfoFilterType] = useState<string | undefined>(undefined);
   const [resourceInfoFilterValue, setResourceInfoFilterValue] = useState<string | undefined>(undefined);
   const [requestsBeelineFilter, setRequestsBeelineFilter] = useState<string | undefined>(undefined);
+  const [initialProcessSow, setInitialProcessSow] = useState<string | undefined>(undefined);
 
   // Load resources on mount so EngagementMapping and ResourceInsights work without visiting ResourceInformation first
   useEffect(() => {
@@ -594,25 +595,54 @@ export default function App() {
   useEffect(() => {
     if (prevAuthRef.current === false && isAuthenticated) {
       // Genuine login — go to home
+      window.history.replaceState({ module: 'home' }, '', '#/home');
       setActiveModule('home');
-      window.location.hash = '#/home';
     }
     prevAuthRef.current = isAuthenticated;
   }, [isAuthenticated]);
 
-  // Sync state → URL
+  // Replace initial history entry so popstate works on first back press
   useEffect(() => {
-    const target = toHash(activeModule, activePage);
-    if (window.location.hash !== target) window.location.hash = target.slice(1);
-  }, [activeModule, activePage]);
+    if (!window.history.state) {
+      window.history.replaceState({ module: activeModule, page: activePage }, '', `#${activePage}`);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
+  // ── Browser history support ────────────────────────────────────────────────
+  // Push state on navigate; restore on popstate (browser Back/Forward)
   const navigateTo = (page: EAMPage, section: EAMSection) => {
+    const prev = { module: activeModule, page: activePage };
+    window.history.pushState({ module: 'eam', page, prev }, '', `#${page}`);
     setActivePage(page);
-    setExpandedSections(prev => new Set([...prev, section]));
+    setExpandedSections(s => new Set([...s, section]));
     setActiveModule('eam');
   };
 
-  const goHome = () => setActiveModule('home');
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const state = e.state as { module?: string; page?: EAMPage } | null;
+      if (state?.module === 'eam' && state.page) {
+        setActivePage(state.page);
+        setActiveModule('eam');
+        setExpandedSections(s => new Set([...s, PAGE_SECTION_MAP[state.page!]]));
+      } else if (state?.module === 'home') {
+        setActiveModule('home');
+      } else {
+        // No state — parse hash as fallback
+        const h = parseHash();
+        setActivePage(h.page);
+        setActiveModule(h.module);
+      }
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  const goHome = () => {
+    window.history.pushState({ module: 'home' }, '', '#/home');
+    setActiveModule('home');
+  };
 
   const toggleSection = (section: EAMSection) => {
     setExpandedSections(prev => {
@@ -646,11 +676,11 @@ export default function App() {
         case 'executive_summary':    return <FinanceSummary onNavigate={page => navigateTo(page, 'executive')} />;
         case 'executive_revenue':     return <FinanceManagement />;
         case 'executive_invoicing':   return <InvoiceManagement />;
-        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} initialRoleFilter={resourceInfoRoleFilter} initialRaIdFilter={resourceInfoRaIdFilter} initialFilterType={resourceInfoFilterType} initialFilterValue={resourceInfoFilterValue} onFilterApplied={() => { setResourceInfoRoleFilter(undefined); setResourceInfoRaIdFilter(undefined); setResourceInfoFilterType(undefined); setResourceInfoFilterValue(undefined); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
+        case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} initialRoleFilter={resourceInfoRoleFilter} initialRaIdFilter={resourceInfoRaIdFilter} initialFilterType={resourceInfoFilterType} initialFilterValue={resourceInfoFilterValue} onFilterApplied={() => { setResourceInfoRoleFilter(undefined); setResourceInfoRaIdFilter(undefined); setResourceInfoFilterType(undefined); setResourceInfoFilterValue(undefined); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} onNavigateToProcess={(sow) => { setInitialProcessSow(sow); navigateTo('clientmgmt_connects', 'clientmgmt'); }} />;
         case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} onNavigate={(page, roleFilter) => { setResourceInfoRoleFilter(roleFilter); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
-        case 'resources_insights':    return <ResourceInsights resources={resources} onNavigate={(page, raId) => { if (raId) setResourceInfoRaIdFilter(raId); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateWithFilter={(type, value) => { setResourceInfoFilterType(type); setResourceInfoFilterValue(value); navigateTo('resources_info', PAGE_SECTION_MAP['resources_info']); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} />;
+        case 'resources_insights':    return <ResourceInsights resources={resources} onNavigate={(page, raId) => { if (raId) setResourceInfoRaIdFilter(raId); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateWithFilter={(type, value) => { setResourceInfoFilterType(type); setResourceInfoFilterValue(value); navigateTo('resources_info', PAGE_SECTION_MAP['resources_info']); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToProcess={(sow) => { setInitialProcessSow(sow); navigateTo('clientmgmt_connects', 'clientmgmt'); }} />;
         case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} onFilterApplied={() => setRequestsBeelineFilter(undefined)} />;
-        case 'clientmgmt_connects':   return <InternalProcess resources={resources} />;
+        case 'clientmgmt_connects':   return <InternalProcess resources={resources} initialSow={initialProcessSow} />;
         case 'information_ratecard':      return <RateCard />;
         case 'information_teamhierarchy': return <TeamHierarchy />;
         case 'information_codeguide':        return <CodeGuide />;
@@ -837,9 +867,9 @@ export default function App() {
                   expanded={isExp('executive')}
                   onToggle={() => toggleSection('executive')}
                 >
-                  {hasPermission('executive_summary', 'view') && <SubNavItem label="Summary" active={activePage === 'executive_summary'} onClick={() => { setActivePage('executive_summary'); setActiveModule('eam'); }} />}
-                  {hasPermission('executive_revenue', 'view') && <SubNavItem label="SOW Details" active={activePage === 'executive_revenue'} onClick={() => { setActivePage('executive_revenue'); setActiveModule('eam'); }} />}
-                  {hasPermission('executive_invoicing', 'view') && <SubNavItem label="Invoicing Details" active={activePage === 'executive_invoicing'} onClick={() => { setActivePage('executive_invoicing'); setActiveModule('eam'); }} />}
+                  {hasPermission('executive_summary', 'view') && <SubNavItem label="Summary" active={activePage === 'executive_summary'} onClick={() => navigateTo('executive_summary', 'executive')} />}
+                  {hasPermission('executive_revenue', 'view') && <SubNavItem label="SOW Details" active={activePage === 'executive_revenue'} onClick={() => navigateTo('executive_revenue', 'executive')} />}
+                  {hasPermission('executive_invoicing', 'view') && <SubNavItem label="Invoicing Details" active={activePage === 'executive_invoicing'} onClick={() => navigateTo('executive_invoicing', 'executive')} />}
                 </SideNavGroup>
                 )}
 
@@ -851,9 +881,9 @@ export default function App() {
                   expanded={isExp('resources')}
                   onToggle={() => toggleSection('resources')}
                 >
-                  {hasPermission('resources_info', 'view') && <SubNavItem label="Resource Hub" active={activePage === 'resources_info'} onClick={() => { setActivePage('resources_info'); setActiveModule('eam'); }} />}
-                  {hasPermission('resources_insights', 'view') && <SubNavItem label="Resource Intelligence" active={activePage === 'resources_insights'} onClick={() => { setActivePage('resources_insights'); setActiveModule('eam'); }} />}
-                  {hasPermission('resources_utilization', 'view') && <SubNavItem label="Engagement Mapping" active={activePage === 'resources_utilization'} onClick={() => { setActivePage('resources_utilization'); setActiveModule('eam'); }} />}
+                  {hasPermission('resources_info', 'view') && <SubNavItem label="Resource Hub" active={activePage === 'resources_info'} onClick={() => navigateTo('resources_info', 'resources')} />}
+                  {hasPermission('resources_insights', 'view') && <SubNavItem label="Resource Intelligence" active={activePage === 'resources_insights'} onClick={() => navigateTo('resources_insights', 'resources')} />}
+                  {hasPermission('resources_utilization', 'view') && <SubNavItem label="Engagement Mapping" active={activePage === 'resources_utilization'} onClick={() => navigateTo('resources_utilization', 'resources')} />}
                 </SideNavGroup>
                 )}
 
@@ -865,7 +895,7 @@ export default function App() {
                   expanded={isExp('clientmgmt')}
                   onToggle={() => toggleSection('clientmgmt')}
                 >
-                  <SubNavItem label="Requests" active={activePage === 'clientmgmt_requests'} onClick={() => { setActivePage('clientmgmt_requests'); setActiveModule('eam'); }} />
+                  <SubNavItem label="Requests" active={activePage === 'clientmgmt_requests'} onClick={() => navigateTo('clientmgmt_requests', 'clientmgmt')} />
                 </SideNavGroup>
                 )}
 
@@ -918,10 +948,10 @@ export default function App() {
                   expanded={isExp('information')}
                   onToggle={() => toggleSection('information')}
                 >
-                  {hasPermission('information_ratecard', 'view') && <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => { setActivePage('information_ratecard'); setActiveModule('eam'); }} />}
-                  {hasPermission('information_teamhierarchy', 'view') && <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => { setActivePage('information_teamhierarchy'); setActiveModule('eam'); }} />}
-                  {hasPermission('information_process', 'view') && <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => { setActivePage('information_process'); setActiveModule('eam'); }} />}
-                  {hasPermission('information_codeguide', 'view') && <SubNavItem label="Code Guide" active={activePage === 'information_codeguide'} onClick={() => { setActivePage('information_codeguide'); setActiveModule('eam'); }} />}
+                  {hasPermission('information_ratecard', 'view') && <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => navigateTo('information_ratecard', 'information')} />}
+                  {hasPermission('information_teamhierarchy', 'view') && <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => navigateTo('information_teamhierarchy', 'information')} />}
+                  {hasPermission('information_process', 'view') && <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => navigateTo('information_process', 'information')} />}
+                  {hasPermission('information_codeguide', 'view') && <SubNavItem label="Code Guide" active={activePage === 'information_codeguide'} onClick={() => navigateTo('information_codeguide', 'information')} />}
                 </SideNavGroup>
                 )}
 

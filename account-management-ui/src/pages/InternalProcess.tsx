@@ -7,6 +7,8 @@
  * Page ID: clientmgmt_connects
  */
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 import * as processApi from '../api/processApi';
 import * as templateApi from '../api/templateApi';
 import * as piwApi from '../api/piwApi';
@@ -16,7 +18,7 @@ import ProcessDetailPanel from '../components/ProcessDetailPanel';
 import {
   Tabs, Typography, Empty, Table, Button, Space, Tooltip, Upload, message,
   Drawer, Checkbox, Input, Select, Modal, Form, Tag, Popconfirm, Switch, Card,
-  Steps, Dropdown, Spin, Divider, Row, Col,
+  Steps, Dropdown, Spin, Divider, Row, Col, Alert,
 } from 'antd';
 import {
   NodeIndexOutlined, FileProtectOutlined, IdcardOutlined,
@@ -24,9 +26,9 @@ import {
   PlusOutlined, EditOutlined, DeleteOutlined, TableOutlined,
   ClearOutlined, CheckCircleFilled, RightOutlined,
   BarChartOutlined, InboxOutlined, UserOutlined, EllipsisOutlined,
-  ShareAltOutlined, FileExcelOutlined, FileWordOutlined,
+  ShareAltOutlined, FileExcelOutlined, FileWordOutlined, FilePdfOutlined,
   LinkOutlined, TeamOutlined, MoreOutlined, ExpandAltOutlined, ShrinkOutlined,
-  HistoryOutlined, CommentOutlined, InfoCircleOutlined, StopOutlined, CheckOutlined,
+  HistoryOutlined, CommentOutlined, InfoCircleOutlined, StopOutlined, CheckOutlined, ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useConfig } from '../context/ConfigContext';
 import {
@@ -83,6 +85,7 @@ interface PiwResourceEntry {
 interface ProcessRow {
   key: string;
   id?: number;
+  processId?: string;
   sno: number;
   startDate: string;
   sow: string;
@@ -93,6 +96,7 @@ interface ProcessRow {
   promsId: string;
   budget: string;
   openAirCode: string;
+  eprev: string;
   comments: string;
   sowFile?: File;
   accountAnchor?: string;
@@ -100,7 +104,7 @@ interface ProcessRow {
 
 // --- Auto-derive status ---
 function deriveStatus(r: ProcessRow): 'Not Started' | 'In Progress' | 'Completed' {
-  if (r.openAirCode?.trim()) return 'Completed';
+  if (r.openAirCode?.trim() || r.eprev?.trim() === 'Yes') return 'Completed';
   if (r.signedSow?.trim() === 'Yes' || r.piw?.trim() || r.salesforceId?.trim() || r.promsId?.trim() || r.budget?.trim()) return 'In Progress';
   return 'Not Started';
 }
@@ -126,6 +130,7 @@ const COL_KEYS: { key: keyof ProcessRow; label: string }[] = [
   { key: 'salesforceId', label: 'Salesforce ID' },
   { key: 'promsId',      label: 'PROMS ID' },
   { key: 'budget',       label: 'Budget (INR)' },
+  { key: 'eprev',        label: 'Eprev' },
   { key: 'openAirCode',  label: 'Open Air Code' },
   { key: 'comments',     label: 'Comments' },
   { key: 'accountAnchor', label: 'Account Anchor' },
@@ -139,9 +144,10 @@ const PIPELINE_STAGES = [
   { key: 'sf',      label: 'SF Opportunity', desc: 'Salesforce ID created',      field: (r: ProcessRow) => r.salesforceId },
   { key: 'proms',   label: 'PROMS / Budget', desc: 'PROMS ID + Budget set',      field: (r: ProcessRow) => r.promsId || r.budget },
   { key: 'openair', label: 'Open Air Code',  desc: 'Final OA code assigned',     field: (r: ProcessRow) => r.openAirCode },
+  { key: 'eprev',   label: 'Eprev',          desc: 'E-Preview completed',        field: (r: ProcessRow) => r.eprev === 'Yes' ? 'Yes' : '' },
 ];
 
-const STAGE_COLORS = ['#1890ff', '#13c2c2', '#722ed1', '#fa8c16', '#eb2f96', '#52c41a'];
+const STAGE_COLORS = ['#1890ff', '#13c2c2', '#722ed1', '#fa8c16', '#eb2f96', '#a0d911', '#52c41a'];
 
 // --- Date helpers ---
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -182,6 +188,24 @@ function monthSortKey(my: string): number {
   const m = my.match(/([A-Za-z]{3})-?(\d{4})/);
   if (!m) return 0;
   return parseInt(m[2]) * 100 + MONTH_NAMES.indexOf(m[1]);
+}
+
+// Full date sort key (YYYYMMDD numeric) — handles "DD-Mon-YY" and "DD-Mon-YYYY"
+function dateSortKey(dateStr: string): number {
+  if (!dateStr?.trim()) return 0;
+  // Match DD-Mon-YY or DD-Mon-YYYY
+  const m = dateStr.match(/(\d{1,2})[- ]([A-Za-z]{3})[- ](\d{2,4})/);
+  if (m) {
+    const day = parseInt(m[1]);
+    const mon = MONTH_NAMES.indexOf(m[2].charAt(0).toUpperCase() + m[2].slice(1).toLowerCase());
+    const yr = m[3].length === 2 ? 2000 + parseInt(m[3]) : parseInt(m[3]);
+    if (mon === -1) return 0;
+    return yr * 10000 + (mon + 1) * 100 + day;
+  }
+  // Fallback: try native Date parse
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  return 0;
 }
 
 // --- Download file helper ---
@@ -313,6 +337,506 @@ function PipelineCard({ r, onView, onEdit, onDelete, onLinkResources, onToggleAc
   );
 }
 
+// --- Process Detail View Tab ---
+function ProcessDetailView({ rows, initialSow }: { rows: ProcessRow[]; initialSow?: string }) {
+  const [selectedSow, setSelectedSow] = useState<string | null>(initialSow || null);
+  const [linkedResources, setLinkedResources] = useState<ResourceRow[]>([]);
+  const [timelineEntries, setTimelineEntries] = useState<{ type: 'added' | 'removed'; name: string; raId: string; date: string; by: string }[]>([]);
+  const [processComments, setProcessComments] = useState<{ id: number; author: string; body: string; created_at: string }[]>([]);
+  const [auditEntries, setAuditEntries] = useState<{ id: number; field: string; old_value: string; new_value: string; changed_by: string; changed_at: string }[]>([]);
+  const [loadingRes, setLoadingRes] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const detailRef = useRef<HTMLDivElement>(null);
+
+  const selectedRow = useMemo(() => rows.find(r => r.sow === selectedSow) || null, [rows, selectedSow]);
+
+  useEffect(() => {
+    if (!selectedRow?.id) { setLinkedResources([]); setTimelineEntries([]); setProcessComments([]); setAuditEntries([]); return; }
+    setLoadingRes(true);
+
+    const pid = selectedRow.id!;
+    Promise.all([
+      resourceApi.getResources(),
+      import('../api/auditApi').then(m => m.getProcessResourceHistory(pid)),
+      fetch(`http://localhost:3001/api/process/${pid}/comments`).then(r => r.json()).catch(() => ({ comments: [] })),
+      fetch(`http://localhost:3001/api/audit/process-combined/${pid}`).then(r => r.json()).catch(() => ({ entries: [] })),
+    ]).then(([{ resources: all }, auditRaw, commentsData, auditData]) => {
+      // Current linked resources
+      const linked = (all as any[])
+        .filter(r => r.process_id === pid || r.processId === pid)
+        .map((r: any) => ({
+          key: String(r.id || r.ra_id || r.raId),
+          id: r.id,
+          sno: String(r.sno || ''),
+          raId: String(r.ra_id || r.raId || ''),
+          empName: String(r.emp_name || r.empName || ''),
+          emailId: String(r.email_id || r.emailId || ''),
+          piwRole: String(r.piw_role || r.piwRole || ''),
+          roleOrDomain: String(r.role_or_domain || r.roleOrDomain || ''),
+          previousWorkex: String(r.previous_workex || r.previousWorkex || ''),
+          doj: String(r.doj || ''),
+          totalWorkex: String(r.total_workex || r.totalWorkex || ''),
+          skills: String(r.skills || ''),
+          engagement: String(r.engagement || ''),
+          allocationStatus: String(r.allocation_status || r.allocationStatus || ''),
+          engagementStartDate: String(r.engagement_start_date || r.engagementStartDate || ''),
+          engagementEndDate: String(r.engagement_end_date || r.engagementEndDate || ''),
+        }));
+      setLinkedResources(linked);
+
+      // Build timeline from audit log
+      const pidStr = String(pid);
+      const events = (auditRaw || []).map((e: any) => {
+        const parts = String(e.record_name || '').split(' - ');
+        const raId = parts[0]?.trim() || '';
+        const name = parts.slice(1).join(' - ').trim() || e.record_name || '';
+        const type: 'added' | 'removed' = String(e.new_value) === pidStr ? 'added' : 'removed';
+        const dt = e.changed_at || '';
+        const date = dt.slice(0, 10);
+        return { type, name, raId, date, by: e.changed_by || '' };
+      });
+      events.sort((a, b) => a.date.localeCompare(b.date));
+      setTimelineEntries(events);
+
+      // Comments
+      setProcessComments(commentsData.comments || []);
+
+      // Combined audit entries (process fields + resource linking + engagement dates)
+      setAuditEntries(auditData.entries || []);
+    }).finally(() => setLoadingRes(false));
+  }, [selectedRow?.id, refreshKey]);
+
+  // Group timeline events by date, keeping only unique resources per segment
+  const timelineGroups = useMemo(() => {
+    // For each date, track the LAST event per resource (last action = final state for the day)
+    // timelineEntries is sorted ASC by changed_at, so iterating in order means last .set() wins
+    const dateMap = new Map<string, Map<string, typeof timelineEntries[0]>>();
+    timelineEntries.forEach(e => {
+      if (!dateMap.has(e.date)) dateMap.set(e.date, new Map());
+      const key = e.raId || e.name;
+      dateMap.get(e.date)!.set(key, e); // overwrite → last event wins
+    });
+
+    const groups: { date: string; added: typeof timelineEntries; removed: typeof timelineEntries }[] = [];
+    dateMap.forEach((resourceMap, date) => {
+      const added: typeof timelineEntries = [];
+      const removed: typeof timelineEntries = [];
+      resourceMap.forEach(e => (e.type === 'added' ? added : removed).push(e));
+      groups.push({ date, added, removed });
+    });
+    groups.sort((a, b) => a.date.localeCompare(b.date));
+    return groups;
+  }, [timelineEntries]);
+
+  // Running count snapshot
+  const runningState = useMemo(() => {
+    const active = new Set<string>();
+    return timelineGroups.map(g => {
+      g.added.forEach(e => active.add(e.raId || e.name));
+      g.removed.forEach(e => active.delete(e.raId || e.name));
+      return active.size;
+    });
+  }, [timelineGroups]);
+
+  const fmtDate = (iso: string) => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  };
+
+  const handleExportPdf = async () => {
+    if (!detailRef.current || !selectedRow) return;
+    setExportingPdf(true);
+    try {
+      const canvas = await html2canvas(detailRef.current, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#f5f5f5',
+        scrollY: -window.scrollY,
+        windowWidth: detailRef.current.scrollWidth,
+        windowHeight: detailRef.current.scrollHeight,
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const margin = 10;
+      const imgW = pageW - margin * 2;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      let yPos = margin;
+      let heightLeft = imgH;
+      pdf.addImage(imgData, 'PNG', margin, yPos, imgW, imgH);
+      heightLeft -= (pageH - margin * 2);
+      while (heightLeft > 0) {
+        yPos = heightLeft - imgH + margin;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', margin, yPos, imgW, imgH);
+        heightLeft -= (pageH - margin * 2);
+      }
+      pdf.save(`${selectedRow.sow.replace(/[^a-zA-Z0-9]/g, '_')}_DetailView.pdf`);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
+
+  const handleExportWord = () => {
+    if (!selectedRow) return;
+    const timelineHtml = timelineGroups.length > 0
+      ? timelineGroups.map((g, gi) => `
+          <p style="margin:6px 0 2px"><b>${fmtDate(g.date)}</b> &mdash; ${runningState[gi]} resource${runningState[gi] !== 1 ? 's' : ''} active</p>
+          ${g.added.length > 0 ? `<p style="color:green;margin:2px 0">+ Added: ${g.added.map(e => `${e.name}${e.raId ? ` (${e.raId})` : ''}`).join(', ')}</p>` : ''}
+          ${g.removed.length > 0 ? `<p style="color:red;margin:2px 0">&minus; Removed: ${g.removed.map(e => `${e.name}${e.raId ? ` (${e.raId})` : ''}`).join(', ')}</p>` : ''}
+        `).join('')
+      : '<p><i>No resource history recorded.</i></p>';
+
+    const currentHtml = linkedResources.length > 0
+      ? linkedResources.map(r => `<li>${r.empName} (${r.raId})</li>`).join('')
+      : '<li><i>None</i></li>';
+
+    const commentsHtml = processComments.length > 0
+      ? `<table><tr><th>Author</th><th>Comment</th><th>Date</th></tr>${processComments.map(c => `<tr><td>${c.author || '—'}</td><td>${c.body}</td><td>${fmtDate(c.created_at)}</td></tr>`).join('')}</table>`
+      : '<p><i>No comments found.</i></p>';
+
+    const auditHtml = auditEntries.length > 0
+      ? `<table><tr><th>Source</th><th>Field</th><th>Resource / Old Value</th><th>New Value</th><th>Changed By</th><th>Date</th></tr>${auditEntries.map(e => `<tr><td>${(e as any).source || 'Process'}</td><td>${e.field}</td><td>${(e as any).source === 'Resource Link' ? (e.new_value || '—') : ((e as any).source === 'Resource Date' ? ((e as any).record_name || '—') : (e.old_value || '—'))}</td><td>${(e as any).source === 'Resource Link' ? '' : (e.new_value || '—')}</td><td>${e.changed_by || '—'}</td><td>${fmtDate(e.changed_at)}</td></tr>`).join('')}</table>`
+      : '<p><i>No audit log entries found.</i></p>';
+
+    const html = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word'>
+      <head><meta charset="utf-8"><title>${selectedRow.sow}</title>
+      <style>body{font-family:Calibri,sans-serif;font-size:11pt;} h2{font-size:14pt;} h3{font-size:12pt;} table{border-collapse:collapse;width:100%;margin-bottom:10pt;} td,th{border:1px solid #ccc;padding:4px 8px;font-size:10pt;} th{background:#f0f0f0;font-weight:bold;}</style>
+      </head><body>
+      <h2>${selectedRow.sow}</h2>
+      <p><b>Status:</b> ${deriveStatus(selectedRow)} &nbsp; <b>Active:</b> ${selectedRow.active}</p>
+      <h3>SOW Details</h3>
+      <table>
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td>Start Date</td><td>${selectedRow.startDate || '—'}</td></tr>
+        <tr><td>Signed SOW</td><td>${selectedRow.signedSow || '—'}</td></tr>
+        <tr><td>PIW</td><td>${selectedRow.piw || '—'}</td></tr>
+        <tr><td>Salesforce ID</td><td>${selectedRow.salesforceId || '—'}</td></tr>
+        <tr><td>PROMS ID</td><td>${selectedRow.promsId || '—'}</td></tr>
+        <tr><td>Budget (INR)</td><td>${selectedRow.budget || '—'}</td></tr>
+        <tr><td>Open Air Code</td><td>${selectedRow.openAirCode || '—'}</td></tr>
+        <tr><td>Eprev</td><td>${selectedRow.eprev || '—'}</td></tr>
+        <tr><td>Account Anchor</td><td>${selectedRow.accountAnchor || '—'}</td></tr>
+        <tr><td>Comments</td><td>${selectedRow.comments || '—'}</td></tr>
+      </table>
+      <h3>Resource History</h3>
+      ${timelineHtml}
+      <h3>Currently Linked Resources</h3>
+      <ul>${currentHtml}</ul>
+      <h3>Comments (${processComments.length})</h3>
+      ${commentsHtml}
+      <h3>Audit Log (${auditEntries.length})</h3>
+      ${auditHtml}
+      </body></html>`;
+
+    const blob = new Blob([html], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedRow.sow.replace(/[^a-zA-Z0-9]/g, '_')}_DetailView.doc`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const DetailItem = ({ label, value }: { label: string; value: string }) => (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 6 }}>
+      <Text type="secondary" style={{ fontSize: '11px', minWidth: 120, flexShrink: 0 }}>{label}</Text>
+      <Text style={{ fontSize: '11px', fontWeight: 500, wordBreak: 'break-word' }}>{value || '—'}</Text>
+    </div>
+  );
+
+  if (rows.length === 0) {
+    return (
+      <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '60px 0', textAlign: 'center' }}>
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={<Text type="secondary" style={{ fontSize: '12px' }}>No process records yet.</Text>}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Search bar */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <Text style={{ fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}>Search SOW:</Text>
+        <Select
+          showSearch allowClear style={{ width: 380 }} size="small"
+          placeholder="Type to search SOW name…"
+          value={selectedSow || undefined}
+          onChange={v => { setSelectedSow(v || null); setRefreshKey(k => k + 1); }}
+          options={rows.map(r => ({ value: r.sow, label: r.sow }))}
+          filterOption={(input, opt) => String(opt?.label || '').toLowerCase().includes(input.toLowerCase())}
+        />
+        {selectedRow && (
+          <Tooltip title="Refresh history">
+            <Button size="small" icon={<HistoryOutlined />} onClick={() => setRefreshKey(k => k + 1)} loading={loadingRes} />
+          </Tooltip>
+        )}
+        {selectedRow && (
+          <Tooltip title="Export Word">
+            <Button size="small" icon={<FileWordOutlined style={{ color: '#1677ff' }} />} onClick={handleExportWord} />
+          </Tooltip>
+        )}
+        {selectedRow && (
+          <Tooltip title="Export PDF">
+            <Button size="small" icon={<FilePdfOutlined style={{ color: '#cf1322' }} />} onClick={handleExportPdf} loading={exportingPdf} />
+          </Tooltip>
+        )}
+      </div>
+
+      {!selectedSow && (
+        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '50px 0', textAlign: 'center' }}>
+          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={<Text type="secondary" style={{ fontSize: '12px' }}>Select a SOW to view its details and resource history.</Text>}
+          />
+        </div>
+      )}
+
+      {selectedRow && (
+        <div ref={detailRef} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <>
+          {/* SOW Details Card */}
+          <Card size="small"
+            title={<Space size={6}><FileProtectOutlined style={{ color: '#1677ff' }} /><Text style={{ fontSize: '12px', fontWeight: 600 }}>{selectedRow.sow}</Text></Space>}
+            extra={<Tag color={STATUS_COLORS[deriveStatus(selectedRow)]} style={{ fontSize: '11px' }}>{deriveStatus(selectedRow)}</Tag>}
+            style={{ borderRadius: 10 }}
+          >
+            <Row gutter={[16, 0]}>
+              <Col span={12}>
+                <DetailItem label="Start Date" value={selectedRow.startDate} />
+                <DetailItem label="Active" value={selectedRow.active} />
+                <DetailItem label="Signed SOW" value={selectedRow.signedSow} />
+                <DetailItem label="PIW" value={selectedRow.piw} />
+                <DetailItem label="Account Anchor" value={selectedRow.accountAnchor || ''} />
+              </Col>
+              <Col span={12}>
+                <DetailItem label="Salesforce ID" value={selectedRow.salesforceId} />
+                <DetailItem label="PROMS ID" value={selectedRow.promsId} />
+                <DetailItem label="Budget (INR)" value={selectedRow.budget} />
+                <DetailItem label="Open Air Code" value={selectedRow.openAirCode} />
+                <DetailItem label="Eprev" value={selectedRow.eprev || ''} />
+              </Col>
+            </Row>
+            {selectedRow.comments && (
+              <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>
+                <Text type="secondary" style={{ fontSize: '11px' }}>Comments: </Text>
+                <Text style={{ fontSize: '11px' }}>{selectedRow.comments}</Text>
+              </div>
+            )}
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #f0f0f0' }}>
+              <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 8 }}>Pipeline Progress</Text>
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                {PIPELINE_STAGES.map((stage, idx) => {
+                  const done = !!stage.field(selectedRow);
+                  return (
+                    <div key={stage.key} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <Tag style={{ fontSize: '10px', margin: 0, background: done ? STAGE_COLORS[idx] + '20' : '#f5f5f5', color: done ? STAGE_COLORS[idx] : '#bfbfbf', border: `1px solid ${done ? STAGE_COLORS[idx] + '60' : '#e8e8e8'}` }}
+                        icon={done ? <CheckCircleFilled style={{ fontSize: 9 }} /> : undefined}>
+                        {stage.label}
+                      </Tag>
+                      {idx < PIPELINE_STAGES.length - 1 && <RightOutlined style={{ fontSize: 9, color: '#d9d9d9' }} />}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </Card>
+
+          {/* Resource History Timeline */}
+          <Card size="small"
+            title={<Space size={6}><TeamOutlined style={{ color: '#1677ff' }} /><Text style={{ fontSize: '12px', fontWeight: 600 }}>Resource History</Text><Tag style={{ fontSize: '10px' }}>{linkedResources.length} currently linked</Tag></Space>}
+            style={{ borderRadius: 10 }}
+          >
+            {loadingRes ? (
+              <div style={{ textAlign: 'center', padding: 24 }}><Spin size="small" /></div>
+            ) : timelineGroups.length === 0 ? (
+              <div>
+                {linkedResources.length > 0 ? (
+                  <>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 12, fontSize: '11px' }}
+                      message={<Text style={{ fontSize: '11px' }}>No audit history found — these resources were linked before audit tracking began.</Text>}
+                    />
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {linkedResources.map(r => (
+                        <Tag key={r.key} style={{ fontSize: '11px', padding: '2px 8px' }}>
+                          {r.empName} <Text type="secondary" style={{ fontSize: '10px' }}>({r.raId})</Text>
+                        </Tag>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                    description={<Text type="secondary" style={{ fontSize: '11px' }}>No resources have been linked to this SOW yet.</Text>}
+                  />
+                )}
+              </div>
+            ) : (
+              <div style={{ position: 'relative', paddingLeft: 20 }}>
+                {/* vertical line */}
+                <div style={{ position: 'absolute', left: 7, top: 12, bottom: 12, width: 2, background: '#f0f0f0', borderRadius: 1 }} />
+
+                {timelineGroups.map((group, gi) => (
+                  <div key={group.date} style={{ position: 'relative', marginBottom: gi < timelineGroups.length - 1 ? 20 : 0 }}>
+                    {/* dot */}
+                    <div style={{
+                      position: 'absolute', left: -13, top: 3, width: 10, height: 10, borderRadius: '50%',
+                      background: group.added.length > 0 && group.removed.length > 0 ? '#faad14'
+                        : group.added.length > 0 ? '#52c41a' : '#ff4d4f',
+                      border: '2px solid #fff',
+                      boxShadow: '0 0 0 1px #d9d9d9',
+                    }} />
+
+                    {/* date + count bubble */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                      <Text style={{ fontSize: '11px', fontWeight: 600, color: '#595959' }}>{fmtDate(group.date)}</Text>
+                      <Tag style={{ fontSize: '10px', background: '#f5f5f5', border: '1px solid #e8e8e8', color: '#595959' }}>
+                        {runningState[gi]} resource{runningState[gi] !== 1 ? 's' : ''} active
+                      </Tag>
+                    </div>
+
+                    {/* Added */}
+                    {group.added.length > 0 && (
+                      <div style={{ marginBottom: group.removed.length > 0 ? 6 : 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                          <Tag color="success" style={{ fontSize: '10px', margin: 0 }}>+ {group.added.length} added</Tag>
+                          {group.added.map((e, i) => (
+                            <span key={i} style={{ fontSize: '11px', color: '#262626' }}>
+                              {e.name}
+                              {e.raId && <Text type="secondary" style={{ fontSize: '10px' }}> ({e.raId})</Text>}
+                              {i < group.added.length - 1 && <span style={{ color: '#d9d9d9', marginRight: 4 }}>,</span>}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Removed */}
+                    {group.removed.length > 0 && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+                          <Tag color="error" style={{ fontSize: '10px', margin: 0 }}>− {group.removed.length} removed</Tag>
+                          {group.removed.map((e, i) => (
+                            <span key={i} style={{ fontSize: '11px', color: '#8c8c8c', textDecoration: 'line-through' }}>
+                              {e.name}
+                              {e.raId && <Text type="secondary" style={{ fontSize: '10px' }}> ({e.raId})</Text>}
+                              {i < group.removed.length - 1 && <span style={{ color: '#d9d9d9', marginRight: 4 }}>,</span>}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {group.added[0]?.by && (
+                      <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginTop: 3 }}>by {group.added[0]?.by || group.removed[0]?.by}</Text>
+                    )}
+                  </div>
+                ))}
+
+                {/* Current state footer */}
+                <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #f5f5f5' }}>
+                  <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 6 }}>Currently linked ({linkedResources.length})</Text>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {linkedResources.length > 0 ? linkedResources.map(r => (
+                      <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '4px 10px' }}>
+                        <Text style={{ fontSize: '11px', color: '#389e0d', fontWeight: 500 }}>{r.empName}</Text>
+                        <Text type="secondary" style={{ fontSize: '10px' }}>({r.raId})</Text>
+                        {(r.engagementStartDate || r.engagementEndDate) && (
+                          <Text style={{ fontSize: '10px', color: '#1677ff', marginLeft: 4 }}>
+                            📅 {r.engagementStartDate ? fmtDate(r.engagementStartDate) : '—'} → {r.engagementEndDate ? fmtDate(r.engagementEndDate) : '—'}
+                          </Text>
+                        )}
+                      </div>
+                    )) : <Text type="secondary" style={{ fontSize: '11px' }}>None</Text>}
+                  </div>
+                </div>
+              </div>
+            )}
+          </Card>
+
+          {/* Comments */}
+          <Card size="small"
+            title={<Space size={6}><CommentOutlined style={{ color: '#1677ff' }} /><Text style={{ fontSize: '12px', fontWeight: 600 }}>Comments</Text><Tag style={{ fontSize: '10px' }}>{processComments.length}</Tag></Space>}
+            style={{ borderRadius: 10 }}
+          >
+            {loadingRes ? (
+              <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+            ) : processComments.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={<Text type="secondary" style={{ fontSize: '11px' }}>No comments for this SOW.</Text>}
+              />
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {processComments.map(c => (
+                  <div key={c.id} style={{ background: '#fafafa', borderRadius: 8, padding: '8px 12px', border: '1px solid #f0f0f0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <Text style={{ fontSize: '11px', fontWeight: 600, color: '#1677ff' }}>{c.author || 'Unknown'}</Text>
+                      <Text type="secondary" style={{ fontSize: '10px' }}>{fmtDate(c.created_at)}</Text>
+                    </div>
+                    <Text style={{ fontSize: '11px', whiteSpace: 'pre-wrap' }}>{c.body}</Text>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+
+          {/* Audit Log */}
+          <Card size="small"
+            title={<Space size={6}><InfoCircleOutlined style={{ color: '#1677ff' }} /><Text style={{ fontSize: '12px', fontWeight: 600 }}>Audit Log</Text><Tag style={{ fontSize: '10px' }}>{auditEntries.length}</Tag></Space>}
+            style={{ borderRadius: 10 }}
+          >
+            {loadingRes ? (
+              <div style={{ textAlign: 'center', padding: 16 }}><Spin size="small" /></div>
+            ) : auditEntries.length === 0 ? (
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={<Text type="secondary" style={{ fontSize: '11px' }}>No audit log entries for this SOW.</Text>}
+              />
+            ) : (
+              <Table
+                size="small"
+                pagination={false}
+                dataSource={auditEntries.map((e, i) => ({ ...e, key: i }))}
+                scroll={{ y: 300 }}
+                columns={[
+                  { title: 'Source', dataIndex: 'source', key: 'source', width: 110, onHeaderCell: () => ({ style: { fontSize: '11px' } }), render: (v: string) => {
+                    const colorMap: Record<string, string> = { Process: 'blue', 'Resource Link': 'purple', 'Resource Date': 'cyan' };
+                    return <Tag color={colorMap[v] || 'default'} style={{ fontSize: '10px', lineHeight: '16px' }}>{v || 'Process'}</Tag>;
+                  }},
+                  { title: 'Field', dataIndex: 'field', key: 'field', width: 140, onHeaderCell: () => ({ style: { fontSize: '11px' } }), render: (v: string) => <Text style={{ fontSize: '11px', fontWeight: 500 }}>{v}</Text> },
+                  { title: 'Resource / Old Value', dataIndex: 'record_name', key: 'rname', width: 160, onHeaderCell: () => ({ style: { fontSize: '11px' } }), render: (v: string, row: any) => {
+                    const fmtVal = (s: string) => /^\d{4}-\d{2}-\d{2}/.test(s) ? fmtDate(s) : (s || '—');
+                    if (row.source === 'Resource Link') return <Text style={{ fontSize: '11px', color: '#722ed1' }}>{row.new_value || '—'}</Text>;
+                    if (row.source === 'Resource Date') return <Text style={{ fontSize: '11px', color: '#08979c' }}>{v || '—'}</Text>;
+                    return <Text style={{ fontSize: '11px', color: '#cf1322' }}>{fmtVal(row.old_value)}</Text>;
+                  }},
+                  { title: 'New Value', dataIndex: 'new_value', key: 'new', width: 160, onHeaderCell: () => ({ style: { fontSize: '11px' } }), render: (v: string, row: any) => {
+                    const fmtVal = (s: string) => /^\d{4}-\d{2}-\d{2}/.test(s) ? fmtDate(s) : (s || '—');
+                    if (row.source === 'Resource Link') return null;
+                    return <Text style={{ fontSize: '11px', color: '#389e0d' }}>{fmtVal(v)}</Text>;
+                  }},
+                  { title: 'Changed By', dataIndex: 'changed_by', key: 'by', width: 110, onHeaderCell: () => ({ style: { fontSize: '11px' } }), render: (v: string) => <Text style={{ fontSize: '11px' }}>{v || '—'}</Text> },
+                  { title: 'Date', dataIndex: 'changed_at', key: 'date', width: 120, onHeaderCell: () => ({ style: { fontSize: '11px' } }), render: (v: string) => <Text style={{ fontSize: '11px' }}>{fmtDate(v)}</Text> },
+                ]}
+              />
+            )}
+          </Card>
+        </>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Process Insights Tab ---
 function ProcessInsights({ rows, onNavigate }: { rows: ProcessRow[]; onNavigate?: (filters: Record<string, any>) => void }) {
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
@@ -333,6 +857,7 @@ function ProcessInsights({ rows, onNavigate }: { rows: ProcessRow[]; onNavigate?
     const withSalesforce = rows.filter(r => !!r.salesforceId?.trim()).length;
     const withProms = rows.filter(r => !!r.promsId?.trim()).length;
     const withBudget = rows.filter(r => !!r.budget?.trim()).length;
+    const withEprev = rows.filter(r => r.eprev === 'Yes').length;
     const withOpenAir = rows.filter(r => !!r.openAirCode?.trim()).length;
     const withAnchor = rows.filter(r => !!r.accountAnchor?.trim()).length;
 
@@ -377,7 +902,7 @@ function ProcessInsights({ rows, onNavigate }: { rows: ProcessRow[]; onNavigate?
 
     return {
       total, active, inactive, notStarted, inProgress, completed,
-      withSignedSow, withPiw, withSalesforce, withProms, withBudget, withOpenAir, withAnchor,
+      withSignedSow, withPiw, withSalesforce, withProms, withBudget, withEprev, withOpenAir, withAnchor,
       anchorMap, monthData, completionRate, activationRate, signedRate, pipelineHealth,
       recentCount: recentRows.length,
     };
@@ -412,6 +937,7 @@ function ProcessInsights({ rows, onNavigate }: { rows: ProcessRow[]; onNavigate?
     { label: 'Salesforce ID', count: analytics.withSalesforce, total: analytics.total, color: '#13c2c2' },
     { label: 'PROMS ID', count: analytics.withProms, total: analytics.total, color: '#52c41a' },
     { label: 'Budget Set', count: analytics.withBudget, total: analytics.total, color: '#fa8c16' },
+    { label: 'Eprev Done', count: analytics.withEprev, total: analytics.total, color: '#a0d911' },
     { label: 'Open Air Code', count: analytics.withOpenAir, total: analytics.total, color: '#eb2f96' },
   ];
 
@@ -553,9 +1079,11 @@ interface ProcessTabProps {
   setRows: React.Dispatch<React.SetStateAction<ProcessRow[]>>;
   fromServer?: boolean;
   setFromServer?: (v: boolean) => void;
+  resourceRefreshKey?: number;
+  initialSow?: string;
 }
 
-function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProps) {
+function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshKey = 0, initialSow }: ProcessTabProps) {
   const { configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
   const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
@@ -564,26 +1092,33 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
   const [viewMode, setViewMode] = useState<'pipeline' | 'table'>('pipeline');
   const [columnDrawer, setColumnDrawer] = useState(false);
   const [showFilterPanel, setShowFilterPanel] = useState(false);
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<Record<string, string>>(initialSow ? { sow: initialSow } : {});
   const [editModal, setEditModal] = useState(false);
   const [editingRow, setEditingRow] = useState<ProcessRow | null>(null);
-  const [detailRow, setDetailRow] = useState<ProcessRow | null>(null);
+  // Auto-open detail panel for the matched SOW if initialSow provided
+  const initialDetailRow = initialSow ? (rows.find(r => r.sow === initialSow) || null) : null;
+  const [detailRow, setDetailRow] = useState<ProcessRow | null>(initialDetailRow);
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [allocateModal, setAllocateModal] = useState(false);
   const [allocateAnchor, setAllocateAnchor] = useState('');
   const [allocateSelected, setAllocateSelected] = useState<string[]>([]);
   const [allocateSingleRow, setAllocateSingleRow] = useState<ProcessRow | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [hasUnsaved, setHasUnsaved] = useState(false);
   const [form] = Form.useForm();
   const filterPanelRef = useRef<HTMLDivElement>(null);
 
   // ── Linked Resources state ──────────────────────────────────────────────────
-  type ProcRes = { id: number; raId: string; empName: string; piwRole: string; processId: number | null };
+  type ProcRes = { id: number; raId: string; empName: string; piwRole: string; processId: number | null; engagementStartDate?: string; engagementEndDate?: string };
   const [allProcResources, setAllProcResources] = useState<ProcRes[]>([]);
   const [linkModal, setLinkModal] = useState<{ open: boolean; row: ProcessRow | null }>({ open: false, row: null });
   const [linkChecked, setLinkChecked] = useState<Set<number>>(new Set());
+  const [linkSearch, setLinkSearch] = useState('');
   const [loadingLink, setLoadingLink] = useState(false);
   const [savingLink, setSavingLink] = useState(false);
+  // Per-resource date overrides in link modal
+  const [linkDates, setLinkDates] = useState<Record<number, { startDate: string; endDate: string }>>({});
 
   const linkedCountMap = useMemo(() => {
     const map: Record<number, number> = {};
@@ -597,6 +1132,8 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     empName: r.emp_name || r.empName || '',
     piwRole: r.piw_role || r.piwRole || '',
     processId: r.process_id != null ? Number(r.process_id) : (r.processId != null ? Number(r.processId) : null),
+    engagementStartDate: r.engagement_start_date || r.engagementStartDate || '',
+    engagementEndDate: r.engagement_end_date || r.engagementEndDate || '',
   });
 
   const [visibleColumns, setVisibleColumnsState] = useState<Record<string, boolean>>(
@@ -634,6 +1171,8 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     resourceApi.getResources().then(({ resources }) => setAllProcResources(resources.map(mapProcRes)));
   };
   useEffect(() => { loadProcResources(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Re-fetch whenever PIW upload triggers a refresh (resourceRefreshKey increments)
+  useEffect(() => { if (resourceRefreshKey > 0) loadProcResources(); }, [resourceRefreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open link resources modal
   const openLinkModal = async (row: ProcessRow) => {
@@ -644,10 +1183,19 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     setLinkModal({ open: true, row });
     setLoadingLink(true);
     setLinkChecked(new Set());
+    setLinkSearch('');
+    setLinkDates({});
     const { resources } = await resourceApi.getResources();
     const mapped = resources.map(mapProcRes);
     setAllProcResources(mapped);
-    setLinkChecked(new Set(mapped.filter(r => r.processId === row.id && r.id != null).map(r => r.id)));
+    const initialChecked = new Set(mapped.filter(r => r.processId === row.id && r.id != null).map(r => r.id));
+    setLinkChecked(initialChecked);
+    // Pre-populate existing dates for already-linked resources
+    const initialDates: Record<number, { startDate: string; endDate: string }> = {};
+    mapped.filter(r => r.processId === row.id).forEach(r => {
+      initialDates[r.id] = { startDate: r.engagementStartDate || '', endDate: r.engagementEndDate || '' };
+    });
+    setLinkDates(initialDates);
     setLoadingLink(false);
   };
 
@@ -662,10 +1210,25 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
       ...toLink.map(id => resourceApi.setProcessLink(id, processId, currentUser?.username || 'system')),
       ...toUnlink.map(id => resourceApi.setProcessLink(id, null, currentUser?.username || 'system')),
     ]);
+    // Update engagement dates for all checked resources that have dates set
+    await Promise.all(
+      [...linkChecked].map(id => {
+        const dates = linkDates[id];
+        if (dates && (dates.startDate || dates.endDate)) {
+          return resourceApi.updateResource(id, {
+            engagementStartDate: dates.startDate,
+            engagementEndDate: dates.endDate,
+            changedBy: currentUser?.username || 'system',
+          });
+        }
+        return Promise.resolve();
+      })
+    );
     loadProcResources();
     setSavingLink(false);
     message.success('Resource links updated');
     setLinkModal({ open: false, row: null });
+    setLinkDates({});
   };
 
   // Upload — upsert by SOW (append new, overwrite existing by SOW key)
@@ -692,44 +1255,81 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
           promsId:      String(r['PROMS ID'] || '').trim(),
           budget:       String(r['Budget'] || '').trim(),
           openAirCode:  String(r['Open Air Code'] || '').trim(),
+          eprev:        String(r['Eprev'] || '').trim(),
           comments:     String(r['Comments'] || '').trim(),
         }));
 
       if (!uploaded.length) { message.warning('No valid rows with SOW found'); return false; }
 
-      let uploadSummary = { newCount: 0, updCount: 0 };
-      let mergedRows: ProcessRow[] = [];
-
-      setRows(prev => {
-        const existingMap = new Map(prev.map(r => [r.sow.toLowerCase(), r]));
-        let newCount = 0, updCount = 0;
-        uploaded.forEach(u => {
-          const key = u.sow.toLowerCase();
-          if (existingMap.has(key)) {
-            existingMap.set(key, { ...existingMap.get(key)!, ...u, id: existingMap.get(key)!.id });
-            updCount++;
-          } else {
-            existingMap.set(key, u);
-            newCount++;
-          }
-        });
-        uploadSummary = { newCount, updCount };
-        mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: i + 1 }));
-        return mergedRows;
+      // Merge with existing rows (computed OUTSIDE setRows to avoid Strict Mode double-invoke)
+      const existingMap = new Map(rows.map(r => [r.sow.toLowerCase(), r]));
+      let newCount = 0, updCount = 0;
+      uploaded.forEach(u => {
+        const key = u.sow.toLowerCase();
+        if (existingMap.has(key)) {
+          existingMap.set(key, { ...existingMap.get(key)!, ...u, id: existingMap.get(key)!.id });
+          updCount++;
+        } else {
+          existingMap.set(key, u);
+          newCount++;
+        }
       });
+      const mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: i + 1 }));
 
-      // Save to DB outside the updater (avoids Strict Mode double-invoke)
-      setTimeout(() => {
-        processApi.bulkSave(mergedRows.map(r => ({
+      // Update UI immediately
+      setRows(mergedRows);
+      setHasUnsaved(true);
+
+      // Save to DB — reset server cache first so a previously unreachable server is re-checked
+      setIsSaving(true);
+      processApi.resetServerCache();
+      try {
+        const result = await processApi.bulkSave(mergedRows.map(r => ({
           sow: r.sow, sno: r.sno, startDate: r.startDate, signedSow: r.signedSow,
           piw: r.piw, active: r.active, salesforceId: r.salesforceId,
           promsId: r.promsId, budget: r.budget, openAirCode: r.openAirCode,
-          comments: r.comments, accountAnchor: r.accountAnchor || '',
-        }))).then(result => { if (result.ok) setFromServer?.(true); });
-        message.success(`Upload complete: ${uploadSummary.newCount} new, ${uploadSummary.updCount} updated`);
-      }, 0);
+          eprev: r.eprev || '', comments: r.comments, accountAnchor: r.accountAnchor || '',
+        })));
+        if (result.ok) {
+          setHasUnsaved(false);
+          setFromServer?.(true);
+          message.success(`Saved to database: ${newCount} new, ${updCount} updated`);
+        } else {
+          message.warning(`Parsed ${newCount + updCount} rows but database save failed — data shown locally only. Use "Save to Database" to retry.`);
+        }
+      } catch (saveErr: any) {
+        message.error(`Data loaded locally but DB save failed: ${saveErr.message || 'Unknown error'}. Use "Save to Database" to retry.`);
+      } finally {
+        setIsSaving(false);
+      }
     } catch (e: any) { message.error(e.message || 'Upload failed'); }
     return false;
+  };
+
+  // Manual retry save to DB
+  const handleManualSave = async () => {
+    if (!rows.length) return;
+    setIsSaving(true);
+    processApi.resetServerCache();
+    try {
+      const result = await processApi.bulkSave(rows.map(r => ({
+        sow: r.sow, sno: r.sno, startDate: r.startDate, signedSow: r.signedSow,
+        piw: r.piw, active: r.active, salesforceId: r.salesforceId,
+        promsId: r.promsId, budget: r.budget, openAirCode: r.openAirCode,
+        eprev: r.eprev || '', comments: r.comments, accountAnchor: r.accountAnchor || '',
+      })));
+      if (result.ok) {
+        setHasUnsaved(false);
+        setFromServer?.(true);
+        message.success(`Saved to database: ${result.inserted} new, ${result.updated} updated`);
+      } else {
+        message.error('Database save failed. Please check the server connection.');
+      }
+    } catch (e: any) {
+      message.error(`Save failed: ${e.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Export data
@@ -780,6 +1380,27 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
           return;
         }
       }
+
+      const newSow = (vals.sow || '').trim();
+      const newPiw = (vals.piw || '').trim();
+
+      // Case-insensitive SOW uniqueness check (excluding current row)
+      if (newSow) {
+        const sowDup = rows.find(r => r.sow.toLowerCase() === newSow.toLowerCase() && r.key !== editingRow?.key);
+        if (sowDup) {
+          message.error(`SOW name "${newSow}" already exists. Please use a unique SOW name.`);
+          return;
+        }
+      }
+      // PIW uniqueness check — non-empty, case-insensitive, excluding current row
+      if (newPiw) {
+        const piwDup = rows.find(r => r.piw.toLowerCase() === newPiw.toLowerCase() && r.key !== editingRow?.key);
+        if (piwDup) {
+          message.error(`PIW name "${newPiw}" already exists (on SOW: ${piwDup.sow}). Please use a unique PIW name.`);
+          return;
+        }
+      }
+
       const commentText: string = (vals.newComment || '').trim();
       const { newComment: _nc, ...rowVals } = vals;
       if (editingRow) {
@@ -788,14 +1409,23 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         // If detail panel is open for this record, refresh it in-place
         if (detailRow && detailRow.key === editingRow.key) setDetailRow(updatedRow);
         if (editingRow.id) {
-          await processApi.updateProcess(editingRow.id, {
-            startDate: rowVals.startDate || '', signedSow: rowVals.signedSow || '',
-            piw: rowVals.piw || '', active: rowVals.active || '',
-            salesforceId: rowVals.salesforceId || '', promsId: rowVals.promsId || '',
-            budget: rowVals.budget || '', openAirCode: rowVals.openAirCode || '',
-            comments: rowVals.comments || '', accountAnchor: rowVals.accountAnchor || '',
-            changedBy: currentUser?.username,
-          });
+          try {
+            await processApi.updateProcess(editingRow.id, {
+              sow: rowVals.sow || '', startDate: rowVals.startDate || '', signedSow: rowVals.signedSow || '',
+              piw: rowVals.piw || '', active: rowVals.active || '',
+              salesforceId: rowVals.salesforceId || '', promsId: rowVals.promsId || '',
+              budget: rowVals.budget || '', openAirCode: rowVals.openAirCode || '',
+              eprev: rowVals.eprev || '',
+              comments: rowVals.comments || '', accountAnchor: rowVals.accountAnchor || '',
+              changedBy: currentUser?.username,
+            });
+          } catch (e: any) {
+            // Revert optimistic update on error
+            setRows(prev => prev.map(r => r.key === editingRow.key ? editingRow : r));
+            if (detailRow && detailRow.key === editingRow.key) setDetailRow(editingRow);
+            message.error(e.message || 'Save failed');
+            return;
+          }
           if (commentText) {
             await processApi.addComment(editingRow.id, { author: currentUser?.username || 'Unknown', body: commentText });
           }
@@ -805,13 +1435,14 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         setRows(prev => [...prev, {
           key: tempKey, sno: prev.length + 1,
           startDate: '', signedSow: '', piw: '', active: '', salesforceId: '', promsId: '',
-          budget: '', openAirCode: '', comments: '', sow: '', ...rowVals,
+          budget: '', openAirCode: '', eprev: '', comments: '', sow: '', ...rowVals,
         }]);
         processApi.createProcess({
           sow: rowVals.sow || '', sno: 0, startDate: rowVals.startDate || '',
           signedSow: rowVals.signedSow || '', piw: rowVals.piw || '', active: rowVals.active || '',
           salesforceId: rowVals.salesforceId || '', promsId: rowVals.promsId || '',
           budget: rowVals.budget || '', openAirCode: rowVals.openAirCode || '',
+          eprev: rowVals.eprev || '',
           comments: rowVals.comments || '', accountAnchor: rowVals.accountAnchor || '',
           changedBy: currentUser?.username,
         }).then(res => {
@@ -841,8 +1472,11 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     return true;
   }), [rows, filters, allProcResources]);
 
-  // Pipeline view: Active=Yes + (showAll or not Completed)
-  const pipelineRows = displayed;
+  // Pipeline view: Active=Yes + (showAll or not Completed) — sorted by start date descending
+  const pipelineRows = useMemo(
+    () => [...displayed].sort((a, b) => dateSortKey(b.startDate || '') - dateSortKey(a.startDate || '')),
+    [displayed]
+  );
 
   // Account anchor options: from config linked to ra_process_account_anchor_field, fallback to row-derived
   const anchorOptions = useMemo(() => {
@@ -887,13 +1521,30 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     message.success('All process records deleted');
   };
 
+  const handleClearAllAudit = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/process/all-audit', { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      message.success('All process audit history deleted');
+    } catch { message.error('Failed to delete audit history'); }
+  };
+
+  const handleClearAllComments = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/process/all-comments', { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      message.success('All process comments deleted');
+    } catch { message.error('Failed to delete comments'); }
+  };
+
   // Table columns
   const hStyle = { fontSize: '11px', fontWeight: 700 as const };
   const cStyle = { fontSize: '11px' };
 
   const tableCols = [
+    { title: 'ID', dataIndex: 'processId', key: 'processId', width: 52, onHeaderCell: () => ({ style: hStyle }), render: (v: string) => v ? <Tag color="blue" style={{ fontSize: 10, padding: '0 4px', margin: 0 }}>{v}</Tag> : null },
     visibleColumns.sno        && { title: 'S.No.', key: 'sno', width: 55, onHeaderCell: () => ({ style: hStyle }), render: (_: unknown, __: ProcessRow, index: number) => <span style={cStyle}>{index + 1}</span> },
-    visibleColumns.startDate  && { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 90, sorter: (a: ProcessRow, b: ProcessRow) => (a.startDate || '').localeCompare(b.startDate || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
+    visibleColumns.startDate  && { title: 'Start Date', dataIndex: 'startDate', key: 'startDate', width: 90, defaultSortOrder: 'descend' as const, sorter: (a: ProcessRow, b: ProcessRow) => dateSortKey(a.startDate || '') - dateSortKey(b.startDate || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
     visibleColumns.sow        && { title: 'SOW', dataIndex: 'sow', key: 'sow', width: 240, sorter: (a: ProcessRow, b: ProcessRow) => (a.sow || '').localeCompare(b.sow || ''), onHeaderCell: () => ({ style: hStyle }),
       render: (v: string, r: ProcessRow) => r.sowFile
         ? (
@@ -912,6 +1563,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
     visibleColumns.salesforceId && { title: 'Salesforce ID', dataIndex: 'salesforceId', key: 'salesforceId', width: 130, sorter: (a: ProcessRow, b: ProcessRow) => (a.salesforceId || '').localeCompare(b.salesforceId || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, color: v ? '#1890ff' : undefined }}>{v}</span> },
     visibleColumns.promsId    && { title: 'PROMS ID', dataIndex: 'promsId', key: 'promsId', width: 110, sorter: (a: ProcessRow, b: ProcessRow) => (a.promsId || '').localeCompare(b.promsId || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
     visibleColumns.budget     && { title: 'Budget', dataIndex: 'budget', key: 'budget', width: 120, sorter: (a: ProcessRow, b: ProcessRow) => (a.budget || '').localeCompare(b.budget || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={{ ...cStyle, fontWeight: v ? 600 : 400 }}>{v}</span> },
+    visibleColumns.eprev      && { title: 'Eprev', dataIndex: 'eprev', key: 'eprev', width: 75, sorter: (a: ProcessRow, b: ProcessRow) => (a.eprev || '').localeCompare(b.eprev || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => v ? <Tag color={v === 'Yes' ? 'success' : 'default'} style={{ fontSize: '10px' }}>{v}</Tag> : null },
     visibleColumns.openAirCode && { title: 'Open Air Code', dataIndex: 'openAirCode', key: 'openAirCode', width: 240, sorter: (a: ProcessRow, b: ProcessRow) => (a.openAirCode || '').localeCompare(b.openAirCode || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
     visibleColumns.comments   && { title: 'Comments', dataIndex: 'comments', key: 'comments', width: 140, sorter: (a: ProcessRow, b: ProcessRow) => (a.comments || '').localeCompare(b.comments || ''), onHeaderCell: () => ({ style: hStyle }), render: (v: string) => <span style={cStyle}>{v}</span> },
     visibleColumns.accountAnchor && { title: 'Account Anchor', dataIndex: 'accountAnchor', key: 'accountAnchor', width: 130, sorter: (a: ProcessRow, b: ProcessRow) => (a.accountAnchor || '').localeCompare(b.accountAnchor || ''), onHeaderCell: () => ({ style: hStyle }),
@@ -1064,11 +1716,61 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
                 onOk: handleClearAll,
               }),
             } : null,
+            canDelete ? { type: 'divider' as const } : null,
+            canDelete ? {
+              key: 'deleteAllAudit',
+              label: <span style={{ fontSize: '11px' }}>Delete All Audit History</span>,
+              icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+              danger: true,
+              onClick: () => Modal.confirm({
+                title: 'Delete all process audit history?',
+                content: 'This will permanently remove all audit log entries and resource history for Process (including Detailed View timeline).',
+                okText: 'Yes, delete all', cancelText: 'Cancel',
+                okButtonProps: { danger: true, size: 'small' },
+                onOk: handleClearAllAudit,
+              }),
+            } : null,
+            canDelete ? {
+              key: 'deleteAllComments',
+              label: <span style={{ fontSize: '11px' }}>Delete All Comments</span>,
+              icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+              danger: true,
+              onClick: () => Modal.confirm({
+                title: 'Delete all process comments?',
+                content: 'This will permanently remove all comments across all process records.',
+                okText: 'Yes, delete all', cancelText: 'Cancel',
+                okButtonProps: { danger: true, size: 'small' },
+                onOk: handleClearAllComments,
+              }),
+            } : null,
           ].filter(Boolean) as any[] }}>
             <Button icon={<MoreOutlined />} size="small" style={{ borderRadius: 6 }} />
           </Dropdown>
         </Space>
       </div>
+
+      {/* Unsaved data warning banner */}
+      {hasUnsaved && (
+        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#874d00' }}>
+          <span style={{ flex: 1 }}>
+            ⚠️ <strong>Unsaved data</strong> — {rows.length} rows are loaded locally but not yet saved to the database.
+          </span>
+          <Button
+            type="primary"
+            size="small"
+            loading={isSaving}
+            style={{ borderRadius: 6, fontSize: '11px' }}
+            onClick={handleManualSave}
+          >
+            {isSaving ? 'Saving…' : 'Save to Database'}
+          </Button>
+        </div>
+      )}
+      {isSaving && !hasUnsaved && (
+        <div style={{ background: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 8, padding: '8px 14px', marginBottom: 12, fontSize: '12px', color: '#0050b3', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Spin size="small" /> &nbsp;Saving data to database…
+        </div>
+      )}
 
       {/* Content */}
       {rows.length === 0 ? (
@@ -1167,7 +1869,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
             </Form.Item>
           </div>
           <Form.Item name="sow" label={<span style={{ fontSize: '11px' }}>SOW</span>} rules={[{ required: true, message: 'Enter SOW' }]}>
-            <Input placeholder="e.g. T1-UCB_US_Tech-Resource_Allocation-2026-CR1" style={{ fontSize: '12px' }} disabled={!!editingRow} />
+            <Input placeholder="e.g. T1-UCB_US_Tech-Resource_Allocation-2026-CR1" style={{ fontSize: '12px' }} />
           </Form.Item>
           <Form.Item name="signedSow" label={<span style={{ fontSize: '11px' }}>Signed SOW</span>}>
             <Select placeholder="Select" options={SIGNED_SOW_OPTIONS.map(v => ({ label: v, value: v }))} style={{ fontSize: '12px' }} allowClear />
@@ -1197,6 +1899,10 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
           <Form.Item name="openAirCode" label={<span style={{ fontSize: '11px' }}>Open Air Code</span>}>
             <Input placeholder="e.g. ZSUS0341 - Next Gen Operations Support 2026" style={{ fontSize: '12px' }} />
           </Form.Item>
+          <Form.Item name="eprev" label={<span style={{ fontSize: '11px' }}>Eprev</span>}
+            extra={<span style={{ fontSize: '10px', color: '#8c8c8c' }}>Yes = E-Preview completed (marks process as Completed)</span>}>
+            <Select placeholder="Select" options={[{ label: 'Yes', value: 'Yes' }, { label: 'No', value: 'No' }]} style={{ fontSize: '12px' }} allowClear />
+          </Form.Item>
           {editingRow && (
             <Form.Item
               name="newComment"
@@ -1207,7 +1913,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
             </Form.Item>
           )}
           <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '8px 12px', fontSize: '11px', color: '#389e0d', marginTop: 4 }}>
-            Status auto-derived: <b>Not Started</b> → <b>In Progress</b> (Signed SOW = Yes or PIW/SF/PROMS added) → <b>Completed</b> (OA Code added)
+            Status auto-derived: <b>Not Started</b> → <b>In Progress</b> (Signed SOW = Yes or PIW/SF/PROMS added) → <b>Completed</b> (Eprev = Yes <i>or</i> OA Code added)
           </div>
         </Form>
       </Drawer>
@@ -1241,7 +1947,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
             currentUser={currentUser?.username || currentUser?.name || 'Unknown'}
             canEdit={canEdit}
             canDelete={canDelete}
-            linkedResources={allProcResources.filter(r => r.processId === detailRow.id).map(r => ({ id: r.id, raId: r.raId, empName: r.empName, piwRole: r.piwRole }))}
+            linkedResources={allProcResources.filter(r => r.processId === detailRow.id).map(r => ({ id: r.id, raId: r.raId, empName: r.empName, piwRole: r.piwRole, engagementStartDate: r.engagementStartDate, engagementEndDate: r.engagementEndDate }))}
             onEdit={() => openEditFromPanel(detailRow)}
             onToggleActive={() => handleToggleActive(detailRow)}
             onLinkResources={() => openLinkModal(detailRow)}
@@ -1355,61 +2061,132 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer }: ProcessTabProp
         width={560}
         okButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
         cancelButtonProps={{ size: 'small', style: { borderRadius: 6 } }}
+        footer={[
+          <Button
+            key="unlink-all"
+            size="small"
+            danger
+            disabled={linkChecked.size === 0}
+            onClick={() => setLinkChecked(new Set())}
+            style={{ borderRadius: 6, fontSize: '11px', float: 'left' }}
+          >
+            Unlink All
+          </Button>,
+          <span key="count" style={{ fontSize: '11px', color: '#8c8c8c', float: 'left', lineHeight: '24px', marginLeft: 8 }}>
+            {linkChecked.size} selected
+          </span>,
+          <Button key="cancel" size="small" style={{ borderRadius: 6 }} onClick={() => setLinkModal({ open: false, row: null })}>
+            Cancel
+          </Button>,
+          <Button key="ok" size="small" type="primary" loading={savingLink} style={{ borderRadius: 6 }} onClick={handleSaveLinks}>
+            Save Links
+          </Button>,
+        ]}
       >
         <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: 10, background: '#f0f5ff', borderRadius: 6, padding: '8px 12px' }}>
           Select resources to link. One resource can only be linked to one active process at a time.{' '}
           Resources already linked to another process are marked with a warning.
         </div>
+        <Input.Search
+          placeholder="Search by name or RAID…"
+          size="small"
+          allowClear
+          value={linkSearch}
+          onChange={e => setLinkSearch(e.target.value)}
+          style={{ marginBottom: 10 }}
+        />
         <Spin spinning={loadingLink} tip="Loading resources…" size="small">
           {!loadingLink && allProcResources.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '20px 0', color: '#8c8c8c', fontSize: '12px' }}>
               No resources found. Upload resources in the Resource Hub.
             </div>
           ) : (
-            <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
-              {allProcResources.map(res => {
-                const isChecked = linkChecked.has(res.id);
-                const linkedElsewhere = res.processId != null && linkModal.row?.id != null && res.processId !== linkModal.row.id;
-                const otherSow = linkedElsewhere ? (rows.find(r => r.id === res.processId)?.sow || `Process #${res.processId}`) : null;
-                return (
-                  <div
-                    key={res.id}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '8px 12px', borderBottom: '1px solid #fafafa',
-                      cursor: 'pointer',
-                      background: isChecked ? '#f0f5ff' : '#fff',
-                    }}
-                    onClick={() => {
-                      const next = new Set(linkChecked);
-                      if (next.has(res.id)) next.delete(res.id); else next.add(res.id);
-                      setLinkChecked(next);
-                    }}
-                  >
-                    <Checkbox checked={isChecked} onChange={() => {}} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>
-                        {res.empName}{' '}
-                        <span style={{ color: '#8c8c8c', fontFamily: 'monospace', fontSize: '10px' }}>({res.raId})</span>
+            <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+              {allProcResources
+                .filter(res => {
+                  if (!linkSearch.trim()) return true;
+                  const q = linkSearch.toLowerCase();
+                  return res.empName.toLowerCase().includes(q) || res.raId.toLowerCase().includes(q) || res.piwRole.toLowerCase().includes(q);
+                })
+                .map(res => {
+                  const isChecked = linkChecked.has(res.id);
+                  const linkedElsewhere = res.processId != null && linkModal.row?.id != null && res.processId !== linkModal.row.id;
+                  const otherSow = linkedElsewhere ? (rows.find(r => r.id === res.processId)?.sow || `Process #${res.processId}`) : null;
+                  return (
+                    <div key={res.id} style={{ borderBottom: '1px solid #fafafa' }}>
+                      <div
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          background: isChecked ? '#f0f5ff' : '#fff',
+                        }}
+                        onClick={() => {
+                          const next = new Set(linkChecked);
+                          if (next.has(res.id)) next.delete(res.id); else next.add(res.id);
+                          setLinkChecked(next);
+                        }}
+                      >
+                        <Checkbox checked={isChecked} onChange={() => {}} />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626' }}>
+                            {res.empName}{' '}
+                            <span style={{ color: '#8c8c8c', fontFamily: 'monospace', fontSize: '10px' }}>({res.raId})</span>
+                          </div>
+                          <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 1 }}>
+                            {res.piwRole}
+                            {linkedElsewhere && (
+                              <span style={{ marginLeft: 8, color: '#fa8c16', fontWeight: 500 }}>
+                                ⚠ Linked to: {otherSow}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 1 }}>
-                        {res.piwRole}
-                        {linkedElsewhere && (
-                          <span style={{ marginLeft: 8, color: '#fa8c16', fontWeight: 500 }}>
-                            ⚠ Linked to: {otherSow}
-                          </span>
-                        )}
-                      </div>
+                      {isChecked && (
+                        <div style={{ display: 'flex', gap: 8, padding: '4px 12px 8px 42px', background: '#f8f9ff' }}
+                          onClick={e => e.stopPropagation()}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Engagement Start</div>
+                            <Input
+                              type="date" size="small"
+                              value={linkDates[res.id]?.startDate || ''}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setLinkDates(prev => {
+                                  const end = prev[res.id]?.endDate || '';
+                                  if (end && val && val > end) { message.warning('Start date must be before end date'); return prev; }
+                                  return { ...prev, [res.id]: { startDate: val, endDate: end } };
+                                });
+                              }}
+                              style={{ fontSize: '11px' }}
+                            />
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Engagement End</div>
+                            <Input
+                              type="date" size="small"
+                              value={linkDates[res.id]?.endDate || ''}
+                              min={linkDates[res.id]?.startDate || undefined}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setLinkDates(prev => {
+                                  const start = prev[res.id]?.startDate || '';
+                                  if (start && val && val < start) { message.warning('End date must be after start date'); return prev; }
+                                  return { ...prev, [res.id]: { startDate: start, endDate: val } };
+                                });
+                              }}
+                              style={{ fontSize: '11px' }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           )}
         </Spin>
-        <div style={{ marginTop: 10, fontSize: '11px', color: '#8c8c8c' }}>
-          {linkChecked.size} resource(s) selected
-        </div>
       </Modal>
     </div>
   );
@@ -1568,6 +2345,222 @@ function SowTab({ onUpload, onDelete }: { onUpload: (file: File, processKey: str
         </div>
       )}
     </div>
+  );
+}
+
+// --- SOW Upload Sub-tab ---
+interface SowUploadSubTabProps {
+  processRows: ProcessRow[];
+  onRowCreated: (row: ProcessRow) => void;
+}
+
+function SowUploadSubTab({ processRows, onRowCreated }: SowUploadSubTabProps) {
+  const { getAppValue } = useConfig();
+  const { currentUser } = useAuth();
+  const spUrl = getAppValue('SOW_STORAGE_URL') || '';
+  const [uploading, setUploading] = useState(false);
+  const [uploadedList, setUploadedList] = useState<{ key: string; file: File; sowName: string; date: string }[]>([]);
+
+  const handleFile = async (file: File) => {
+    const sowName = file.name.replace(/\.[^/.]+$/, '').trim();
+
+    // Uniqueness check
+    const exists = processRows.some(r => r.sow.trim().toLowerCase() === sowName.toLowerCase());
+    if (exists) {
+      message.error(
+        <span>
+          A process with SOW name <strong>"{sowName}"</strong> already exists.<br />
+          Please rename the file to a unique name before uploading.
+        </span>,
+        6,
+      );
+      return false;
+    }
+
+    setUploading(true);
+    try {
+      const res = await processApi.createProcess({
+        sow: sowName,
+        sno: 0,
+        startDate: todayDateStr(),
+        signedSow: '',
+        piw: '',
+        active: 'Yes',
+        salesforceId: '',
+        promsId: '',
+        budget: '',
+        openAirCode: '',
+        eprev: '',
+        comments: '',
+        accountAnchor: '',
+        changedBy: currentUser?.username,
+      });
+
+      if (res.ok) {
+        const newRow: ProcessRow = {
+          key: `pr_sow_${Date.now()}`,
+          id: res.id,
+          sno: processRows.length + 1,
+          processId: res.id ? `P${res.id}` : '',
+          startDate: todayDateStr(),
+          sow: sowName,
+          signedSow: '',
+          piw: '',
+          active: 'Yes',
+          salesforceId: '',
+          promsId: '',
+          budget: '',
+          openAirCode: '',
+          eprev: '',
+          comments: '',
+          sowFile: file,
+          accountAnchor: '',
+        };
+        onRowCreated(newRow);
+        setUploadedList(prev => [...prev, { key: `upl_${Date.now()}`, file, sowName, date: todayDateStr() }]);
+
+        if (spUrl) {
+          message.success(
+            <span>
+              Process <strong>"{sowName}"</strong> created.&nbsp;
+              Click <em>Open SharePoint ↗</em> to save the file there.
+            </span>,
+            6,
+          );
+        } else {
+          message.success(`Process "${sowName}" created successfully.`);
+        }
+      } else {
+        message.error('Failed to create process record. Please try again.');
+      }
+    } catch (e: any) {
+      message.error(e.message || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+    return false;
+  };
+
+  return (
+    <div>
+      {/* SharePoint banner */}
+      {spUrl ? (
+        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
+          <span style={{ flex: 1 }}>📁 After uploading here, save the document to the configured SharePoint folder.</span>
+          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>
+            Open SharePoint Folder ↗
+          </a>
+        </div>
+      ) : (
+        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
+          💡 Configure <strong>SOW_STORAGE_URL</strong> in App Configuration to link to your SharePoint SOW folder.
+        </div>
+      )}
+
+      <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#389e0d' }}>
+        📌 The <strong>file name</strong> (without extension) will become the <strong>SOW Name</strong> in Process Overview. Make sure it is unique before uploading.
+      </div>
+
+      {/* Upload dragger */}
+      <Upload.Dragger
+        multiple={false}
+        beforeUpload={handleFile}
+        showUploadList={false}
+        disabled={uploading}
+        style={{ borderRadius: 8, marginBottom: 20 }}
+      >
+        <p className="ant-upload-drag-icon">
+          <InboxOutlined style={{ fontSize: 36, color: '#1890ff' }} />
+        </p>
+        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>
+          {uploading ? 'Creating process record…' : 'Click or drag SOW document to upload'}
+        </p>
+        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
+          Supports all file types. File name = SOW Name. Must be unique. Automatically creates a Process Overview entry.
+        </p>
+      </Upload.Dragger>
+
+      {/* Uploaded list */}
+      {uploadedList.length === 0 ? (
+        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '32px 0', textAlign: 'center' }}>
+          <FileProtectOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 8, display: 'block' }} />
+          <Text type="secondary" style={{ fontSize: '12px' }}>No SOW documents uploaded in this session.</Text>
+        </div>
+      ) : (
+        <div>
+          <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
+            Uploaded this session ({uploadedList.length})
+          </Text>
+          {uploadedList.map(({ key, file, sowName, date }) => (
+            <div key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              background: '#fff', borderRadius: 8,
+              border: '1px solid #f0f0f0', borderLeft: '3px solid #52c41a',
+              padding: '10px 14px', marginBottom: 8,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+            }}>
+              <FileProtectOutlined style={{ color: '#52c41a', fontSize: 20, flexShrink: 0 }} />
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {file.name}
+                </div>
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: 2 }}>
+                  SOW: {sowName} &nbsp;·&nbsp; {date} &nbsp;·&nbsp; {(file.size / 1024).toFixed(1)} KB
+                </div>
+              </div>
+              <Tag color="green" style={{ fontSize: '10px', flexShrink: 0 }}>Process Created</Tag>
+              {spUrl && (
+                <Tooltip title="Open SharePoint folder to save the file there" overlayInnerStyle={{ fontSize: '11px', maxWidth: 220 }}>
+                  <Button
+                    size="small"
+                    style={{ borderRadius: 6, fontSize: '10px', borderColor: '#1890ff', color: '#1890ff' }}
+                    onClick={() => {
+                      downloadFile(file);
+                      window.open(spUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                  >
+                    Save to SP ↗
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip title="Download file" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFile(file)} style={{ borderRadius: 6 }} />
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- SOW Tab (with Create / Upload sub-tabs) ---
+interface SowTabContentProps {
+  resources: ResourceRow[];
+  processRows: ProcessRow[];
+  onRowCreated: (row: ProcessRow) => void;
+  spUrl?: string;
+}
+
+function SowTabContent({ resources, processRows, onRowCreated, spUrl = '' }: SowTabContentProps) {
+  return (
+    <Tabs
+      defaultActiveKey="upload"
+      size="small"
+      tabBarStyle={{ marginBottom: 14 }}
+      items={[
+        {
+          key: 'upload',
+          label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><UploadOutlined /> Upload</span>,
+          children: <SowUploadSubTab processRows={processRows} onRowCreated={onRowCreated} />,
+        },
+        {
+          key: 'create',
+          label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><FileProtectOutlined /> Create</span>,
+          children: <SowGenerateTab resources={resources} processRows={processRows} spUrl={spUrl} />,
+        },
+      ]}
+    />
   );
 }
 
@@ -2001,6 +2994,7 @@ function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTab
   const [resourceRows, setResourceRows] = useState<PiwResourceEntry[]>([
     { key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, resourceStartDate: '', resourceEndDate: '' },
   ]);
+  const [raidErrors, setRaidErrors] = useState<{ notFound: string[]; duplicates: string[]; missing: number[] } | null>(null);
 
   // SOW options from process overview
   const sowOptions = useMemo(() =>
@@ -2089,26 +3083,26 @@ function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTab
   };
 
   const handleResourceExcelUpload = (file: File) => {
+    setRaidErrors(null);
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        // raw:false → XLSX returns the pre-formatted display string for dates (e.g. "1/1/26")
-        // which is always timezone-correct (avoids UTC midnight IST → prev-day UTC bug)
         const wb = XLSX.read(e.target?.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { raw: false });
         const newRows: PiwResourceEntry[] = [];
-        const errors: string[] = [];
+        const notFound: string[] = [];
+        const duplicates: string[] = [];
+        const missing: number[] = [];
 
         rows.forEach((row, i) => {
           const raidId = String(row['RAID'] || row['RA ID'] || row['Ra Id'] || '').trim();
-          if (!raidId) { errors.push(`Row ${i + 2}: Missing RAID`); return; }
+          if (!raidId) { missing.push(i + 2); return; }
 
-          const isDuplicate = newRows.some(r => r.raidId === raidId);
-          if (isDuplicate) { errors.push(`Row ${i + 2}: Duplicate RAID ${raidId}`); return; }
+          if (newRows.some(r => r.raidId === raidId)) { duplicates.push(raidId); return; }
 
           const res = resources.find(r => r.raId === raidId);
-          if (!res) { errors.push(`Row ${i + 2}: RAID "${raidId}" not found in Resource Hub`); return; }
+          if (!res) { notFound.push(raidId); return; }
 
           const skillType = String(row['Skill Type'] || row['skill_type'] || 'Commodity').trim();
           const normalizedSkill = skillType.toLowerCase().includes('spec') ? 'Specialized' : 'Commodity';
@@ -2129,20 +3123,18 @@ function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTab
           });
         });
 
-        if (newRows.length === 0 && errors.length > 0) {
-          Modal.error({ title: 'Upload Failed', content: <ul style={{ margin: 0, paddingLeft: 18 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '12px', color: '#f5222d' }}>{e}</li>)}</ul> });
+        const hasIssues = notFound.length > 0 || duplicates.length > 0 || missing.length > 0;
+        if (hasIssues) setRaidErrors({ notFound, duplicates, missing });
+
+        if (newRows.length === 0) {
+          // Nothing loaded — only show errors, don't clear existing rows
+          if (!hasIssues) message.error('No valid resource rows found in file');
           return;
         }
 
         setResourceRows(newRows);
-        if (errors.length > 0) {
-          Modal.warning({
-            title: `${newRows.length} resource(s) loaded — ${errors.length} row(s) skipped`,
-            content: <ul style={{ margin: 0, paddingLeft: 18 }}>{errors.map((e, i) => <li key={i} style={{ fontSize: '12px' }}>{e}</li>)}</ul>,
-          });
-        } else {
-          message.success(`${newRows.length} resource(s) loaded from Excel`);
-        }
+        if (!hasIssues) message.success(`${newRows.length} resource(s) loaded from Excel`);
+        else message.warning(`${newRows.length} resource(s) loaded — see errors below`);
       } catch (e: any) { message.error(e.message || 'Failed to parse file'); }
     };
     reader.readAsBinaryString(file);
@@ -2241,6 +3233,7 @@ function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTab
     setGeneratedData(null);
     setAddCrmVisible(false);
     setResourceRows([{ key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
+    setRaidErrors(null);
   };
 
   const inputStyle = { width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: 4, fontSize: '12px' };
@@ -2430,6 +3423,44 @@ function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTab
             </div>
           )}
 
+          {/* Persistent RAID errors from Excel upload */}
+          {raidErrors && (
+            <Alert
+              type={raidErrors.notFound.length > 0 ? 'error' : 'warning'}
+              showIcon
+              closable
+              onClose={() => setRaidErrors(null)}
+              message={
+                raidErrors.notFound.length > 0
+                  ? `${raidErrors.notFound.length} RAID ID(s) not found in Resource Hub — rows skipped`
+                  : `${raidErrors.duplicates.length + raidErrors.missing.length} row(s) skipped`
+              }
+              description={
+                <div style={{ fontSize: '11px' }}>
+                  {raidErrors.notFound.length > 0 && (
+                    <div style={{ marginBottom: 4 }}>
+                      <strong>Not found in Resource Hub:</strong>{' '}
+                      {raidErrors.notFound.map(r => <Tag key={r} color="red" style={{ fontSize: '10px', marginBottom: 2 }}>{r}</Tag>)}
+                      <br /><span style={{ color: '#8c8c8c' }}>Ensure the RA ID in Resource Hub matches exactly (check the RA ID column in Resource Hub).</span>
+                    </div>
+                  )}
+                  {raidErrors.duplicates.length > 0 && (
+                    <div style={{ marginBottom: 4 }}>
+                      <strong>Duplicate RAIDs skipped:</strong>{' '}
+                      {raidErrors.duplicates.map(r => <Tag key={r} color="orange" style={{ fontSize: '10px', marginBottom: 2 }}>{r}</Tag>)}
+                    </div>
+                  )}
+                  {raidErrors.missing.length > 0 && (
+                    <div>
+                      <strong>Rows with missing RAID (skipped):</strong> Row {raidErrors.missing.join(', Row ')}
+                    </div>
+                  )}
+                </div>
+              }
+              style={{ marginBottom: 12, fontSize: '12px' }}
+            />
+          )}
+
           {resourceRows.map((row, index) => {
             const selectedInOtherRows = new Set(
               resourceRows.filter((_, i) => i !== index).map(r => r.raidId).filter(Boolean)
@@ -2587,10 +3618,537 @@ function PiwTab({ resources = [], processRows = [], onUpdateProcessRow }: PiwTab
   );
 }
 
-export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] }) {
+// --- PIW Upload Sub-tab ---
+interface PiwUploadSubTabProps {
+  processRows: ProcessRow[];
+  resources?: ResourceRow[];
+  onUpdateProcessRow?: (key: string, updates: Partial<ProcessRow>) => void;
+  onResourcesLinked?: () => void;
+}
+
+function PiwUploadSubTab({ processRows, resources = [], onUpdateProcessRow, onResourcesLinked }: PiwUploadSubTabProps) {
+  const { getAppValue } = useConfig();
+  const { currentUser } = useAuth();
+  const changedBy = currentUser?.username || currentUser?.name || 'system';
+  const spUrl = getAppValue('PIW_STORAGE_URL') || '';
+  const [selectedSow, setSelectedSow] = useState<string | undefined>(undefined);
+  const [existingPiw, setExistingPiw] = useState<string | undefined>(undefined);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [unmatchedRaids, setUnmatchedRaids] = useState<{ raidsFound: string[]; unmatched: string[]; resourceCount: number } | null>(null);
+  const [uploadedList, setUploadedList] = useState<{ key: string; file: File; piwName: string; sowName: string; date: string; linkedCount: number }[]>([]);
+
+  const sowOptions = processRows.map(r => ({ value: r.key, label: r.sow }));
+
+  const handleSowChange = (v: string | undefined) => {
+    setSelectedSow(v);
+    if (v) {
+      const row = processRows.find(r => r.key === v);
+      setExistingPiw(row?.piw?.trim() || undefined);
+    } else {
+      setExistingPiw(undefined);
+    }
+  };
+
+  // Extract RAID IDs + Start/End Dates from PIW Excel/xlsm — targets the "Calculation" sheet.
+  // Reads only the contiguous Section 1 block: walks rows from headerRow+1 and stops
+  // at the first row where the "#" column is empty or non-integer.
+  const extractRaidsFromExcel = async (file: File): Promise<{ raids: string[]; dateMap: Record<string, { startDate: string; endDate: string }> }> => {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    const allRaids: string[] = [];
+    const dateMap: Record<string, { startDate: string; endDate: string }> = {};
+
+    const calcName = wb.SheetNames.find(n => /calculation/i.test(n));
+    const sheetToSearch = calcName ? [calcName] : wb.SheetNames;
+
+    for (const sheetName of sheetToSearch) {
+      const ws = wb.Sheets[sheetName];
+      const cells = Object.keys(ws).filter(k => !k.startsWith('!'));
+
+      const raidHeaderCell = cells.find(k => String(ws[k].v || '').trim().toUpperCase() === 'RAID');
+      const seqHeaderCell = cells.find(k => String(ws[k].v || '').trim() === '#');
+      if (!raidHeaderCell) continue;
+
+      const raidCol = raidHeaderCell.replace(/\d+/, '');
+      const headerRow = parseInt(raidHeaderCell.replace(/[A-Z]+/, ''), 10);
+      const seqCol = seqHeaderCell ? seqHeaderCell.replace(/\d+/, '') : 'A';
+
+      // Find Start Date and End Date columns in the same header row
+      const startDateHeaderCell = cells.find(k => {
+        const row = parseInt(k.replace(/[A-Z]+/, ''), 10);
+        return row === headerRow && /^start\s*date$/i.test(String(ws[k].v || '').trim());
+      });
+      const endDateHeaderCell = cells.find(k => {
+        const row = parseInt(k.replace(/[A-Z]+/, ''), 10);
+        return row === headerRow && /^end\s*date$/i.test(String(ws[k].v || '').trim());
+      });
+      const startCol = startDateHeaderCell ? startDateHeaderCell.replace(/\d+/, '') : null;
+      const endCol = endDateHeaderCell ? endDateHeaderCell.replace(/\d+/, '') : null;
+
+      // Helper to parse a cell value into ISO date string (timezone-safe — always uses local date parts)
+      const localIso = (d: Date) =>
+        `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const parseDate = (cellKey: string): string => {
+        const cell = ws[cellKey];
+        if (!cell) return '';
+        // cellDates:true → cell.v may be a JS Date; use local getters to avoid UTC rollback
+        if (cell.v instanceof Date) return localIso(cell.v);
+        // Numeric serial (Excel date) — XLSX.SSF gives correct d/m/y
+        if (typeof cell.v === 'number') {
+          const d = XLSX.SSF.parse_date_code(cell.v);
+          if (d) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
+        }
+        // String date like "2026-01-01" or "01-Jan-2026"
+        const s = String(cell.v || '').trim();
+        if (!s || s === '—' || s === '-') return '';
+        // Parse as local midnight to avoid timezone shift
+        const parts = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (parts) return s; // already ISO, no conversion needed
+        const parsed = new Date(s);
+        if (!isNaN(parsed.getTime())) return localIso(parsed);
+        return '';
+      };
+
+      // Walk rows sequentially — stop at first row where # column is not a positive integer
+      for (let row = headerRow + 1; row <= headerRow + 500; row++) {
+        const seqCellKey = `${seqCol}${row}`;
+        const seqVal = ws[seqCellKey] ? Number(ws[seqCellKey].v) : NaN;
+        if (!Number.isInteger(seqVal) || seqVal <= 0) break; // end of section 1
+
+        const raidCellKey = `${raidCol}${row}`;
+        const v = ws[raidCellKey] ? String(ws[raidCellKey].v || '').trim() : '';
+        if (v && v !== '—' && v !== '-') {
+          allRaids.push(v);
+          const startDate = startCol ? parseDate(`${startCol}${row}`) : '';
+          const endDate = endCol ? parseDate(`${endCol}${row}`) : '';
+          dateMap[v] = { startDate, endDate };
+        }
+      }
+
+      if (allRaids.length > 0) break;
+    }
+
+    return { raids: [...new Set(allRaids)], dateMap };
+  };
+
+  const [linkDiag, setLinkDiag] = useState<{ step: string; detail: string } | null>(null);
+
+  const doUpload = async (file: File, piwName: string, row: ProcessRow) => {
+    setUploading(true);
+    setUploadError(null);
+    setUnmatchedRaids(null);
+    try {
+      // Fetch currently linked resources BEFORE linking new ones (for the result popup)
+      const { resources: freshAll } = await resourceApi.getResources();
+      const alreadyLinked = freshAll.filter((r: any) => {
+        const pid = r.process_id != null ? Number(r.process_id) : null;
+        return pid === row.id;
+      }).map((r: any) => ({ raId: r.ra_id || '', empName: r.emp_name || '' }));
+
+      // Save PIW name on the process record (update, never create)
+      await processApi.updateProcess(row.id!, {
+        sow: row.sow, sno: row.sno, startDate: row.startDate, signedSow: row.signedSow,
+        piw: piwName, active: row.active, salesforceId: row.salesforceId,
+        promsId: row.promsId, budget: row.budget, openAirCode: row.openAirCode,
+        eprev: row.eprev, comments: row.comments, accountAnchor: row.accountAnchor,
+        changedBy,
+      });
+      // Explicit audit entry for PIW Upload event (so it appears clearly in audit log)
+      try {
+        await fetch('http://localhost:3001/api/audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            module: 'ra_process', record_id: row.id, record_name: row.sow,
+            field: 'PIW Uploaded', old_value: row.piw || '', new_value: piwName, changed_by: changedBy,
+          }),
+        });
+      } catch (_) {}
+      if (onUpdateProcessRow) onUpdateProcessRow(row.key, { piw: piwName });
+      setExistingPiw(piwName);
+
+      // Parse Excel for RAIDs and auto-link matched resources
+      let linkedCount = 0;
+      const unmatched: string[] = [];
+      let raidsFound: string[] = [];
+      if (file.name.match(/\.(xlsx|xls|xlsm)$/i)) {
+        setLinkDiag({ step: 'scanning', detail: `Resource Hub: ${resources.length} resources. Scanning Calculation sheet…` });
+
+        if (resources.length === 0) {
+          setUploadError('Resource Hub has 0 resources loaded. Navigate to Resource Hub tab first to load resources, then retry the upload.');
+          setLinkDiag(null);
+        } else {
+          raidsFound = await extractRaidsFromExcel(file);
+          const raidDateMap = raidsFound.dateMap ?? {};
+          const raids = raidsFound.raids ?? raidsFound as unknown as string[];
+          raidsFound = raids; // keep rest of code using raidsFound as string[]
+          setLinkDiag({ step: 'matched', detail: `Found ${raids.length} RAID(s) in Excel: [${raids.join(', ') || 'none'}]. Hub has: [${resources.map(r => r.raId).join(', ')}]` });
+
+          if (raids.length === 0) {
+            setUnmatchedRaids({ raidsFound: [], unmatched: [], resourceCount: resources.length });
+          } else if (row.id) {
+            const matched = raids
+              .map((raid: string) => resources.find(r => r.raId?.trim().toLowerCase() === raid.toLowerCase()))
+              .filter(Boolean) as ResourceRow[];
+            const noMatch = raids.filter((raid: string) => !resources.find(r => r.raId?.trim().toLowerCase() === raid.toLowerCase()));
+            unmatched.push(...noMatch);
+
+            setLinkDiag({ step: 'linking', detail: `Matched: [${matched.map(r => `${r.raId}(id=${r.id})`).join(', ')}]. Not matched: [${noMatch.join(', ')}]` });
+
+            const failedLinks: string[] = [];
+            const dateResults: { raId: string; empName: string; prevStart: string; prevEnd: string; startDate: string; endDate: string; dateError?: string }[] = [];
+
+            for (const res of matched) {
+              if (!res.id) { failedLinks.push(`${res.raId}: no DB id`); continue; }
+              try {
+                const ok = await resourceApi.setProcessLink(res.id, row.id, changedBy);
+                if (ok) linkedCount++;
+                else failedLinks.push(`${res.raId}: server returned false`);
+              } catch (err: any) {
+                failedLinks.push(`${res.raId}: ${err.message || 'error'}`);
+              }
+
+              // Update engagement dates from PIW Section 1
+              const dates = raidDateMap[res.raId?.trim() || ''] || raidDateMap[raids.find((r: string) => r.toLowerCase() === res.raId?.trim().toLowerCase()) || ''];
+              const prevStart = res.engagementStartDate || '';
+              const prevEnd = res.engagementEndDate || '';
+              if (dates && (dates.startDate || dates.endDate)) {
+                try {
+                  await resourceApi.updateResource(res.id, {
+                    engagementStartDate: dates.startDate || '',
+                    engagementEndDate: dates.endDate || '',
+                    changedBy,
+                  });
+                  dateResults.push({ raId: res.raId, empName: res.empName, prevStart, prevEnd, startDate: dates.startDate, endDate: dates.endDate });
+                } catch (err: any) {
+                  dateResults.push({ raId: res.raId, empName: res.empName, prevStart, prevEnd, startDate: dates.startDate, endDate: dates.endDate, dateError: err.message || 'failed' });
+                }
+              } else {
+                dateResults.push({ raId: res.raId, empName: res.empName, prevStart, prevEnd, startDate: '', endDate: '', dateError: 'No dates found in PIW Section 1' });
+              }
+            }
+            setLinkDiag(null);
+            if (failedLinks.length > 0) setUploadError(`Failed to link ${failedLinks.length} resource(s): ${failedLinks.join('; ')}`);
+            if (unmatched.length > 0) setUnmatchedRaids({ raidsFound: raids, unmatched, resourceCount: resources.length });
+            onResourcesLinked?.();
+
+            // Show clear Modal popup with full linking result
+            Modal.info({
+              title: '🔗 Resource Linking Results',
+              width: 520,
+              content: (
+                <div style={{ fontSize: '12px' }}>
+                  <p style={{ marginBottom: 8 }}>
+                    <strong>RAIDs found in Calculation sheet (Section 1):</strong>{' '}
+                    {raids.length > 0 ? raids.map((r: string) => <Tag key={r} style={{ fontSize: '11px' }}>{r}</Tag>) : <span style={{ color: '#8c8c8c' }}>None</span>}
+                  </p>
+                  {matched.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <strong style={{ color: '#389e0d' }}>✅ Newly linked ({matched.length - failedLinks.length}):</strong>
+                      <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                        {matched.map(r => (
+                          <li key={r.raId} style={{ color: failedLinks.some(f => f.startsWith(r.raId)) ? '#cf1322' : '#389e0d', marginBottom: 4 }}>
+                            {r.raId} — {r.empName} &nbsp;
+                            {failedLinks.some(f => f.startsWith(r.raId))
+                              ? <Tag color="red" style={{ fontSize: '10px' }}>Link Failed</Tag>
+                              : <Tag color="green" style={{ fontSize: '10px' }}>Linked ✓</Tag>}
+                            {/* Date update result */}
+                            {(() => {
+                              const dr = dateResults.find(d => d.raId === r.raId);
+                              if (!dr) return null;
+                              const fmtD = (iso: string) => {
+                                if (!iso) return '—';
+                                const d = new Date(iso + 'T00:00:00');
+                                return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+                              };
+                              if (dr.dateError) return (
+                                <div style={{ color: '#cf1322', fontSize: '10px', marginTop: 3 }}>
+                                  ⚠️ Dates not updated: {dr.dateError}
+                                  {(dr.prevStart || dr.prevEnd) && <span style={{ color: '#8c8c8c' }}> (current: {fmtD(dr.prevStart)} → {fmtD(dr.prevEnd)})</span>}
+                                </div>
+                              );
+                              if (dr.startDate || dr.endDate) return (
+                                <div style={{ fontSize: '10px', marginTop: 3, color: '#595959' }}>
+                                  {(dr.prevStart || dr.prevEnd) && (
+                                    <span style={{ color: '#8c8c8c', textDecoration: 'line-through', marginRight: 6 }}>
+                                      {fmtD(dr.prevStart)} → {fmtD(dr.prevEnd)}
+                                    </span>
+                                  )}
+                                  <span style={{ color: '#389e0d' }}>
+                                    📅 {fmtD(dr.startDate)} → {fmtD(dr.endDate)}
+                                  </span>
+                                </div>
+                              );
+                              return null;
+                            })()}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {noMatch.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <strong style={{ color: '#d46b08' }}>⚠️ Not found in Resource Hub ({noMatch.length}):</strong>
+                      <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                        {noMatch.map((r: string) => <li key={r} style={{ color: '#d46b08' }}>{r} — <span style={{ color: '#8c8c8c' }}>not in Resource Hub</span></li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {alreadyLinked.length > 0 && (
+                    <div style={{ marginBottom: 8, paddingTop: 8, borderTop: '1px solid #f0f0f0' }}>
+                      <strong style={{ color: '#595959' }}>🔗 Already linked to this SOW ({alreadyLinked.length}):</strong>
+                      <ul style={{ margin: '4px 0 0 16px', padding: 0 }}>
+                        {alreadyLinked.map(r => (
+                          <li key={r.raId} style={{ color: '#595959' }}>
+                            {r.raId} — {r.empName}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {raids.length === 0 && (
+                    <p style={{ color: '#cf1322' }}>⚠️ No RAID column found in Calculation sheet Section 1. Ensure the file was generated by this system.</p>
+                  )}
+                  <p style={{ marginTop: 10, color: '#8c8c8c', marginBottom: 0 }}>
+                    Resource Hub has <strong>{resources.length}</strong> resources loaded.
+                  </p>
+                </div>
+              ),
+            });
+          } // end if raidsFound.length > 0
+        } // end else (resources > 0)
+      } // end if xlsm/xlsx
+
+      setUploadedList(prev => [...prev, { key: `piw_${Date.now()}`, file, piwName, sowName: row.sow, date: todayDateStr(), linkedCount }]);
+      message.success(
+        linkedCount > 0
+          ? `PIW "${piwName}" linked to SOW "${row.sow}". ${linkedCount} resource(s) auto-linked.`
+          : `PIW "${piwName}" linked to SOW "${row.sow}". No resources linked — check errors below.`,
+        6,
+      );
+    } catch (e: any) {
+      setUploadError(e.message || 'Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleFile = (file: File) => {
+    setUploadError(null);
+    setUnmatchedRaids(null);
+    setLinkDiag(null);
+    if (!selectedSow) {
+      setUploadError('Please select a SOW before uploading.');
+      return false;
+    }
+    const piwName = file.name.replace(/\.[^/.]+$/, '').trim();
+
+    // Uniqueness check — exclude the currently selected SOW row (it's being overwritten)
+    const duplicate = processRows.find(
+      r => r.piw?.trim().toLowerCase() === piwName.toLowerCase() && r.key !== selectedSow
+    );
+    if (duplicate) {
+      setUploadError(`A PIW named "${piwName}" already exists on SOW "${duplicate.sow}". Please rename the file to a unique name before uploading.`);
+      return false;
+    }
+
+    const row = processRows.find(r => r.key === selectedSow);
+    if (!row) { setUploadError('Selected SOW not found. Please refresh and try again.'); return false; }
+
+    if (existingPiw) {
+      Modal.confirm({
+        title: 'Overwrite existing PIW?',
+        icon: <ExclamationCircleOutlined style={{ color: '#faad14' }} />,
+        content: (
+          <span>
+            This SOW already has PIW <strong>"{existingPiw}"</strong> linked.<br />
+            Uploading <strong>"{piwName}"</strong> will <strong>replace</strong> it.<br /><br />
+            To keep the existing PIW, cancel and unlink it from the process record first.
+          </span>
+        ),
+        okText: 'Overwrite PIW',
+        okButtonProps: { danger: true },
+        cancelText: 'Cancel',
+        onOk: () => doUpload(file, piwName, row),
+      });
+    } else {
+      doUpload(file, piwName, row);
+    }
+    return false;
+  };
+
+  return (
+    <div>
+      {/* SharePoint banner */}
+      {spUrl ? (
+        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
+          <span style={{ flex: 1 }}>📁 After uploading here, save the PIW document to the configured SharePoint folder.</span>
+          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>
+            Open SharePoint Folder ↗
+          </a>
+        </div>
+      ) : (
+        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
+          💡 Configure <strong>PIW_STORAGE_URL</strong> in App Configuration to link to your SharePoint PIW folder.
+        </div>
+      )}
+
+      <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#389e0d' }}>
+        📌 The <strong>file name</strong> (without extension) will become the <strong>PIW Name</strong>. Upload <strong>.xlsm</strong> files (PIW generated by this system) — RAID IDs will be read from the <strong>Calculation</strong> sheet and matching resources will be <strong>auto-linked</strong>.
+      </div>
+
+      {/* SOW selector */}
+      <div style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 14px', marginBottom: existingPiw ? 8 : 16 }}>
+        <div style={{ fontSize: '11px', fontWeight: 600, color: '#595959', marginBottom: 8 }}>Select SOW to link this PIW to</div>
+        <Select
+          showSearch
+          placeholder="Search and select a SOW…"
+          style={{ width: '100%' }}
+          size="small"
+          value={selectedSow}
+          onChange={handleSowChange}
+          options={sowOptions}
+          filterOption={(input, opt) => (opt?.label as string || '').toLowerCase().includes(input.toLowerCase())}
+          allowClear
+        />
+      </div>
+
+
+      {/* Persistent error alert (actual errors only) */}
+      {uploadError && (
+        <Alert
+          type="error"
+          showIcon
+          closable
+          onClose={() => setUploadError(null)}
+          message="Upload Error"
+          description={uploadError}
+          style={{ marginBottom: 14, fontSize: '12px' }}
+        />
+      )}
+
+      {/* Diagnostic panel — shows scan progress */}
+      {linkDiag && (
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: '11px', color: '#003eb3' }}>
+          <Spin size="small" style={{ marginRight: 8 }} />
+          {linkDiag.detail}
+        </div>
+      )}
+
+      {/* Upload dragger */}
+      <Upload.Dragger
+        multiple={false}
+        beforeUpload={handleFile}
+        showUploadList={false}
+        accept=".xlsx,.xls,.xlsm"
+        disabled={uploading || !selectedSow}
+        style={{ borderRadius: 8, marginBottom: 20 }}
+      >
+        <p className="ant-upload-drag-icon">
+          <InboxOutlined style={{ fontSize: 36, color: selectedSow ? '#1890ff' : '#d9d9d9' }} />
+        </p>
+        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px', color: selectedSow ? '#262626' : '#bfbfbf' }}>
+          {uploading ? 'Saving PIW record…' : selectedSow ? 'Click or drag PIW document to upload' : 'Select a SOW above first'}
+        </p>
+        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
+          Supports .xlsm (recommended), .xlsx, .xls. File name = PIW Name. RAIDs in Calculation sheet auto-link resources.
+        </p>
+      </Upload.Dragger>
+
+      {/* Uploaded list */}
+      {uploadedList.length === 0 ? (
+        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '32px 0', textAlign: 'center' }}>
+          <IdcardOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 8, display: 'block' }} />
+          <Text type="secondary" style={{ fontSize: '12px' }}>No PIW documents uploaded in this session.</Text>
+        </div>
+      ) : (
+        <div>
+          <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
+            Uploaded this session ({uploadedList.length})
+          </Text>
+          {uploadedList.map(({ key, file, piwName, sowName, date, linkedCount }) => (
+            <div key={key} style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              background: '#fff', borderRadius: 8,
+              border: '1px solid #f0f0f0', borderLeft: '3px solid #1890ff',
+              padding: '10px 14px', marginBottom: 8,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+            }}>
+              <IdcardOutlined style={{ color: '#1890ff', fontSize: 20, flexShrink: 0 }} />
+              <div style={{ flex: 1, overflow: 'hidden' }}>
+                <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {file.name}
+                </div>
+                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: 2 }}>
+                  PIW: {piwName} &nbsp;·&nbsp; SOW: {sowName} &nbsp;·&nbsp; {date} &nbsp;·&nbsp; {(file.size / 1024).toFixed(1)} KB
+                </div>
+              </div>
+              <Tag color="blue" style={{ fontSize: '10px', flexShrink: 0 }}>PIW Linked</Tag>
+              {linkedCount > 0 && <Tag color="green" style={{ fontSize: '10px', flexShrink: 0 }}>{linkedCount} Resource{linkedCount !== 1 ? 's' : ''} Linked</Tag>}
+              {spUrl && (
+                <Tooltip title="Open SharePoint folder to save the file there" overlayInnerStyle={{ fontSize: '11px', maxWidth: 220 }}>
+                  <Button
+                    size="small"
+                    style={{ borderRadius: 6, fontSize: '10px', borderColor: '#1890ff', color: '#1890ff' }}
+                    onClick={() => {
+                      downloadFile(file);
+                      window.open(spUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                  >
+                    Save to SP ↗
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip title="Download file" overlayInnerStyle={{ fontSize: '11px' }}>
+                <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFile(file)} style={{ borderRadius: 6 }} />
+              </Tooltip>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- PIW Tab Content (with Upload / Create sub-tabs) ---
+interface PiwTabContentProps {
+  resources: ResourceRow[];
+  processRows: ProcessRow[];
+  onUpdateProcessRow?: (key: string, updates: Partial<ProcessRow>) => void;
+  onResourcesLinked?: () => void;
+}
+
+function PiwTabContent({ resources, processRows, onUpdateProcessRow, onResourcesLinked }: PiwTabContentProps) {
+  return (
+    <Tabs
+      defaultActiveKey="upload"
+      size="small"
+      tabBarStyle={{ marginBottom: 14 }}
+      items={[
+        {
+          key: 'upload',
+          label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><UploadOutlined /> Upload</span>,
+          children: <PiwUploadSubTab processRows={processRows} resources={resources} onUpdateProcessRow={onUpdateProcessRow} onResourcesLinked={onResourcesLinked} />,
+        },
+        {
+          key: 'create',
+          label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><IdcardOutlined /> Create</span>,
+          children: <PiwTab resources={resources} processRows={processRows} onUpdateProcessRow={onUpdateProcessRow} />,
+        },
+      ]}
+    />
+  );
+}
+
+export function InternalProcess({ resources = [], initialSow }: { resources?: ResourceRow[]; initialSow?: string }) {
   const { getAppValue } = useConfig();
   const [processRows, setProcessRows] = useState<ProcessRow[]>([]);
   const [fromServer, setFromServer] = useState(false);
+  const [resourceRefreshKey, setResourceRefreshKey] = useState(0);
+  // Controlled tab state — when initialSow is provided, go to Process → Overview
+  const [outerTab, setOuterTab] = useState(initialSow ? 'process' : 'sow');
+  const [innerTab, setInnerTab] = useState('overview');
 
   useEffect(() => {
     processApi.getProcessRows().then(({ rows, fromServer: fs }) => {
@@ -2598,6 +4156,7 @@ export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] 
         setProcessRows(rows.map((r: any, i: number) => ({
           key: `pr_db_${r.id || i}`,
           id: r.id,
+          processId: r.process_id || '',
           sno: r.sno || i + 1,
           startDate:    r.start_date || '',
           sow:          r.sow || '',
@@ -2608,6 +4167,7 @@ export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] 
           promsId:      r.proms_id || '',
           budget:       r.budget || '',
           openAirCode:  r.open_air_code || '',
+          eprev:        r.eprev || '',
           comments:     r.comments || '',
           accountAnchor: r.account_anchor || '',
         })));
@@ -2630,6 +4190,7 @@ export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] 
       promsId: '',
       budget: '',
       openAirCode: '',
+      eprev: '',
       comments: '',
       sowFile: file,
     }]);
@@ -2637,6 +4198,10 @@ export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] 
 
   const handleSowDelete = (processKey: string) => {
     setProcessRows(prev => prev.filter(r => r.key !== processKey).map((r, i) => ({ ...r, sno: i + 1 })));
+  };
+
+  const handleRowCreatedFromUpload = (row: ProcessRow) => {
+    setProcessRows(prev => [...prev, row]);
   };
 
   const handleUpdateProcessRow = (key: string, updates: Partial<ProcessRow>) => {
@@ -2647,28 +4212,48 @@ export function InternalProcess({ resources = [] }: { resources?: ResourceRow[] 
     <div style={{ padding: '20px 24px', maxWidth: 1360, margin: '0 auto' }}>
       <div style={{ background: '#fff', borderRadius: 10, padding: '0 20px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
         <Tabs
-          defaultActiveKey="sow"
+          activeKey={outerTab}
+          onChange={setOuterTab}
           tabBarStyle={{ marginBottom: 16, paddingTop: 4 }}
           items={[
             {
               key: 'sow',
               label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><FileWordOutlined /> SOW</span>,
-              children: <SowGenerateTab resources={resources} processRows={processRows} spUrl={getAppValue('SOW_STORAGE_URL') || ''} />,
+              children: <SowTabContent resources={resources} processRows={processRows} onRowCreated={handleRowCreatedFromUpload} spUrl={getAppValue('SOW_STORAGE_URL') || ''} />,
             },
             {
               key: 'piw',
               label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><IdcardOutlined /> PIW</span>,
-              children: <PiwTab resources={resources} processRows={processRows} onUpdateProcessRow={handleUpdateProcessRow} />,
+              children: <PiwTabContent resources={resources} processRows={processRows} onUpdateProcessRow={handleUpdateProcessRow} onResourcesLinked={() => setResourceRefreshKey(k => k + 1)} />,
             },
             {
               key: 'process',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><NodeIndexOutlined /> Process Overview</span>,
-              children: <ProcessTab rows={processRows} setRows={setProcessRows} fromServer={fromServer} setFromServer={setFromServer} />,
-            },
-            {
-              key: 'insights',
-              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><BarChartOutlined /> Insights</span>,
-              children: <ProcessInsights rows={processRows} />,
+              label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 5 }}><NodeIndexOutlined /> Process</span>,
+              children: (
+                <Tabs
+                  activeKey={innerTab}
+                  onChange={setInnerTab}
+                  size="small"
+                  tabBarStyle={{ marginBottom: 14 }}
+                  items={[
+                    {
+                      key: 'overview',
+                      label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><TableOutlined /> Overview</span>,
+                      children: <ProcessTab rows={processRows} setRows={setProcessRows} fromServer={fromServer} setFromServer={setFromServer} resourceRefreshKey={resourceRefreshKey} initialSow={initialSow} />,
+                    },
+                    {
+                      key: 'detailview',
+                      label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><ExpandAltOutlined /> Detailed View</span>,
+                      children: <ProcessDetailView rows={processRows} initialSow={initialSow} />,
+                    },
+                    {
+                      key: 'insights',
+                      label: <span style={{ fontSize: '12px', display: 'flex', alignItems: 'center', gap: 4 }}><BarChartOutlined /> Insights</span>,
+                      children: <ProcessInsights rows={processRows} />,
+                    },
+                  ]}
+                />
+              ),
             },
           ]}
         />

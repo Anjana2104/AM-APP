@@ -19,7 +19,7 @@ import {
   CalendarOutlined, ThunderboltOutlined, SearchOutlined, FileTextOutlined,
   ClockCircleOutlined, ReloadOutlined, RobotOutlined, CommentOutlined,
   HistoryOutlined, ExpandAltOutlined, ShrinkOutlined, ProjectOutlined,
-  DownloadOutlined, AppstoreOutlined, LinkOutlined,
+  DownloadOutlined, AppstoreOutlined, LinkOutlined, FilePdfOutlined,
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import * as resourceInsightsApi from '../api/resourceInsightsApi';
@@ -36,6 +36,7 @@ import { useConfig } from '../context/ConfigContext';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import ResourceOverviewCharts from '../components/ResourceOverviewCharts';
+import { jsPDF } from 'jspdf';
 dayjs.extend(relativeTime);
 
 const { Text, Title } = Typography;
@@ -599,14 +600,185 @@ interface ResourceInsightsProps {
   onNavigate?: (page: string, raId?: string) => void;
   onNavigateWithFilter?: (type: string, value: string) => void;
   onNavigateToRequest?: (beelineId: string) => void;
+  onNavigateToProcess?: (sowName: string) => void;
 }
 
-export default function ResourceInsights({ resources: propResources = [], onNavigate, onNavigateWithFilter, onNavigateToRequest }: ResourceInsightsProps) {
+export default function ResourceInsights({ resources: propResources = [], onNavigate, onNavigateWithFilter, onNavigateToRequest, onNavigateToProcess }: ResourceInsightsProps) {
   const { currentUser } = useAuth();
-  // Use username (not displayName) so it matches what's stored in the audit trail
   const defaultAuthor = currentUser?.username || '';
 
   const [resources, setResources] = useState<ResourceRow[]>(propResources);
+  const [exportingPdf, setExportingPdf] = useState(false);
+
+  const handleExportPdf = async () => {
+    if (!selectedResource) return;
+    setExportingPdf(true);
+    try {
+      // Fetch audit log fresh (may not be loaded yet if modal hasn't been opened)
+      const auditEntries = auditLog.length > 0
+        ? auditLog
+        : await auditApi.getAuditLog('resources', selectedResource.id);
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const margin = 14;
+      const colW = pageW - margin * 2;
+      let y = margin;
+
+      const addPageIfNeeded = (needed = 8) => {
+        if (y + needed > 280) { pdf.addPage(); y = margin; }
+      };
+
+      const drawSection = (title: string) => {
+        addPageIfNeeded(12);
+        pdf.setFillColor(30, 64, 175);
+        pdf.roundedRect(margin, y, colW, 7, 1.5, 1.5, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(9);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text(title.toUpperCase(), margin + 3, y + 5);
+        y += 10;
+        pdf.setTextColor(50, 50, 50);
+      };
+
+      const drawRow = (label: string, value: string) => {
+        addPageIfNeeded(7);
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setTextColor(100, 100, 100);
+        pdf.text(label + ':', margin + 2, y);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(30, 30, 30);
+        const lines = pdf.splitTextToSize(value || '—', colW - 52);
+        pdf.text(lines, margin + 50, y);
+        y += Math.max(6, lines.length * 5);
+      };
+
+      // ── Header ──────────────────────────────────────────────
+      pdf.setFillColor(245, 247, 255);
+      pdf.rect(0, 0, pageW, 22, 'F');
+      pdf.setFontSize(14);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setTextColor(30, 64, 175);
+      pdf.text(selectedResource.empName || '—', margin, 12);
+      pdf.setFontSize(9);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(`RA ID: ${selectedResource.raId || '—'}   |   Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`, margin, 19);
+      pdf.setDrawColor(200, 200, 230);
+      pdf.line(margin, 22, pageW - margin, 22);
+      y = 28;
+
+      // ── Basic Info ──────────────────────────────────────────
+      drawSection('Basic Information');
+      drawRow('Name', selectedResource.empName || '—');
+      drawRow('RA ID', selectedResource.raId || '—');
+      drawRow('Email', selectedResource.emailId || '—');
+      drawRow('Role', selectedResource.piwRole || selectedResource.roleOrDomain || '—');
+      drawRow('Experience', selectedResource.totalWorkex || '—');
+      drawRow('Date of Joining', selectedResource.doj ? fmtDate(selectedResource.doj) : '—');
+      y += 2;
+
+      // ── Engagement ──────────────────────────────────────────
+      drawSection('Current Engagement');
+      drawRow('Engagement', (selectedResource.engagement && selectedResource.engagement !== 'undefined') ? selectedResource.engagement : '—');
+      drawRow('Start Date', selectedResource.engagementStartDate ? fmtDate(selectedResource.engagementStartDate) : '—');
+      drawRow('End Date', selectedResource.engagementEndDate ? fmtDate(selectedResource.engagementEndDate) : '—');
+      drawRow('Allocation Status', selectedResource.allocationStatus || '—');
+      drawRow('Beeline ID', selectedResource.beelineId || '—');
+      drawRow('Linked SOW', selectedResource.sowName || '—');
+      y += 2;
+
+      // ── Skills ──────────────────────────────────────────────
+      if (selectedResource.skills) {
+        drawSection('Skills');
+        const skills = selectedResource.skills.split(',').map(s => s.trim()).filter(Boolean);
+        addPageIfNeeded(8);
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(30, 30, 30);
+        const lines = pdf.splitTextToSize(skills.join('  •  '), colW - 4);
+        pdf.text(lines, margin + 2, y);
+        y += lines.length * 5 + 4;
+      }
+
+      // ── Audit Log ────────────────────────────────────────────
+      if (auditEntries.length > 0) {
+        drawSection('Audit Log');
+        auditEntries.forEach(e => {
+          addPageIfNeeded(10);
+          pdf.setFontSize(8);
+          pdf.setFont('helvetica', 'bold');
+          pdf.setTextColor(50, 50, 50);
+          const fieldText = String(e.field || '—');
+          pdf.text(fieldText, margin + 2, y);
+          y += 5;
+          pdf.setFont('helvetica', 'normal');
+          pdf.setFontSize(7.5);
+          // Old value
+          pdf.setTextColor(150, 0, 0);
+          const oldVal = String(e.old_value || '—');
+          const oldLines = pdf.splitTextToSize(`Before: ${oldVal}`, colW - 4);
+          pdf.text(oldLines.slice(0, 2), margin + 2, y);
+          y += oldLines.slice(0, 2).length * 4;
+          // New value
+          pdf.setTextColor(0, 120, 0);
+          const newVal = String(e.new_value || '—');
+          const newLines = pdf.splitTextToSize(`After: ${newVal}`, colW - 4);
+          pdf.text(newLines.slice(0, 2), margin + 2, y);
+          y += newLines.slice(0, 2).length * 4;
+          // Meta
+          pdf.setFontSize(7);
+          pdf.setFont('helvetica', 'italic');
+          pdf.setTextColor(140, 140, 140);
+          const when = (() => { try { return new Date(e.changed_at).toLocaleString('en-GB'); } catch { return e.changed_at; } })();
+          pdf.text(`By ${e.changed_by || '—'}  ·  ${when}`, margin + 2, y);
+          y += 5;
+          pdf.setDrawColor(230, 230, 230);
+          pdf.line(margin, y - 1, pageW - margin, y - 1);
+        });
+      }
+
+      // ── Recent Log Entries ───────────────────────────────────
+      const recent = [...entries].sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()).slice(0, 10);
+      if (recent.length > 0) {
+        drawSection('Recent Log Entries (last 10)');
+        recent.forEach(e => {
+          addPageIfNeeded(14);
+          const meta = SECTION_META[e.section as keyof typeof SECTION_META];
+          pdf.setFontSize(8);
+          pdf.setFont('helvetica', 'bold');
+          pdf.setTextColor(30, 64, 175);
+          pdf.text(`[${meta?.label || e.section}]  ${e.title || ''}`, margin + 2, y);
+          y += 5;
+          if (e.body) {
+            pdf.setFont('helvetica', 'normal');
+            pdf.setTextColor(60, 60, 60);
+            const bodyLines = pdf.splitTextToSize(e.body, colW - 4);
+            const clipped = bodyLines.slice(0, 3);
+            pdf.text(clipped, margin + 2, y);
+            y += clipped.length * 4.5;
+            if (bodyLines.length > 3) { pdf.setTextColor(130, 130, 130); pdf.text('...', margin + 2, y); y += 4; }
+          }
+          pdf.setFontSize(7);
+          pdf.setFont('helvetica', 'italic');
+          pdf.setTextColor(140, 140, 140);
+          pdf.text(`${e.author || '—'}  ·  ${fmtDate(e.created_at)}`, margin + 2, y);
+          y += 6;
+          pdf.setDrawColor(230, 230, 230);
+          pdf.line(margin, y - 1, pageW - margin, y - 1);
+        });
+      }
+
+      const name = (selectedResource.empName || selectedResource.raId || 'resource').replace(/[^a-zA-Z0-9]/g, '_');
+      pdf.save(`${name}_Details.pdf`);
+    } catch (e) {
+      message.error('PDF export failed');
+      console.error(e);
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   // Beeline linking state
   const [beelineLinkModal, setBeelineLinkModal] = useState<{ open: boolean; resource: ResourceRow | null }>({ open: false, resource: null });
@@ -724,6 +896,9 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
         engagement: String(r.engagement || ''),
         allocationStatus: String(r.allocation_status || r.allocationStatus || ''),
         beelineId: String(r.beeline_id || r.beelineId || ''),
+        engagementStartDate: String(r.engagement_start_date || r.engagementStartDate || ''),
+        engagementEndDate: String(r.engagement_end_date || r.engagementEndDate || ''),
+        sowName: String(r.sow_name || r.sowName || ''),
       }));
       setResources(mapped);
       // If selected resource was deleted, clear it
@@ -778,6 +953,9 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
         skills: String(r.skills || ''), engagement: String(r.engagement || ''),
         allocationStatus: String(r.allocation_status || r.allocationStatus || ''),
         beelineId: String(r.beeline_id || r.beelineId || ''),
+        engagementStartDate: String(r.engagement_start_date || r.engagementStartDate || ''),
+        engagementEndDate: String(r.engagement_end_date || r.engagementEndDate || ''),
+        sowName: String(r.sow_name || r.sowName || ''),
       }));
       if (rows.length > 0) setResources(mapped);
       if (selectedResourceId) {
@@ -1312,6 +1490,11 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
               <Button size="small" icon={<ReloadOutlined />} onClick={handleRefresh} style={{ fontSize: 11 }} />
             </Tooltip>
           )}
+          {selectedResourceId && (
+            <Tooltip title="Export PDF">
+              <Button size="small" icon={<FilePdfOutlined style={{ color: '#cf1322' }} />} loading={exportingPdf} onClick={handleExportPdf} style={{ fontSize: 11 }} />
+            </Tooltip>
+          )}
         </div>
       </Card>
 
@@ -1499,6 +1682,12 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
                       : '—'}
                   </Text>
                 </Descriptions.Item>
+                <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Start Date</Text>}>
+                  <Text style={{ fontSize: 11 }}>{selectedResource?.engagementStartDate ? fmtDate(selectedResource.engagementStartDate) : '—'}</Text>
+                </Descriptions.Item>
+                <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>End Date</Text>}>
+                  <Text style={{ fontSize: 11 }}>{selectedResource?.engagementEndDate ? fmtDate(selectedResource.engagementEndDate) : '—'}</Text>
+                </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Allocation</Text>}>
                   {selectedResource?.allocationStatus ? (
                     <Tag
@@ -1528,6 +1717,14 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
                     </Button>
                   )}
                 </Descriptions.Item>
+                {selectedResource?.sowName && (
+                  <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Linked SOW</Text>}>
+                    <Tag icon={<LinkOutlined />} color="green" style={{ fontSize: 10, cursor: 'pointer' }}
+                      onClick={() => onNavigateToProcess?.(selectedResource.sowName!)}>
+                      {selectedResource.sowName}
+                    </Tag>
+                  </Descriptions.Item>
+                )}
               </Descriptions>
             </Card>
 

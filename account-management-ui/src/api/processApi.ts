@@ -17,6 +17,7 @@ export interface ProcessPayload {
   promsId: string;
   budget: string;
   openAirCode: string;
+  eprev?: string;
   comments: string;
   accountAnchor?: string;
   changedBy?: string;
@@ -80,6 +81,7 @@ export async function updateProcess(id: number, payload: Partial<ProcessPayload>
     body: JSON.stringify(payload),
   });
   const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Update failed');
   return data.ok === true;
 }
 

@@ -181,6 +181,8 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
     engagementName: '',
     beelineId: '',
     notes: '',
+    engagementStartDate: '',
+    engagementEndDate: '',
   });
 
   // Beeline linking state
@@ -640,6 +642,8 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
           totalWorkex: res.totalWorkex, skills: res.skills,
           engagement: allocationForm.engagementName,
           allocationStatus: pendingTargetStatus,
+          engagementStartDate: allocationForm.engagementStartDate || '',
+          engagementEndDate: allocationForm.engagementEndDate || '',
         };
         try {
           if (res.id) {
@@ -667,6 +671,8 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
           ...updatedAll[idx],
           engagement: allocationForm.engagementName,
           allocationStatus: pendingTargetStatus,
+          engagementStartDate: allocationForm.engagementStartDate || '',
+          engagementEndDate: allocationForm.engagementEndDate || '',
           ...(allocationForm.beelineId ? { beelineId: allocationForm.beelineId } : {}),
         };
         successCount++;
@@ -678,7 +684,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
         : `${successCount} resources`;
       message.success({ content: `${names} marked as ${pendingTargetStatus} for ${allocationForm.engagementName}`, duration: 5 });
       setAllocationDrawer(false);
-      setAllocationForm({ engagementName: '', beelineId: '', notes: '' });
+      setAllocationForm({ engagementName: '', beelineId: '', notes: '', engagementStartDate: '', engagementEndDate: '' });
       setPendingAllocResources([]);
       clearSelection();
     } catch (err) {
@@ -697,7 +703,12 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
       engagement: opts?.engagement !== undefined ? opts.engagement : resource.engagement || '',
       allocationStatus: newStatus,
     };
-    if (newStatus === '' || newStatus === 'Available') { payload.engagement = 'Bench'; payload.allocationStatus = 'Available'; }
+    if (newStatus === '' || newStatus === 'Available') {
+      payload.engagement = 'Bench';
+      payload.allocationStatus = 'Available';
+      payload.engagementStartDate = '';
+      payload.engagementEndDate = '';
+    }
     try {
       if (resource.id) {
         await resourceApi.updateResource(resource.id, { ...payload, changedBy: currentUser?.username || 'system' });
@@ -1693,7 +1704,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
             : <span>Bulk Allocate  -  {pendingAllocResources.length} Resources</span>
         }
         placement="right"
-        onClose={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '' }); setPendingAllocResources([]); }}
+        onClose={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '', engagementStartDate: '', engagementEndDate: '' }); setPendingAllocResources([]); }}
         open={allocationDrawer}
         width={420}
       >
@@ -1729,6 +1740,34 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
             />
           </div>
 
+          <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Engagement Start Date <span style={{ fontWeight: 400, color: '#8c8c8c' }}>(optional)</span></label>
+              <Input
+                type="date"
+                style={{ fontSize: '12px' }}
+                value={allocationForm.engagementStartDate}
+                onChange={(e) => setAllocationForm({ ...allocationForm, engagementStartDate: e.target.value })}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Engagement End Date <span style={{ fontWeight: 400, color: '#8c8c8c' }}>(optional)</span></label>
+              <Input
+                type="date"
+                style={{ fontSize: '12px' }}
+                value={allocationForm.engagementEndDate}
+                min={allocationForm.engagementStartDate || undefined}
+                onChange={(e) => {
+                  if (allocationForm.engagementStartDate && e.target.value && e.target.value < allocationForm.engagementStartDate) {
+                    message.warning('End date must be after start date');
+                    return;
+                  }
+                  setAllocationForm({ ...allocationForm, engagementEndDate: e.target.value });
+                }}
+              />
+            </div>
+          </div>
+
           <div>
             <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Link Beeline ID <span style={{ fontWeight: 400, color: '#8c8c8c' }}>(optional)</span></label>
             <Select
@@ -1762,7 +1801,7 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
 
           <Space style={{ width: '100%' }} size="small">
             <Button type="primary" loading={savingAllocation} onClick={handleSaveAllocation} style={{ flex: 1 }}>{pendingTargetStatus === 'Offered' ? 'Move to Offered' : 'Shortlist'}</Button>
-            <Button onClick={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '' }); }} style={{ flex: 1 }}>Cancel</Button>
+            <Button onClick={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '', engagementStartDate: '', engagementEndDate: '' }); }} style={{ flex: 1 }}>Cancel</Button>
           </Space>
         </Space>
       </Drawer>

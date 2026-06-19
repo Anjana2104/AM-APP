@@ -48,7 +48,12 @@ router.get("/comments-search", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const db = await getDb();
-    const rows = db.all("SELECT * FROM resources ORDER BY sno");
+    const rows = db.all(`
+      SELECT r.*, rp.sow AS sow_name
+      FROM resources r
+      LEFT JOIN ra_process rp ON rp.id = r.process_id
+      ORDER BY r.sno
+    `);
     res.json({ resources: rows });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -189,12 +194,16 @@ const FIELD_MAP = {
   role_or_domain: 'roleOrDomain', previous_workex: 'previousWorkex', doj: 'doj',
   total_workex: 'totalWorkex', engagement: 'engagement', skills: 'skills',
   allocation_status: 'allocationStatus',
+  engagement_start_date: 'engagementStartDate',
+  engagement_end_date: 'engagementEndDate',
 };
 const LABEL_MAP = {
   empName: 'Employee Name', emailId: 'Email', piwRole: 'PIW Role',
   roleOrDomain: 'Role/Domain', previousWorkex: 'Previous Workex', doj: 'DOJ',
   totalWorkex: 'Total Workex', engagement: 'Engagement', skills: 'Skills',
   allocationStatus: 'Allocation Status',
+  engagementStartDate: 'Engagement Start Date',
+  engagementEndDate: 'Engagement End Date',
 };
 
 /**
@@ -220,14 +229,17 @@ function updateOneWithAudit(db, id, r, changedBy) {
   db.run(
     `UPDATE resources SET emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
      previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?,
-     allocation_status=?, updated_at=? WHERE id=?`,
+     allocation_status=?, engagement_start_date=?, engagement_end_date=?, updated_at=? WHERE id=?`,
     [r.empName || existing.emp_name, r.emailId || existing.email_id,
      r.piwRole || existing.piw_role, r.roleOrDomain || existing.role_or_domain,
      r.previousWorkex || existing.previous_workex, r.doj || existing.doj,
      r.totalWorkex || existing.total_workex,
      r.engagement !== undefined ? r.engagement : (existing.engagement || ''),
      r.skills !== undefined ? r.skills : (existing.skills || ''),
-     updatedAllocStatus, new Date().toISOString(), parseInt(id, 10)]
+     updatedAllocStatus,
+     r.engagementStartDate !== undefined ? r.engagementStartDate : (existing.engagement_start_date || ''),
+     r.engagementEndDate !== undefined ? r.engagementEndDate : (existing.engagement_end_date || ''),
+     new Date().toISOString(), parseInt(id, 10)]
   );
 
   const ts = new Date().toISOString();
@@ -245,6 +257,8 @@ function updateOneWithAudit(db, id, r, changedBy) {
     engagement: r.engagement !== undefined ? (r.engagement || '') : (existing.engagement || ''),
     skills: r.skills !== undefined ? (r.skills || '') : (existing.skills || ''),
     allocationStatus: updatedAllocStatus,
+    engagementStartDate: r.engagementStartDate !== undefined ? (r.engagementStartDate || '') : (existing.engagement_start_date || ''),
+    engagementEndDate: r.engagementEndDate !== undefined ? (r.engagementEndDate || '') : (existing.engagement_end_date || ''),
   };
 
   for (const [dbCol, jsKey] of Object.entries(FIELD_MAP)) {
@@ -356,6 +370,24 @@ router.delete("/", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// DELETE /api/resources/all-comments  - delete ALL resource comments
+router.delete("/all-comments", async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM resource_comments");
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// DELETE /api/resources/all-audit  - delete ALL audit_log entries for resources module
+router.delete("/all-audit", async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM audit_log WHERE module='resources'");
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // DELETE /api/resources/:id

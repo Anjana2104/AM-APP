@@ -22,6 +22,7 @@ const { Text } = Typography;
 
 interface ProcessRow {
   id?: number;
+  processId?: string;
   sow: string;
   startDate?: string;
   signedSow?: string;
@@ -31,6 +32,7 @@ interface ProcessRow {
   promsId?: string;
   budget?: string;
   openAirCode?: string;
+  eprev?: string;
   comments?: string;
   accountAnchor?: string;
 }
@@ -40,6 +42,8 @@ interface LinkedResource {
   raId: string;
   empName: string;
   piwRole?: string;
+  engagementStartDate?: string;
+  engagementEndDate?: string;
 }
 
 interface Props {
@@ -154,6 +158,7 @@ export default function ProcessDetailPanel({
     ['Salesforce ID', row.salesforceId],
     ['PROMS ID',      row.promsId],
     ['Budget (INR)',   row.budget],
+    ['Eprev',         row.eprev],
     ['OpenAir Code',  row.openAirCode],
   ];
 
@@ -161,6 +166,11 @@ export default function ProcessDetailPanel({
   const headerCard = (
     <div style={{ background: 'linear-gradient(135deg, #e6f4ff, #f0f5ff)', padding: '12px 14px', borderRadius: 8, border: '1px solid #d6e4ff' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        {row.processId && (
+          <Tag color="blue" style={{ fontSize: 10, padding: '0 6px', margin: 0, fontWeight: 600 }}>
+            {row.processId}
+          </Tag>
+        )}
         <Tag color={isActive ? 'green' : 'orange'} style={{ fontSize: 10, padding: '0 6px', margin: 0 }}>
           {isActive ? 'Active' : 'Inactive'}
         </Tag>
@@ -257,15 +267,27 @@ export default function ProcessDetailPanel({
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Text type="secondary" style={{ fontSize: 11 }}>{linkedResources.length} resource{linkedResources.length !== 1 ? 's' : ''} linked</Text>
-          {linkedResources.map(r => (
-            <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
-              <UserOutlined style={{ color: '#1890ff', fontSize: 16 }} />
-              <div>
-                <Text strong style={{ fontSize: 12 }}>{r.empName}</Text>
-                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{r.raId}{r.piwRole ? ` · ${r.piwRole}` : ''}</Text>
+          {linkedResources.map(r => {
+            const fmtD = (iso?: string) => {
+              if (!iso) return null;
+              const d = new Date(iso + 'T00:00:00');
+              return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+            };
+            return (
+              <div key={r.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 12px', background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                <UserOutlined style={{ color: '#1890ff', fontSize: 16, marginTop: 2 }} />
+                <div>
+                  <Text strong style={{ fontSize: 12 }}>{r.empName}</Text>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{r.raId}{r.piwRole ? ` · ${r.piwRole}` : ''}</Text>
+                  {(r.engagementStartDate || r.engagementEndDate) && (
+                    <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 2, color: '#1677ff' }}>
+                      📅 {fmtD(r.engagementStartDate) || '—'} → {fmtD(r.engagementEndDate) || '—'}
+                    </Text>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

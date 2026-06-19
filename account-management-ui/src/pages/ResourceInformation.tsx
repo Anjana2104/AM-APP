@@ -247,7 +247,7 @@ function ResumesTab() {
   );
 }
 
-const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void; initialRoleFilter?: string; initialRaIdFilter?: string; initialFilterType?: string; initialFilterValue?: string; onFilterApplied?: () => void; onNavigateToRequest?: (beelineId: string) => void; onNavigateToInsights?: () => void }> = ({ onResourcesChange, initialRoleFilter, initialRaIdFilter, initialFilterType, initialFilterValue, onFilterApplied, onNavigateToRequest, onNavigateToInsights }) => {
+const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void; initialRoleFilter?: string; initialRaIdFilter?: string; initialFilterType?: string; initialFilterValue?: string; onFilterApplied?: () => void; onNavigateToRequest?: (beelineId: string) => void; onNavigateToInsights?: () => void; onNavigateToProcess?: (sowName: string) => void }> = ({ onResourcesChange, initialRoleFilter, initialRaIdFilter, initialFilterType, initialFilterValue, onFilterApplied, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }) => {
   const { hasPermission, currentUser } = useAuth();
   const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('resources_info', 'edit');
@@ -280,6 +280,9 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
           engagement: String((r as any).engagement || r.engagement || ''),
           allocationStatus: String((r as any).allocation_status ?? r.allocationStatus ?? ''),
           beelineId: String((r as any).beeline_id || (r as any).beelineId || ''),
+          engagementStartDate: String((r as any).engagement_start_date || r.engagementStartDate || ''),
+          engagementEndDate: String((r as any).engagement_end_date || r.engagementEndDate || ''),
+          sowName: String((r as any).sow_name || r.sowName || ''),
         }));
         setResources(mapped);
         onResourcesChange?.(mapped);
@@ -703,6 +706,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
       totalWorkex: resource.totalWorkex || '',
       skills: resource.skills || '',
       engagement: resource.engagement || '',
+      engagementStartDate: resource.engagementStartDate || '',
+      engagementEndDate: resource.engagementEndDate || '',
     });
     setEditDrawer(true);
   }, [form, canEdit]);
@@ -737,6 +742,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             skills: String(values.skills || ''),
             engagement: newEngagement,
             allocationStatus: newAllocStatus,
+            engagementStartDate: newAllocStatus === 'Available' ? '' : String(values.engagementStartDate || ''),
+            engagementEndDate: newAllocStatus === 'Available' ? '' : String(values.engagementEndDate || ''),
           };
 
           setResources(prev => {
@@ -753,6 +760,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
               previousWorkex: updatedRow.previousWorkex, doj: updatedRow.doj,
               totalWorkex: updatedRow.totalWorkex, engagement: updatedRow.engagement,
               skills: updatedRow.skills,
+              engagementStartDate: updatedRow.engagementStartDate,
+              engagementEndDate: updatedRow.engagementEndDate,
               changedBy: currentUser?.username || 'system',
             });
           }
@@ -949,16 +958,32 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     message.success('All resource data cleared');
   };
 
+  const handleClearAllAudit = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/resources/all-audit', { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      message.success('All resource audit history deleted');
+    } catch { message.error('Failed to delete audit history'); }
+  };
+
+  const handleClearAllComments = async () => {
+    try {
+      const res = await fetch('http://localhost:3001/api/resources/all-comments', { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      message.success('All resource comments deleted');
+    } catch { message.error('Failed to delete comments'); }
+  };
+
   const handleExportExcel = () => {
     const data = getFilteredResources();
     if (!data.length) { message.warning('No data to export'); return; }
-    const headers = ['S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex', 'DOJ', 'Total Workex', 'Current Engagement', 'Allocation Status', 'Skills', 'Beeline ID'];
+    const headers = ['S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex', 'DOJ', 'Total Workex', 'Current Engagement', 'Eng. Start Date', 'Eng. End Date', 'Allocation Status', 'Skills', 'Beeline ID', 'Linked SOW'];
     const aoa: any[][] = [headers];
     data.forEach(r => {
-      aoa.push([r.sno, r.raId, r.empName, r.emailId, r.piwRole, r.roleOrDomain, r.previousWorkex, r.doj, r.totalWorkex, r.engagement || '', r.allocationStatus || '', r.skills, r.beelineId || '']);
+      aoa.push([r.sno, r.raId, r.empName, r.emailId, r.piwRole, r.roleOrDomain, r.previousWorkex, r.doj, r.totalWorkex, r.engagement || '', r.engagementStartDate || '', r.engagementEndDate || '', r.allocationStatus || '', r.skills, r.beelineId || '', r.sowName || '']);
     });
     const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 28 }, { wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 36 }, { wch: 18 }];
+    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 28 }, { wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 36 }, { wch: 18 }, { wch: 30 }];
     ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
     ws['!sheetViews'] = [{ showGridLines: false }];
     const numCols = headers.length, numRows = aoa.length;
@@ -1395,6 +1420,32 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                       });
                     },
                   }] : []),
+                  ...(canDelete ? [{ type: 'divider' as const }] : []),
+                  ...(canDelete ? [{
+                    key: 'deleteAllAudit',
+                    label: <span style={{ fontSize: '11px' }}>Delete All Audit History</span>,
+                    icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+                    danger: true,
+                    onClick: () => Modal.confirm({
+                      title: 'Delete all resource audit history?',
+                      content: 'This will permanently remove all audit log entries for resources.',
+                      okText: 'Yes, delete all', cancelText: 'Cancel',
+                      okButtonProps: { danger: true, size: 'small' },
+                      onOk: handleClearAllAudit,
+                    }),
+                  }, {
+                    key: 'deleteAllComments',
+                    label: <span style={{ fontSize: '11px' }}>Delete All Comments</span>,
+                    icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
+                    danger: true,
+                    onClick: () => Modal.confirm({
+                      title: 'Delete all resource comments?',
+                      content: 'This will permanently remove all comments across all resource records.',
+                      okText: 'Yes, delete all', cancelText: 'Cancel',
+                      okButtonProps: { danger: true, size: 'small' },
+                      onOk: handleClearAllComments,
+                    }),
+                  }] : []),
                 ]}}>
                   <Button icon={<MoreOutlined />} size="small" style={{ borderRadius: '6px' }} />
                 </Dropdown>
@@ -1746,6 +1797,37 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             />
           </Form.Item>
 
+          <Form.Item label="Engagement Start Date" name="engagementStartDate">
+            <Input
+              type="date"
+              placeholder="YYYY-MM-DD"
+              style={{ fontSize: '12px' }}
+              disabled={editingResource?.allocationStatus?.toLowerCase() === 'available'}
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Engagement End Date"
+            name="engagementEndDate"
+            dependencies={['engagementStartDate']}
+            rules={[
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  const start = getFieldValue('engagementStartDate');
+                  if (!value || !start || value >= start) return Promise.resolve();
+                  return Promise.reject(new Error('End date must be after start date'));
+                },
+              }),
+            ]}
+          >
+            <Input
+              type="date"
+              placeholder="YYYY-MM-DD"
+              style={{ fontSize: '12px' }}
+              disabled={editingResource?.allocationStatus?.toLowerCase() === 'available'}
+            />
+          </Form.Item>
+
           <Form.Item
             label="Skills (comma-separated)"
             name="skills"
@@ -1810,6 +1892,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             onToggleExpand={() => setDetailExpanded(v => !v)}
             onNavigateToRequest={(beelineId) => { onNavigateToRequest?.(beelineId); setDetailDrawer(false); }}
             onNavigateToInsights={onNavigateToInsights ? () => { setDetailDrawer(false); onNavigateToInsights(); } : undefined}
+            onNavigateToProcess={onNavigateToProcess ? (sow) => { setDetailDrawer(false); onNavigateToProcess(sow); } : undefined}
           />
         )}
       </Drawer>

@@ -23,6 +23,9 @@ export interface ResourcePayload {
   allocationStatus?: string;
   beelineId?: string;
   processId?: number | null;
+  engagementStartDate?: string;
+  engagementEndDate?: string;
+  sowName?: string;
 }
 
 let _serverAvailable: boolean | null = null;
