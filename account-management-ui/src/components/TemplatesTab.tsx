@@ -12,11 +12,11 @@ import {
 } from 'antd';
 import {
   UploadOutlined, DeleteOutlined, DownloadOutlined, InboxOutlined,
-  CalendarOutlined, FileExcelOutlined, FileOutlined
+  CalendarOutlined, FileExcelOutlined, FileOutlined, InfoCircleOutlined
 } from '@ant-design/icons';
 import * as templateApi from '../api/templateApi';
 
-const { Text, Paragraph } = Typography;
+const { Text } = Typography;
 
 const validateFile = (file: File, type: string): boolean => {
   const maxSize = 10 * 1024 * 1024; // 10MB
@@ -99,13 +99,11 @@ export function TemplatesTab() {
   const loadTemplates = async () => {
     setLoading(true);
     const result = await templateApi.getTemplates();
-    console.log('Templates loaded:', result);
     if (result.ok && result.data) {
       const mappedTemplates = result.data.map((t, i) => ({
         key: `${i}`,
         ...t as any
       }));
-      console.log('Mapped templates:', mappedTemplates);
       setTemplates(mappedTemplates);
     }
     setLoading(false);
@@ -143,9 +141,7 @@ export function TemplatesTab() {
 
   const uploadNewTemplate = async (file: File) => {
     setLoading(true);
-    console.log('Uploading template:', file.name, 'type:', selectedType);
     const result = await templateApi.uploadTemplate(file, selectedType, getTypeName(selectedType));
-    console.log('Upload result:', result);
     if (result.ok) {
       message.success(`${getTypeName(selectedType)} uploaded successfully`);
       setSelectedType('');
@@ -277,12 +273,12 @@ export function TemplatesTab() {
       {/* Upload Section */}
       <Card size="small" style={{ marginBottom: 20 }}>
         <div style={{ marginBottom: 12 }}>
-          <Text strong style={{ fontSize: '13px', display: 'block', marginBottom: 8 }}>
-            Upload Template
-          </Text>
-          <Paragraph style={{ fontSize: '12px', color: '#8c8c8c', marginBottom: 12 }}>
-            Upload PIW templates, holiday calendars, or other configuration files. Only the latest version is kept per template type.
-          </Paragraph>
+          <Space size={6}>
+            <Text strong style={{ fontSize: 12 }}>Upload Template</Text>
+            <Tooltip title="Only the latest version uploaded will be used." overlayInnerStyle={{ fontSize: 11 }}>
+              <InfoCircleOutlined style={{ fontSize: 12, color: '#8c8c8c', cursor: 'pointer' }} />
+            </Tooltip>
+          </Space>
         </div>
 
         <div style={{ marginBottom: 12 }}>
@@ -361,3 +357,4 @@ export function TemplatesTab() {
     </div>
   );
 }
+

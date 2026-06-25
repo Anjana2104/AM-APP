@@ -10,9 +10,12 @@
  * DELETE /api/resources           - delete ALL resources
  */
 
+'use strict';
+
 const express = require("express");
 const router = express.Router();
 const { getDb } = require("../db/connection");
+const logger = require("../utils/logger");
 
 // GET /api/resources/beeline-links — resources that have a non-empty beeline_id
 router.get("/beeline-links", async (req, res) => {
@@ -22,7 +25,10 @@ router.get("/beeline-links", async (req, res) => {
       `SELECT id, ra_id, emp_name, beeline_id FROM resources WHERE beeline_id IS NOT NULL AND beeline_id != '' ORDER BY sno`
     );
     res.json({ links: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to fetch resource beeline links', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // GET /api/resources/comments-search?q=... — cross-resource comment search
@@ -41,7 +47,10 @@ router.get("/comments-search", async (req, res) => {
       [like, like, like, like, like]
     );
     res.json({ results: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to search resource comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // GET /api/resources
@@ -56,7 +65,8 @@ router.get("/", async (req, res) => {
     `);
     res.json({ resources: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to list resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -90,27 +100,37 @@ router.post("/bulk", async (req, res) => {
         db.run(
           `UPDATE resources SET sno=?, emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
            previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?, allocation_status=?,
-           skill_type=?, engagement_start_date=?, engagement_end_date=?,
+           skill_type=?, engagement_start_date=?, engagement_end_date=?, allocation_percentage=?,
            updated_at=? WHERE id=?`,
           [r.sno || existing.sno, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
            r.totalWorkex || "", r.engagement || "", r.skills || "",
            allocStatus, r.skillType || "", r.engagementStartDate || "", r.engagementEndDate || "",
+           r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : (existing.allocation_percentage ?? null),
            ts, existing.id]
         );
         // Audit: log changed fields
         const recordName = `${raId} - ${r.empName || existing.emp_name}`;
+        const newAllocPct = r.allocationPercentage !== undefined
+          ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage))
+          : (existing.allocation_percentage ?? null);
         const trackFields = {
-          'Employee Name': [existing.emp_name || '', r.empName || ''],
-          'Email':         [existing.email_id || '', r.emailId || ''],
-          'PIW Role':      [existing.piw_role || '', r.piwRole || ''],
-          'Role/Domain':   [existing.role_or_domain || '', r.roleOrDomain || ''],
-          'Previous Workex': [existing.previous_workex || '', r.previousWorkex || ''],
-          'DOJ':           [existing.doj || '', r.doj || ''],
-          'Total Workex':  [existing.total_workex || '', r.totalWorkex || ''],
-          'Engagement':    [existing.engagement || '', r.engagement || ''],
-          'Skills':        [existing.skills || '', r.skills || ''],
-          'Allocation Status': [existing.allocation_status || '', allocStatus],
+          'Employee Name':        [existing.emp_name || '', r.empName || ''],
+          'Email':                [existing.email_id || '', r.emailId || ''],
+          'PIW Role':             [existing.piw_role || '', r.piwRole || ''],
+          'Role/Domain':          [existing.role_or_domain || '', r.roleOrDomain || ''],
+          'Previous Workex':      [existing.previous_workex || '', r.previousWorkex || ''],
+          'DOJ':                  [existing.doj || '', r.doj || ''],
+          'Total Workex':         [existing.total_workex || '', r.totalWorkex || ''],
+          'Engagement':           [existing.engagement || '', r.engagement || ''],
+          'Engagement Start Date':[existing.engagement_start_date || '', r.engagementStartDate || ''],
+          'Engagement End Date':  [existing.engagement_end_date || '', r.engagementEndDate || ''],
+          'Skills':               [existing.skills || '', r.skills || ''],
+          'Allocation Status':    [existing.allocation_status || '', allocStatus],
+          'Allocation %':         [
+            existing.allocation_percentage != null ? String(existing.allocation_percentage) : '',
+            newAllocPct != null ? String(newAllocPct) : '',
+          ],
         };
         for (const [label, [oldVal, newVal]] of Object.entries(trackFields)) {
           if (String(oldVal) !== String(newVal)) {
@@ -130,10 +150,11 @@ router.post("/bulk", async (req, res) => {
           : (engLower === 'bench' || engLower === '' ? 'Available' : 'Joined');
         db.run(
           `INSERT INTO resources (sno, ra_id, emp_name, email_id, piw_role, role_or_domain,
-           previous_workex, doj, total_workex, engagement, skills, allocation_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+           previous_workex, doj, total_workex, engagement, skills, allocation_status, allocation_percentage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [r.sno || sno, raId, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
-           r.totalWorkex || "", r.engagement || "", r.skills || "", defaultAllocStatus]
+           r.totalWorkex || "", r.engagement || "", r.skills || "", defaultAllocStatus,
+           r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : null]
         );
         const newId = db.lastId ? db.lastId() : null;
         const recordName = `${raId} - ${r.empName || ''}`;
@@ -150,7 +171,8 @@ router.post("/bulk", async (req, res) => {
 
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to bulk upsert resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -167,10 +189,11 @@ router.post("/", async (req, res) => {
       : (engLower === 'bench' || engLower === '' ? 'Available' : 'Joined');
     db.run(
       `INSERT INTO resources (sno, ra_id, emp_name, email_id, piw_role, role_or_domain,
-       previous_workex, doj, total_workex, engagement, skills, allocation_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+       previous_workex, doj, total_workex, engagement, skills, allocation_status, allocation_percentage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [sno, r.raId || "", r.empName || "", r.emailId || "", r.piwRole || "",
        r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
-       r.totalWorkex || "", r.engagement || "", r.skills || "", allocStatus]
+       r.totalWorkex || "", r.engagement || "", r.skills || "", allocStatus,
+       r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : null]
     );
     const newId = db.lastId ? db.lastId() : null;
     if (newId) {
@@ -183,7 +206,8 @@ router.post("/", async (req, res) => {
     }
     res.json({ ok: true, id: newId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to create resource', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -193,7 +217,8 @@ const FIELD_MAP = {
   emp_name: 'empName', email_id: 'emailId', piw_role: 'piwRole',
   role_or_domain: 'roleOrDomain', previous_workex: 'previousWorkex', doj: 'doj',
   total_workex: 'totalWorkex', engagement: 'engagement', skills: 'skills',
-  allocation_status: 'allocationStatus',
+  allocation_status: 'allocationStatus', is_active: 'isActive',
+  allocation_percentage: 'allocationPercentage',
   engagement_start_date: 'engagementStartDate',
   engagement_end_date: 'engagementEndDate',
 };
@@ -201,7 +226,8 @@ const LABEL_MAP = {
   empName: 'Employee Name', emailId: 'Email', piwRole: 'PIW Role',
   roleOrDomain: 'Role/Domain', previousWorkex: 'Previous Workex', doj: 'DOJ',
   totalWorkex: 'Total Workex', engagement: 'Engagement', skills: 'Skills',
-  allocationStatus: 'Allocation Status',
+  allocationStatus: 'Allocation Status', isActive: 'Resource Status',
+  allocationPercentage: 'Allocation %',
   engagementStartDate: 'Engagement Start Date',
   engagementEndDate: 'Engagement End Date',
 };
@@ -225,11 +251,19 @@ function updateOneWithAudit(db, id, r, changedBy) {
   } else {
     updatedAllocStatus = currentAllocStatus;
   }
+  const existingIsActive = Number(existing.is_active) !== 0;
+  const isActiveProvided = r.isActive !== undefined;
+  const normalizedIsActive = r.isActive === true
+    || r.isActive === 1
+    || r.isActive === '1'
+    || String(r.isActive).toLowerCase() === 'true';
+  const updatedIsActive = isActiveProvided ? (normalizedIsActive ? 1 : 0) : (existingIsActive ? 1 : 0);
 
   db.run(
     `UPDATE resources SET emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
      previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?,
-     allocation_status=?, engagement_start_date=?, engagement_end_date=?, updated_at=? WHERE id=?`,
+     allocation_status=?, is_active=?, allocation_percentage=?,
+     engagement_start_date=?, engagement_end_date=?, updated_at=? WHERE id=?`,
     [r.empName || existing.emp_name, r.emailId || existing.email_id,
      r.piwRole || existing.piw_role, r.roleOrDomain || existing.role_or_domain,
      r.previousWorkex || existing.previous_workex, r.doj || existing.doj,
@@ -237,6 +271,8 @@ function updateOneWithAudit(db, id, r, changedBy) {
      r.engagement !== undefined ? r.engagement : (existing.engagement || ''),
      r.skills !== undefined ? r.skills : (existing.skills || ''),
      updatedAllocStatus,
+     updatedIsActive,
+     r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : (existing.allocation_percentage ?? null),
      r.engagementStartDate !== undefined ? r.engagementStartDate : (existing.engagement_start_date || ''),
      r.engagementEndDate !== undefined ? r.engagementEndDate : (existing.engagement_end_date || ''),
      new Date().toISOString(), parseInt(id, 10)]
@@ -257,6 +293,8 @@ function updateOneWithAudit(db, id, r, changedBy) {
     engagement: r.engagement !== undefined ? (r.engagement || '') : (existing.engagement || ''),
     skills: r.skills !== undefined ? (r.skills || '') : (existing.skills || ''),
     allocationStatus: updatedAllocStatus,
+    isActive: updatedIsActive ? '1' : '0',
+    allocationPercentage: String(r.allocationPercentage !== undefined ? (r.allocationPercentage ?? '') : (existing.allocation_percentage ?? '')),
     engagementStartDate: r.engagementStartDate !== undefined ? (r.engagementStartDate || '') : (existing.engagement_start_date || ''),
     engagementEndDate: r.engagementEndDate !== undefined ? (r.engagementEndDate || '') : (existing.engagement_end_date || ''),
   };
@@ -296,7 +334,8 @@ router.put("/batch", async (req, res) => {
     }
     res.json({ ok: true, updated, notFound });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to batch update resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -312,8 +351,8 @@ router.put("/:id/process-link", async (req, res) => {
     const ts = new Date().toISOString();
     const newProcessId = processId ? parseInt(processId, 10) : null;
     db.run(`UPDATE resources SET process_id=?, updated_at=? WHERE id=?`, [newProcessId, ts, parseInt(id, 10)]);
-    const oldVal = existing.process_id != null ? String(existing.process_id) : '';
-    const newVal = newProcessId != null ? String(newProcessId) : '';
+    const oldVal = existing.process_id !== null ? String(existing.process_id) : '';
+    const newVal = newProcessId !== null ? String(newProcessId) : '';
     if (oldVal !== newVal) {
       db.run(
         `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at) VALUES (?,?,?,?,?,?,?,?)`,
@@ -321,7 +360,10 @@ router.put("/:id/process-link", async (req, res) => {
       );
     }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to update resource process link', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // PUT /api/resources/:id/beeline-link — set or clear beeline_id for a resource
@@ -343,7 +385,10 @@ router.put("/:id/beeline-link", async (req, res) => {
       );
     }
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to update resource beeline link', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // PUT /api/resources/:id
@@ -357,7 +402,8 @@ router.put("/:id", async (req, res) => {
     if (result.notFound) return res.status(404).json({ error: 'Resource not found' });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to update resource', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -368,7 +414,8 @@ router.delete("/", async (req, res) => {
     db.run("DELETE FROM resources");
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete all resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -378,7 +425,10 @@ router.delete("/all-comments", async (req, res) => {
     const db = await getDb();
     db.run("DELETE FROM resource_comments");
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete all resource comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/resources/all-audit  - delete ALL audit_log entries for resources module
@@ -387,7 +437,10 @@ router.delete("/all-audit", async (req, res) => {
     const db = await getDb();
     db.run("DELETE FROM audit_log WHERE module='resources'");
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete all resource audit entries', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/resources/:id
@@ -398,7 +451,8 @@ router.delete("/:id", async (req, res) => {
     db.run("DELETE FROM resources WHERE id=?", [id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete resource', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -414,7 +468,8 @@ router.get("/:id/comments", async (req, res) => {
     );
     res.json({ comments: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch resource comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -432,7 +487,26 @@ router.post("/:id/comments", async (req, res) => {
     const newId = db.lastId();
     res.json({ ok: true, id: newId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to create resource comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/resources/:id/comments/:commentId
+router.put("/:id/comments/:commentId", async (req, res) => {
+  const { body, tag } = req.body;
+  if (!body || !body.trim()) return res.status(400).json({ error: 'body required' });
+  try {
+    const db = await getDb();
+    const ts = new Date().toISOString();
+    db.run(
+      'UPDATE resource_comments SET body=?, tag=COALESCE(NULLIF(?,\'\'), tag), updated_at=? WHERE id=? AND resource_id=?',
+      [body.trim(), tag || '', ts, parseInt(req.params.commentId, 10), parseInt(req.params.id, 10)]
+    );
+    res.json({ ok: true, updated_at: ts });
+  } catch (err) {
+    logger.error('Failed to update resource comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -444,7 +518,8 @@ router.delete("/:id/comments/:commentId", async (req, res) => {
       [parseInt(req.params.commentId, 10), parseInt(req.params.id, 10)]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete resource comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

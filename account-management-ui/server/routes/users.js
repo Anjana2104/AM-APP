@@ -5,19 +5,22 @@
  * PUT    /api/users/:id     — update user
  * DELETE /api/users/:id     — delete user
  */
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/connection');
 const { hashPassword } = require('./auth');
+const logger = require('../utils/logger');
 
 function now() { return new Date().toISOString(); }
 
+/** Map a DB row to a safe user object — never expose password fields. */
 function rowToUser(row) {
   return {
     id: row.id,
     username: row.username,
     displayName: row.display_name || row.username,
-    passwordPlain: row.password_plain || '',
     roleId: row.role_id,
     roleName: row.role_name || '',
     active: !!row.active,
@@ -35,7 +38,8 @@ router.get('/', async (_req, res) => {
     );
     res.json({ users: rows.map(rowToUser) });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('GET /api/users failed', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -49,12 +53,14 @@ router.post('/', async (req, res) => {
     if (existing) return res.status(409).json({ error: 'Username already exists' });
     const ts = now();
     db.run(
-      'INSERT INTO users (username, password_hash, password_plain, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)',
-      [username.trim(), hashPassword(password), password, displayName || username, roleId || null, active ? 1 : 0, ts, ts]
+      'INSERT INTO users (username, password_hash, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?)',
+      [username.trim(), hashPassword(password), displayName || username, roleId || null, active ? 1 : 0, ts, ts]
     );
+    logger.info('User created', { username });
     res.json({ ok: true, id: db.lastId() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('POST /api/users failed', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -68,14 +74,12 @@ router.put('/:id', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
 
     const newHash = password ? hashPassword(password) : user.password_hash;
-    const newPlain = password ? password : user.password_plain;
     const ts = now();
     db.run(
-      'UPDATE users SET username=?, password_hash=?, password_plain=?, display_name=?, role_id=?, active=?, updated_at=? WHERE id=?',
+      'UPDATE users SET username=?, password_hash=?, display_name=?, role_id=?, active=?, updated_at=? WHERE id=?',
       [
         username ?? user.username,
         newHash,
-        newPlain,
         displayName ?? user.display_name,
         roleId !== undefined ? (roleId || null) : user.role_id,
         active !== undefined ? (active ? 1 : 0) : user.active,
@@ -83,9 +87,11 @@ router.put('/:id', async (req, res) => {
         id,
       ]
     );
+    logger.info('User updated', { userId: id });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('PUT /api/users/:id failed', { userId: id, err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -94,7 +100,6 @@ router.delete('/:id', async (req, res) => {
   const { id } = req.params;
   try {
     const db = await getDb();
-    // Prevent deleting the last admin user
     const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
     if (!user) return res.status(404).json({ error: 'User not found' });
     const role = user.role_id ? db.get('SELECT * FROM roles WHERE id = ?', [user.role_id]) : null;
@@ -108,9 +113,11 @@ router.delete('/:id', async (req, res) => {
       }
     }
     db.run('DELETE FROM users WHERE id = ?', [id]);
+    logger.info('User deleted', { userId: id });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('DELETE /api/users/:id failed', { userId: id, err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

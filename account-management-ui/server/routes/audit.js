@@ -7,9 +7,12 @@
  * GET /api/audit/:module/:recordId  - list audit entries for a record
  */
 
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/connection');
+const logger = require('../utils/logger');
 
 // Human-readable field label map for ra_process DB column names
 const PROCESS_FIELD_LABELS = {
@@ -90,7 +93,8 @@ router.get('/process-combined/:processId', async (req, res) => {
 
     res.json({ entries: all });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch combined process audit entries', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -109,7 +113,8 @@ router.get('/process-resources/:processId', async (req, res) => {
     );
     res.json({ entries });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch process resource audit entries', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -124,7 +129,8 @@ router.get('/:module/:recordId', async (req, res) => {
     );
     res.json({ entries });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch audit entries', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -143,7 +149,8 @@ router.post('/', async (req, res) => {
     );
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to create audit entry', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

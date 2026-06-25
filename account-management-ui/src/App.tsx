@@ -1,21 +1,23 @@
-import { Tooltip, Popconfirm, Popover } from 'antd';
-import { useState, useEffect, useRef } from 'react';
-import { FinanceManagement } from './pages/FinanceManagement';
-import { InvoiceManagement } from './pages/InvoiceManagement';
+import { Tooltip, Popconfirm, Popover, Spin } from 'antd';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
+// Eager imports — small files or needed on first render
 import { FinanceSummary } from './pages/FinanceSummary';
 import { AccountSummary } from './pages/AccountSummary';
-import ResourceInformation from './pages/ResourceInformation';
-import { EngagementMapping } from './pages/EngagementMapping';
-import RequestManagement from './pages/RequestManagement';
 import { RateCard } from './pages/RateCard';
 import { TeamHierarchy } from './pages/TeamHierarchy';
-import { InternalProcess } from './pages/InternalProcess';
-import { Configuration } from './pages/Configuration';
-import { CodeGuide } from './pages/CodeGuide';
-import { UserAccessControl } from './pages/UserAccessControl';
 import { UserSettings } from './pages/UserSettings';
 import { LoginPage } from './pages/LoginPage';
-import ResourceInsights from './pages/ResourceInsights';
+import { EngagementMapping } from './pages/EngagementMapping';
+// Lazy imports — large pages, code-split for faster initial load
+const FinanceManagement  = lazy(() => import('./pages/FinanceManagement').then(m => ({ default: m.FinanceManagement })));
+const InvoiceManagement  = lazy(() => import('./pages/InvoiceManagement').then(m => ({ default: m.InvoiceManagement })));
+const ResourceInformation = lazy(() => import('./pages/ResourceHub'));
+const RequestManagement  = lazy(() => import('./pages/ClientRequests'));
+const InternalProcess    = lazy(() => import('./pages/InternalProcess').then(m => ({ default: m.InternalProcess })));
+const AppSettings         = lazy(() => import('./pages/AppSettings').then(m => ({ default: m.AppSettings })));
+const CodeGuide          = lazy(() => import('./pages/CodeGuide').then(m => ({ default: m.CodeGuide })));
+const UserAccessControl  = lazy(() => import('./pages/UserAccessControl').then(m => ({ default: m.UserAccessControl })));
+const ResourceInsights   = lazy(() => import('./pages/ResourceIntelligence'));
 import { useAuth } from './context/AuthContext';
 import { NotificationProvider, useNotifications } from './context/NotificationContext';
 import { UserPreferencesProvider } from './context/UserPreferencesContext';
@@ -33,7 +35,7 @@ import * as notifApi from './api/notificationApi';
 import type { UserGroup } from './api/notificationApi';
 import type { UserRecord } from './api/authApi';
 import * as authApi from './api/authApi';
-import type { ResourceRow } from './pages/ResourceInformation';
+import type { ResourceRow } from './pages/ResourceHub';
 import * as resourceApi from './api/resourceApi';
 
 type EAMPage =
@@ -564,7 +566,7 @@ export default function App() {
   const [requestsBeelineFilter, setRequestsBeelineFilter] = useState<string | undefined>(undefined);
   const [initialProcessSow, setInitialProcessSow] = useState<string | undefined>(undefined);
 
-  // Load resources on mount so EngagementMapping and ResourceInsights work without visiting ResourceInformation first
+  // Load resources on mount so EngagementMapping and ResourceInsights work without visiting Resource Hub first
   useEffect(() => {
     resourceApi.getResources().then(({ resources: rows }) => {
       const mapped: ResourceRow[] = rows.map((r: any, i: number) => ({
@@ -685,7 +687,7 @@ export default function App() {
         case 'information_teamhierarchy': return <TeamHierarchy />;
         case 'information_codeguide':        return <CodeGuide />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
-        case 'configuration':             return <Configuration />;
+        case 'configuration':             return <AppSettings />;
         case 'user_settings':             return <UserSettings />;
         case 'user_access_control':       return <UserAccessControl />;
         default: return null;
@@ -809,10 +811,10 @@ export default function App() {
                 {(hasPermission('configuration', 'view') || hasPermission('user_settings', 'view') || hasPermission('user_access_control', 'view')) && (
                   <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 180 }} content={
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Configuration</div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Settings</div>
+                      {hasPermission('user_access_control', 'view') && <button onClick={() => { navigateTo('user_access_control', 'configuration'); }} style={{ background: activePage === 'user_access_control' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'user_access_control' ? '#1677ff' : '#262626', fontWeight: activePage === 'user_access_control' ? 600 : 400 }}>User Access Control</button>}
                       {hasPermission('configuration', 'view') && <button onClick={() => { navigateTo('configuration', 'configuration'); }} style={{ background: activePage === 'configuration' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'configuration' ? '#1677ff' : '#262626', fontWeight: activePage === 'configuration' ? 600 : 400 }}>App Settings</button>}
                       {hasPermission('user_settings', 'view') && <button onClick={() => { navigateTo('user_settings', 'configuration'); }} style={{ background: activePage === 'user_settings' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'user_settings' ? '#1677ff' : '#262626', fontWeight: activePage === 'user_settings' ? 600 : 400 }}>User Settings</button>}
-                      {hasPermission('user_access_control', 'view') && <button onClick={() => { navigateTo('user_access_control', 'configuration'); }} style={{ background: activePage === 'user_access_control' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'user_access_control' ? '#1677ff' : '#262626', fontWeight: activePage === 'user_access_control' ? 600 : 400 }}>User Access Control</button>}
                     </div>
                   }>
                     <button style={{ background: activePage.startsWith('configuration') || activePage === 'user_settings' || activePage === 'user_access_control' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('configuration') || activePage === 'user_settings' || activePage === 'user_access_control' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
@@ -912,24 +914,6 @@ export default function App() {
                 {/* ── SETTINGS & CONFIGURATION section ── */}
                 <SectionLabel label="Settings & Configuration" />
 
-                {/* User Settings — personal preferences */}
-                <SideNavItem
-                  icon={<UserOutlined />} label="User Settings"
-                  active={activePage === 'user_settings'}
-                  onClick={() => navigateTo('user_settings', 'configuration')}
-                  showArrow
-                />
-
-                {/* Configuration */}
-                {hasPermission('configuration', 'view') && (
-                <SideNavGroup
-                  icon={<SettingOutlined />} label="Configuration"
-                  active={activePage === 'configuration'}
-                  expanded={isExp('configuration')}
-                  onToggle={() => { navigateTo('configuration', 'configuration'); toggleSection('configuration'); }}
-                />
-                )}
-
                 {/* User Access Control — admin-only */}
                 {hasPermission('user_access_control', 'view') && (
                 <SideNavItem
@@ -939,6 +923,24 @@ export default function App() {
                   showArrow
                 />
                 )}
+
+                {/* Configuration */}
+                {hasPermission('configuration', 'view') && (
+                <SideNavGroup
+                  icon={<SettingOutlined />} label="App Settings"
+                  active={activePage === 'configuration'}
+                  expanded={isExp('configuration')}
+                  onToggle={() => { navigateTo('configuration', 'configuration'); toggleSection('configuration'); }}
+                />
+                )}
+
+                {/* User Settings — personal preferences */}
+                <SideNavItem
+                  icon={<UserOutlined />} label="User Settings"
+                  active={activePage === 'user_settings'}
+                  onClick={() => navigateTo('user_settings', 'configuration')}
+                  showArrow
+                />
 
                 {/* Knowledge Base */}
                 {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (
@@ -987,7 +989,10 @@ export default function App() {
             ? { flex: 1, overflow: 'hidden', minWidth: 0, display: 'flex', flexDirection: 'column' }
             : { flex: 1, overflowY: 'auto', minWidth: 0 }
           }>
-            {renderContent()}
+            {/* ── Page Content ── */}
+            <Suspense fallback={<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}><Spin size="large" /></div>}>
+              {renderContent()}
+            </Suspense>
           </div>
         </div>
       </div>

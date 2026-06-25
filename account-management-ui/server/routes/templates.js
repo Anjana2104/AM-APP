@@ -9,7 +9,6 @@ const router = express.Router();
 const multer = require('multer');
 const { getDb } = require('../db/connection');
 
-console.log('📋 Loading templates routes...');
 
 // Setup multer for file uploads
 const upload = multer({
@@ -22,7 +21,6 @@ router.get('/', async (req, res) => {
   try {
     const db = await getDb();
     const type = req.query.type;
-    console.log(`📂 GET /api/templates${type ? `?type=${type}` : ''}`);
     
     let query = 'SELECT id, type, file_name, file_size, mime_type, uploaded_by, uploaded_at, description FROM templates';
     let params = [];
@@ -35,7 +33,6 @@ router.get('/', async (req, res) => {
     query += ' ORDER BY uploaded_at DESC';
     
     const templates = db.all(query, params);
-    console.log(`✅ Found ${templates?.length || 0} templates`);
     res.json(templates || []);
   } catch (error) {
     console.error('❌ Error fetching templates:', error.message);
@@ -47,14 +44,12 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const db = await getDb();
-    console.log(`📥 GET /api/templates/${req.params.id}`);
     const template = db.get(
       'SELECT id, file_name, file_data, mime_type FROM templates WHERE id = ?',
       [req.params.id]
     );
     
     if (!template) {
-      console.warn(`⚠️  Template not found: ${req.params.id}`);
       return res.status(404).json({ error: 'Template not found' });
     }
 
@@ -74,7 +69,6 @@ router.get('/:id', async (req, res) => {
       mimeType = 'application/pdf';
     }
     
-    console.log(`✅ Sending ${fileName} (${fileBuffer.length} bytes, ${mimeType})`);
     res.set('Content-Type', mimeType);
     res.set('Content-Disposition', `attachment; filename="${fileName}"`);
     res.set('Content-Length', fileBuffer.length);
@@ -89,17 +83,14 @@ router.get('/:id', async (req, res) => {
 router.post('/upload', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
-      console.warn('⚠️  No file provided in upload request');
       return res.status(400).json({ error: 'No file provided' });
     }
     
     const { type, description } = req.body;
     if (!type) {
-      console.warn('⚠️  No type provided in upload request');
       return res.status(400).json({ error: 'Template type is required' });
     }
     
-    console.log(`📤 POST /api/templates/upload - ${type} (${req.file.originalname})`);
     
     const db = await getDb();
     const now = new Date().toISOString();
@@ -107,7 +98,6 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     
     // Delete existing template of same type (keep only latest)
     db.run('DELETE FROM templates WHERE type = ?', [type]);
-    console.log(`🗑️  Removed old ${type} template`);
     
     // sql.js requires Uint8Array for BLOB columns; convert Buffer if needed
     const fileData = new Uint8Array(req.file.buffer);
@@ -131,7 +121,6 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       ]
     );
     
-    console.log(`✅ Uploaded ${req.file.originalname} as ${templateId}`);
     
     res.json({
       id: templateId,
@@ -151,10 +140,8 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 // DELETE template by ID
 router.delete('/:id', async (req, res) => {
   try {
-    console.log(`🗑️  DELETE /api/templates/${req.params.id}`);
     const db = await getDb();
     db.run('DELETE FROM templates WHERE id = ?', [req.params.id]);
-    console.log(`✅ Template deleted`);
     res.json({ ok: true });
   } catch (error) {
     console.error('❌ Error deleting template:', error.message);
@@ -162,6 +149,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-console.log('✅ Templates routes loaded');
 
 module.exports = router;
+

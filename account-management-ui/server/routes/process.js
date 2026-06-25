@@ -14,24 +14,27 @@
  * DELETE /api/process                        - delete ALL
  */
 
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/connection');
 const { evaluateTriggers } = require('../utils/triggerEvaluator');
+const logger = require('../utils/logger');
 
 // Ensure all ra_process columns exist (idempotent â€” safe to call on every request)
 function ensureProcessColumns(db) {
   // Check existing columns first to avoid ALTER TABLE errors
   const cols = db.all(`PRAGMA table_info(ra_process)`).map(r => r.name);
   if (!cols.includes('eprev')) {
-    try { db.run(`ALTER TABLE ra_process ADD COLUMN eprev TEXT DEFAULT ''`); } catch (e) { console.error('[ensureProcessColumns] eprev:', e.message); }
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN eprev TEXT DEFAULT ''`); } catch (e) { logger.warn('Failed to ensure eprev column', { err: e.message }); }
   }
   if (!cols.includes('process_id')) {
-    try { db.run(`ALTER TABLE ra_process ADD COLUMN process_id TEXT DEFAULT NULL`); } catch (e) { console.error('[ensureProcessColumns] process_id:', e.message); }
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN process_id TEXT DEFAULT NULL`); } catch (e) { logger.warn('Failed to ensure process_id column', { err: e.message }); }
   }
-  try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (e) { console.error('[ensureProcessColumns] backfill:', e.message); }
+  try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (e) { logger.warn('Failed to backfill process identifiers', { err: e.message }); }
   // Unique partial index for PIW (non-empty)
-  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (_) {}
+  try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (e) { logger.warn('Failed to ensure PIW unique index', { err: e.message }); }
 }
 
 
@@ -45,7 +48,7 @@ function ensureCommentTable(db) {
       body TEXT NOT NULL DEFAULT "",
       created_at TEXT NOT NULL
     )`);
-  } catch (_) {}
+  } catch (e) { logger.warn('Failed to ensure comment table', { err: e.message }); }
 }
 
 // Write changed fields to audit_log
@@ -60,7 +63,7 @@ function writeAuditLog(db, processId, recordName, trackFields, oldRecord, change
            VALUES (?,?,?,?,?,?,?,?)`,
           ['ra_process', processId, recordName, field, oldVal, String(newVal ?? ''), changedBy || 'system', now]
         );
-      } catch (_) {}
+      } catch (e) { logger.warn('Failed to write process audit log', { err: e.message }); }
     }
   }
 }
@@ -78,7 +81,8 @@ router.get('/:id/resources', async (req, res) => {
     );
     res.json({ resources: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch process resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -101,10 +105,11 @@ router.patch('/:id/active', async (req, res) => {
          VALUES (?,?,?,?,?,?,?,?)`,
         ['ra_process', parseInt(id, 10), existing.sow || String(id), 'active', oldVal, newVal, changedBy, now]
       );
-    } catch (_) {}
+    } catch (e) { logger.warn('Failed to write process active audit log', { err: e.message }); }
     res.json({ ok: true, active: newVal });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to update process active status', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -119,7 +124,10 @@ router.get('/:id/comments', async (req, res) => {
       [parseInt(req.params.id, 10)]
     );
     res.json({ comments: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to fetch process comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // POST /api/process/:id/comments
@@ -139,7 +147,10 @@ router.post('/:id/comments', async (req, res) => {
     const newId = db.lastId ? db.lastId() : null;
     const inserted = newId ? db.get('SELECT * FROM process_comments WHERE id=?', [newId]) : null;
     res.json({ ok: true, comment: inserted });
-  } catch (err) { res.status(500).json({ error: String(err.message || err) }); }
+  } catch (err) {
+    logger.error('Failed to create process comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/process/:id/comments/:cid
@@ -150,7 +161,10 @@ router.delete('/:id/comments/:cid', async (req, res) => {
     ensureCommentTable(db);
     db.run('DELETE FROM process_comments WHERE id=? AND process_id=?', [req.params.cid, req.params.id]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete process comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/process/all-comments  - delete ALL process comments
@@ -160,7 +174,10 @@ router.delete('/all-comments', async (req, res) => {
     ensureCommentTable(db);
     db.run('DELETE FROM process_comments');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete all process comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/process/all-audit  - delete ALL audit_log entries for the process module
@@ -172,7 +189,10 @@ router.delete('/all-audit', async (req, res) => {
     // Also clear resource Process Link audit entries
     db.run("DELETE FROM audit_log WHERE module='resources' AND field='Process Link'");
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete all process audit entries', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // GET /api/process
@@ -183,7 +203,8 @@ router.get('/', async (req, res) => {
     const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
     res.json({ rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to list processes', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -233,11 +254,16 @@ router.post('/bulk', async (req, res) => {
     }
 
     if (inserted > 0) {
-      evaluateTriggers(db, 'ra_process', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+      try {
+        evaluateTriggers(db, 'ra_process', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to bulk upsert processes', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -272,7 +298,7 @@ router.post('/', async (req, res) => {
     const newId = db.lastId ? db.lastId() : null;
     // Set human-readable process_id: P1, P2, ...
     if (newId) {
-      try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${newId}`, newId]); } catch (_) {}
+      try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${newId}`, newId]); } catch (e) { logger.warn('Failed to set process identifier', { err: e.message }); }
     }
     // Audit: record creation
     if (newId) {
@@ -282,11 +308,12 @@ router.post('/', async (req, res) => {
            VALUES (?,?,?,?,?,?,?,?)`,
           ['ra_process', newId, r.sow || String(newId), 'Record', '', 'Created', r.changedBy || 'system', now]
         );
-      } catch (_) {}
+      } catch (e) { logger.warn('Failed to write process creation audit log', { err: e.message }); }
     }
     res.json({ ok: true, id: newId });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to create process', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -341,11 +368,16 @@ router.put('/:id', async (req, res) => {
       // Write audit_log for each changed field
       writeAuditLog(db, numId, oldRecord.sow || String(id), trackFields, oldRecord, r.changedBy || 'system');
       const updatedRecord = db.get('SELECT * FROM ra_process WHERE id=?', [numId]);
-      evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
+      try {
+        evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to update process', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -355,11 +387,16 @@ router.delete('/', async (req, res) => {
     const db = await getDb();
     ensureProcessColumns(db);
     const count = db.get('SELECT COUNT(*) as c FROM ra_process');
-    evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    try {
+      evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    } catch (triggerErr) {
+      logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+    }
     db.run('DELETE FROM ra_process');
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete all processes', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -373,12 +410,17 @@ router.delete('/:id', async (req, res) => {
     if (record) {
       const changedBy = req.query.changedBy || req.body?.changedBy || 'system';
       const label = record.sow || String(record.id);
-      evaluateTriggers(db, 'ra_process', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+      try {
+        evaluateTriggers(db, 'ra_process', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     db.run('DELETE FROM ra_process WHERE id=?', [parseInt(id, 10)]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete process', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -398,7 +440,8 @@ router.get('/:id/resources', async (req, res) => {
     );
     res.json({ resources: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to fetch process resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -410,7 +453,8 @@ router.get('/', async (req, res) => {
     const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
     res.json({ rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to list processes', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -454,17 +498,22 @@ router.post('/bulk', async (req, res) => {
            r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
         );
         const _bid = db.lastId ? db.lastId() : null;
-        if (_bid) { try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${_bid}`, _bid]); } catch(_) {} }
+        if (_bid) { try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${_bid}`, _bid]); } catch (e) { logger.warn('Failed to set process identifier', { err: e.message }); } }
         inserted++;
       }
     }
 
     if (inserted > 0) {
-      evaluateTriggers(db, 'ra_process', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+      try {
+        evaluateTriggers(db, 'ra_process', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to bulk upsert processes', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -487,7 +536,8 @@ router.post('/', async (req, res) => {
     );
     res.json({ ok: true, id: db.lastId() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to create process', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -525,11 +575,16 @@ router.put('/:id', async (req, res) => {
         if (oldVal !== String(newVal ?? '')) changedValues[field] = newVal;
       }
       const updatedRecord = db.get('SELECT * FROM ra_process WHERE id=?', [id]);
-      evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
+      try {
+        evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to update process', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -539,11 +594,16 @@ router.delete('/', async (req, res) => {
     const db = await getDb();
     ensureProcessColumns(db);
     const count = db.get('SELECT COUNT(*) as c FROM ra_process');
-    evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    try {
+      evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    } catch (triggerErr) {
+      logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+    }
     db.run('DELETE FROM ra_process');
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete all processes', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -557,12 +617,17 @@ router.delete('/:id', async (req, res) => {
     if (record) {
       const changedBy = req.query.changedBy || req.body?.changedBy || 'system';
       const label = record.sow || String(record.id);
-      evaluateTriggers(db, 'ra_process', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+      try {
+        evaluateTriggers(db, 'ra_process', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     db.run('DELETE FROM ra_process WHERE id=?', [id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete process', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -10,10 +10,13 @@
  * DELETE /api/requests          - delete ALL requests
  */
 
+'use strict';
+
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/connection');
 const { evaluateTriggers } = require('../utils/triggerEvaluator');
+const logger = require('../utils/logger');
 
 // GET /api/requests
 router.get('/', async (req, res) => {
@@ -22,7 +25,8 @@ router.get('/', async (req, res) => {
     const rows = db.all('SELECT * FROM client_requests ORDER BY sno');
     res.json({ requests: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to list requests', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -33,7 +37,8 @@ router.get('/active', async (req, res) => {
     const rows = db.all('SELECT id, beeline_id FROM client_requests WHERE is_active = 1 ORDER BY sno');
     res.json({ requests: rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to list active requests', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -70,15 +75,20 @@ router.patch('/:id/active', async (req, res) => {
        VALUES (?,?,?,?,?,?,?,?)`,
       ['client_requests', parseInt(id, 10), recordLabel, 'Status', existing.is_active === 1 ? 'Active' : 'Inactive', isActive ? 'Active' : 'Inactive', changedBy, ts]
     );
-    evaluateTriggers(db, 'client_requests',
-      { is_active: String(newActive) },
-      existing,
-      { ...existing, is_active: newActive },
-      changedBy
-    );
+    try {
+      evaluateTriggers(db, 'client_requests',
+        { is_active: String(newActive) },
+        existing,
+        { ...existing, is_active: newActive },
+        changedBy
+      );
+    } catch (triggerErr) {
+      logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+    }
     res.json({ ok: true, isActive: newActive === 1 });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to update request active status', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -138,7 +148,11 @@ router.post('/bulk', async (req, res) => {
         );
         if (Object.keys(changedValues).length > 0) {
           const updatedRec = db.get('SELECT * FROM client_requests WHERE id=?', [existing.id]);
-          evaluateTriggers(db, 'client_requests', changedValues, fullExisting, updatedRec || fullExisting, 'upload');
+          try {
+            evaluateTriggers(db, 'client_requests', changedValues, fullExisting, updatedRec || fullExisting, 'upload');
+          } catch (triggerErr) {
+            logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+          }
         }
         updated++;
       } else {
@@ -170,11 +184,16 @@ router.post('/bulk', async (req, res) => {
     }
 
     if (inserted > 0) {
-      evaluateTriggers(db, 'client_requests', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+      try {
+        evaluateTriggers(db, 'client_requests', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     res.json({ ok: true, inserted, updated });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to bulk upsert requests', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -195,7 +214,8 @@ router.post('/', async (req, res) => {
     );
     res.json({ ok: true, id: db.lastId() });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to create request', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -247,11 +267,16 @@ router.put('/:id', async (req, res) => {
         }
       }
       const updatedRecord = db.get('SELECT * FROM client_requests WHERE id=?', [id]);
-      evaluateTriggers(db, 'client_requests', changedValues, oldRecord, updatedRecord || oldRecord, changedBy);
+      try {
+        evaluateTriggers(db, 'client_requests', changedValues, oldRecord, updatedRecord || oldRecord, changedBy);
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to update request', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -265,7 +290,10 @@ router.get('/:beelineId/linked-resources', async (req, res) => {
       [beelineId]
     );
     res.json({ resources: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to fetch linked request resources', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Ensure request_comments table exists (lazy init — survives without server restart)
@@ -290,7 +318,10 @@ router.get('/:id/comments', async (req, res) => {
       [req.params.id]
     );
     res.json({ comments: rows });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to fetch request comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // POST /api/requests/:id/comments
@@ -305,7 +336,7 @@ router.post('/:id/comments', async (req, res) => {
   try {
     const db = await getDb();
     // Ensure table exists (idempotent)
-    try { db.run(`CREATE TABLE IF NOT EXISTS request_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER NOT NULL, author TEXT NOT NULL DEFAULT "", tag TEXT NOT NULL DEFAULT "General", body TEXT NOT NULL DEFAULT "", created_at TEXT NOT NULL)`); } catch (_) {}
+    try { db.run(`CREATE TABLE IF NOT EXISTS request_comments (id INTEGER PRIMARY KEY AUTOINCREMENT, request_id INTEGER NOT NULL, author TEXT NOT NULL DEFAULT "", tag TEXT NOT NULL DEFAULT "General", body TEXT NOT NULL DEFAULT "", created_at TEXT NOT NULL)`); } catch (e) { logger.warn('Failed to ensure request comments table', { err: e.message }); }
     db.run(
       'INSERT INTO request_comments (request_id, author, tag, body, created_at) VALUES (?,?,?,?,?)',
       [requestId, author, tag, commentBody, new Date().toISOString()]
@@ -314,8 +345,8 @@ router.post('/:id/comments', async (req, res) => {
     const inserted = newId ? db.get('SELECT * FROM request_comments WHERE id=?', [newId]) : null;
     res.json({ ok: true, comment: inserted });
   } catch (err) {
-    const msg = (err && (err.message || String(err))) || 'unknown error';
-    res.status(500).json({ error: msg });
+    logger.error('Failed to create request comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -326,7 +357,10 @@ router.delete('/:id/comments/:commentId', async (req, res) => {
     await ensureCommentTable(db);
     db.run('DELETE FROM request_comments WHERE id=? AND request_id=?', [req.params.commentId, req.params.id]);
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete request comment', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/requests/all-comments  - delete ALL request comments
@@ -336,7 +370,10 @@ router.delete('/all-comments', async (req, res) => {
     await ensureCommentTable(db);
     db.run('DELETE FROM request_comments');
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete all request comments', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/requests/all-audit  - delete ALL audit_log entries for requests module
@@ -345,7 +382,10 @@ router.delete('/all-audit', async (req, res) => {
     const db = await getDb();
     db.run("DELETE FROM audit_log WHERE module='client_requests'");
     res.json({ ok: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    logger.error('Failed to delete all request audit entries', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // DELETE /api/requests - clear ALL
@@ -353,11 +393,16 @@ router.delete('/', async (req, res) => {
   try {
     const db = await getDb();
     const count = db.get('SELECT COUNT(*) as c FROM client_requests');
-    evaluateTriggers(db, 'client_requests', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    try {
+      evaluateTriggers(db, 'client_requests', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
+    } catch (triggerErr) {
+      logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+    }
     db.run('DELETE FROM client_requests');
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete all requests', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -370,12 +415,17 @@ router.delete('/:id', async (req, res) => {
     if (record) {
       const changedBy = req.query.changedBy || req.body?.changedBy || 'system';
       const label = record.beeline_id || record.description || String(record.id);
-      evaluateTriggers(db, 'client_requests', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+      try {
+        evaluateTriggers(db, 'client_requests', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
+      } catch (triggerErr) {
+        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
+      }
     }
     db.run('DELETE FROM client_requests WHERE id=?', [id]);
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    logger.error('Failed to delete request', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -220,7 +220,6 @@ export function EnhancedInsights({
       XLSXStyle.writeFile(wb, `Request_Insights_${new Date().toISOString().slice(0, 10)}.xlsx`);
       message.success('Insights exported successfully');
     } catch (error) {
-      console.error('Export error:', error);
       message.error('Failed to export insights');
     } finally {
       setExporting(false);
@@ -246,7 +245,6 @@ export function EnhancedInsights({
       pdf.save(`Request_Insights_${new Date().toISOString().slice(0, 10)}.pdf`);
       message.success('PDF exported successfully');
     } catch (error) {
-      console.error('PDF export error:', error);
       message.error('Failed to export PDF');
     } finally {
       setExporting(false);
@@ -675,3 +673,4 @@ export function EnhancedInsights({
     </div>
   );
 }
+

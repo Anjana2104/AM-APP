@@ -34,6 +34,12 @@ export async function getTriggerSources(): Promise<TriggerSource[]> {
   return data.sources || [];
 }
 
+export async function getRelevantTriggers(userId: number): Promise<NotificationTrigger[]> {
+  const res = await fetch(`${BASE}/relevant?userId=${userId}`);
+  const data = await res.json();
+  return data.triggers || [];
+}
+
 export async function getNotificationTriggers(): Promise<NotificationTrigger[]> {
   const res = await fetch(BASE);
   const data = await res.json();

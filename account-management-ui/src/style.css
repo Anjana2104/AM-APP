@@ -411,7 +411,39 @@ code {
   height: auto;
 }
 
-/* Allow InputNumber text color to inherit from parent wrapper (used for anticipated=red in milestones) */
+/* Compact RangePicker for card headers (Resource Forecasting timeline) */
+.timeline-range-picker .ant-picker-input > input {
+  font-size: 11px !important;
+}
+.timeline-range-picker .ant-picker-separator,
+.timeline-range-picker .ant-picker-suffix {
+  font-size: 11px !important;
+}
+
+/* Compact search in timeline card header — aligned with size="small" DatePicker */
+.timeline-search.ant-input-search .ant-input-affix-wrapper,
+.timeline-search.ant-input-search .ant-input-affix-wrapper-sm {
+  height: 24px !important;
+  min-height: 24px !important;
+  font-size: 11px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  line-height: 22px !important;
+}
+.timeline-search .ant-input,
+.timeline-search input {
+  font-size: 11px !important;
+  height: 22px !important;
+  line-height: 22px !important;
+}
+.timeline-search .ant-input-search-button {
+  height: 24px !important;
+  font-size: 11px !important;
+  line-height: 22px !important;
+  padding: 0 6px !important;
+}
+
+
 .ant-input-number .ant-input-number-input {
   color: inherit !important;
 }

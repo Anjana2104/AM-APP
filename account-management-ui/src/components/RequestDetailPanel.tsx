@@ -93,17 +93,17 @@ function formatDate(iso: string) {
 function formatLastUpdated(value: string | undefined): string {
   if (!value) return '—';
   // Handle DD/MM/YYYY stored format (no time component)
-  const ddmmyyyy = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  const ddmmyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
   if (ddmmyyyy) {
     try {
-      const d = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`);
-      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+      const d = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2,'0')}-${ddmmyyyy[1].padStart(2,'0')}`);
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     } catch { return value; }
   }
   try {
     const d = new Date(value);
     if (isNaN(d.getTime())) return value;
-    const datePart = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    const datePart = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
     return `${datePart} : ${timePart}`;
   } catch { return value; }
@@ -201,7 +201,6 @@ export default function RequestDetailPanel({
 
   const handleAddComment = async () => {
     if (!newCommentBody.trim()) return;
-    console.log('[handleAddComment] request.id =', request.id, '| beelineId =', request.beelineId);
     if (!request.id) {
       message.warning('Cannot add comment — this record has not been saved to the database yet. Please reload the page.');
       return;
@@ -249,7 +248,7 @@ export default function RequestDetailPanel({
     ['Account Anchor',   request.accountAnchor],
     ['Processing Status', procLabel],
     ['Overall Status',   ovLabel],
-    ['Date Raised',      request.dateRaised],
+    ['Date Raised',      formatLastUpdated(request.dateRaised)],
     ['Last Updated',     formatLastUpdated(request.updatedOn)],
   ];
 
@@ -529,3 +528,4 @@ export default function RequestDetailPanel({
     </div>
   );
 }
+

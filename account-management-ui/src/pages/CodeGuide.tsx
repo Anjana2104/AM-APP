@@ -27,103 +27,183 @@ import {
 
 const { Title, Paragraph, Text, Link } = Typography;
 
-// File Mappings Data
+// File Mappings Data — kept in sync with App.tsx EAMPage type
 const FILE_MAPPINGS = [
-  { key: '1', fileName: 'AccountSummary.tsx', uiTab: 'Account Summary', pageId: 'account_summary', type: 'Page', status: 'Active' },
-  { key: '2', fileName: 'FinanceSummary.tsx', uiTab: 'Finance > Summary', pageId: 'executive_summary', type: 'Page', status: 'Active' },
-  { key: '3', fileName: 'FinanceManagement.tsx', uiTab: 'Finance > SOW Details', pageId: 'executive_revenue', type: 'Page', status: 'Active' },
-  { key: '4', fileName: 'InvoiceManagement.tsx', uiTab: 'Finance > Invoicing Details', pageId: 'executive_invoicing', type: 'Page', status: 'Active' },
-  { key: '5', fileName: 'ResourceInformation.tsx', uiTab: 'Resources > Resource Hub', pageId: 'resources_info', type: 'Page', status: 'Active' },
-  { key: '6', fileName: 'ResourceInsights.tsx', uiTab: 'Resources > Resource Intelligence', pageId: 'resources_insights', type: 'Page', status: 'Active' },
-  { key: '7', fileName: 'EngagementMapping.tsx', uiTab: 'Resources > Engagement Mapping', pageId: 'resources_utilization', type: 'Page', status: 'Active' },
-  { key: '8', fileName: 'RequestManagement.tsx', uiTab: 'Clients > Requests', pageId: 'clientmgmt_requests', type: 'Page', status: 'Active' },
-  { key: '9', fileName: 'InternalProcess.tsx', uiTab: 'Internal Process', pageId: 'clientmgmt_connects', type: 'Page', status: 'Active' },
-  { key: '10', fileName: 'RateCard.tsx', uiTab: 'Client Rate Card', pageId: 'information_ratecard', type: 'Page', status: 'Active' },
-  { key: '11', fileName: 'TeamHierarchy.tsx', uiTab: 'Team Hierarchy', pageId: 'information_teamhierarchy', type: 'Page', status: 'Active' },
-  { key: '12', fileName: 'CodeGuide.tsx', uiTab: 'Code Guide', pageId: 'information_codeguide', type: 'Page', status: 'Active' },
-  { key: '13', fileName: 'Configuration.tsx', uiTab: 'App Settings', pageId: 'configuration', type: 'Page', status: 'Active' },
-  { key: '14', fileName: 'UserSettings.tsx', uiTab: 'User Settings', pageId: 'user_settings', type: 'Page', status: 'Active' },
-  { key: '15', fileName: 'UserAccessControl.tsx', uiTab: 'User Access Control', pageId: 'user_access_control', type: 'Page', status: 'Active' },
-  { key: '16', fileName: 'LoginPage.tsx', uiTab: 'Login', pageId: 'login', type: 'Page', status: 'Active' },
-  { key: '17', fileName: 'EnhancedInsights.tsx', uiTab: 'Child Component', pageId: 'enhanced_insights', type: 'Child Component', status: 'Active' },
-  { key: '18', fileName: 'RequestInsightsChart.tsx', uiTab: 'Child Component', pageId: 'request_insights_chart', type: 'Child Component', status: 'Active' },
-  { key: '19', fileName: 'RequestDetailPanel.tsx', uiTab: 'Shared Component', pageId: 'request_detail_panel', type: 'Shared Component', status: 'Active' },
-  { key: '20', fileName: 'ResourceDetailPanel.tsx', uiTab: 'Shared Component', pageId: 'resource_detail_panel', type: 'Shared Component', status: 'Active' },
-  { key: '21', fileName: 'ResourceOverviewCharts.tsx', uiTab: 'Shared Component', pageId: 'resource_overview_charts', type: 'Shared Component', status: 'Active' }
+  { key: '1',  fileName: 'AccountSummary.tsx',       uiTab: 'Account Summary',                    pageId: 'account_summary',       type: 'Page',             status: 'Active' },
+  { key: '2',  fileName: 'FinanceSummary.tsx',        uiTab: 'Finance > Summary',                  pageId: 'executive_summary',     type: 'Page',             status: 'Active' },
+  { key: '3',  fileName: 'FinanceManagement.tsx',     uiTab: 'Finance > SOW Details',              pageId: 'executive_revenue',     type: 'Page',             status: 'Active' },
+  { key: '4',  fileName: 'InvoiceManagement.tsx',     uiTab: 'Finance > Invoicing Details',        pageId: 'executive_invoicing',   type: 'Page',             status: 'Active' },
+  { key: '5',  fileName: 'ResourceHub.tsx',           uiTab: 'Resources > Resource Hub',           pageId: 'resources_info',        type: 'Page',             status: 'Active' },
+  { key: '6',  fileName: 'ResourceIntelligence.tsx',  uiTab: 'Resources > Resource Intelligence',  pageId: 'resources_insights',    type: 'Page',             status: 'Active' },
+  { key: '7',  fileName: 'EngagementMapping.tsx',     uiTab: 'Resources > Engagement Mapping',     pageId: 'resources_utilization', type: 'Page',             status: 'Active' },
+  { key: '8',  fileName: 'ClientRequests.tsx',        uiTab: 'Clients > Requests',                 pageId: 'clientmgmt_requests',   type: 'Page',             status: 'Active' },
+  { key: '9',  fileName: 'InternalProcess.tsx',       uiTab: 'Internal Process',                   pageId: 'clientmgmt_connects',   type: 'Page',             status: 'Active' },
+  { key: '10', fileName: 'RateCard.tsx',              uiTab: 'Knowledge Base > Client Rate Card',  pageId: 'information_ratecard',  type: 'Page',             status: 'Active' },
+  { key: '11', fileName: 'TeamHierarchy.tsx',         uiTab: 'Knowledge Base > Team Hierarchy',    pageId: 'information_teamhierarchy', type: 'Page',        status: 'Active' },
+  { key: '12', fileName: 'CodeGuide.tsx',             uiTab: 'Knowledge Base > Code Guide',        pageId: 'information_codeguide', type: 'Page',             status: 'Active' },
+  { key: '13', fileName: 'Configuration.tsx',         uiTab: 'Settings > Configuration',           pageId: 'configuration',         type: 'Page',             status: 'Active' },
+  { key: '14', fileName: 'UserSettings.tsx',          uiTab: 'Settings > User Settings',           pageId: 'user_settings',         type: 'Page',             status: 'Active' },
+  { key: '15', fileName: 'UserAccessControl.tsx',     uiTab: 'Settings > User Access Control',     pageId: 'user_access_control',   type: 'Page',             status: 'Active' },
+  { key: '16', fileName: 'LoginPage.tsx',             uiTab: 'Login',                              pageId: 'login',                 type: 'Page',             status: 'Active' },
+  { key: '17', fileName: 'EnhancedInsights.tsx',      uiTab: 'Client Requests > Insights (child)', pageId: 'enhanced_insights',     type: 'Child Component',  status: 'Active' },
+  { key: '18', fileName: 'ProcessDetailPanel.tsx',    uiTab: 'Internal Process > Detail Panel',    pageId: 'process_detail_panel',  type: 'Shared Component', status: 'Active' },
+  { key: '19', fileName: 'RequestDetailPanel.tsx',    uiTab: 'Client Requests > Detail Panel',     pageId: 'request_detail_panel',  type: 'Shared Component', status: 'Active' },
+  { key: '20', fileName: 'ResourceDetailPanel.tsx',   uiTab: 'Resource Hub > Detail Drawer',       pageId: 'resource_detail_panel', type: 'Shared Component', status: 'Active' },
+  { key: '21', fileName: 'ResourceOverviewCharts.tsx',uiTab: 'Shared Charts Component',            pageId: 'resource_overview_charts', type: 'Shared Component', status: 'Active' },
+  { key: '22', fileName: 'TemplatesTab.tsx',          uiTab: 'Configuration > Templates tab',      pageId: 'templates_tab',         type: 'Shared Component', status: 'Active' },
 ];
 
-// API Endpoints Data
+// API Endpoints Data — sourced from docs/UI_API_DB_MAPPING.md and docs/ARCHITECTURE.md
 const API_ENDPOINTS = [
+  { key: '1',  dataSource: 'Finance Projects',     clientFile: 'financeApi.ts',          backendRoute: '/api/finance/projects',             operations: 'GET, POST, PUT, DELETE', description: 'Finance project CRUD + bulk import + Excel export' },
+  { key: '2',  dataSource: 'Finance Revenue',      clientFile: 'financeApi.ts',          backendRoute: '/api/finance/revenue',               operations: 'GET, POST',              description: 'Monthly revenue entries per project' },
+  { key: '3',  dataSource: 'Invoice Projects',     clientFile: 'invoiceApi.ts',          backendRoute: '/api/invoice/projects',              operations: 'GET, POST, PUT, DELETE', description: 'Invoice project management' },
+  { key: '4',  dataSource: 'Invoice Amounts',      clientFile: 'invoiceApi.ts',          backendRoute: '/api/invoice/amounts',               operations: 'GET, POST',              description: 'Monthly invoice amounts per project' },
+  { key: '5',  dataSource: 'Resources',            clientFile: 'resourceApi.ts',         backendRoute: '/api/resources',                     operations: 'GET, POST, PUT, DELETE', description: 'Resource CRUD, bulk upsert by ra_id, Beeline link' },
+  { key: '6',  dataSource: 'Resource Comments',    clientFile: 'resourceApi.ts',         backendRoute: '/api/resources/:id/comments',        operations: 'GET, POST, PUT, DELETE', description: 'Per-resource comments and notes' },
+  { key: '7',  dataSource: 'Resource Insights',    clientFile: 'resourceInsightsApi.ts', backendRoute: '/api/resource-insights',             operations: 'GET, POST, PUT, DELETE', description: 'Resource Intelligence log entries (interactions, plans, risks)' },
+  { key: '8',  dataSource: 'Client Requests',      clientFile: 'requestApi.ts',          backendRoute: '/api/requests',                      operations: 'GET, POST, PUT, DELETE', description: 'Beeline request lifecycle management + bulk import' },
+  { key: '9',  dataSource: 'Request Comments',     clientFile: 'requestApi.ts',          backendRoute: '/api/requests/:id/comments',         operations: 'GET, POST',              description: 'Per-request comments' },
+  { key: '10', dataSource: 'Internal Process',     clientFile: 'processApi.ts',          backendRoute: '/api/process',                       operations: 'GET, POST, PUT, DELETE', description: 'SOW record CRUD + PIW link + resource engagement dates' },
+  { key: '11', dataSource: 'Process Comments',     clientFile: 'processApi.ts',          backendRoute: '/api/process/:id/comments',          operations: 'GET, POST, DELETE',      description: 'Per-process comments' },
+  { key: '12', dataSource: 'PIW Generation',       clientFile: 'piwApi.ts',              backendRoute: '/api/piwGeneration/generate',         operations: 'POST',                   description: 'Generate filled .xlsm PIW file from template' },
+  { key: '13', dataSource: 'PIW Upload',           clientFile: 'piwApi.ts',              backendRoute: '/api/piwGeneration/upload',           operations: 'POST',                   description: 'Upload PIW file and sync resource engagement dates' },
+  { key: '14', dataSource: 'SOW Generation',       clientFile: 'sowApi.ts',              backendRoute: '/api/sowGeneration/generate',         operations: 'POST',                   description: 'Generate filled .docx SOW from Word template' },
+  { key: '15', dataSource: 'Audit Log',            clientFile: 'auditApi.ts',            backendRoute: '/api/audit/:module/:recordId',        operations: 'GET, POST',              description: 'Immutable audit trail — read and write field-change events' },
+  { key: '16', dataSource: 'Audit (Combined)',     clientFile: 'auditApi.ts',            backendRoute: '/api/audit/process-combined/:id',    operations: 'GET',                    description: 'Merged audit: SOW fields + resource linking + engagement dates' },
+  { key: '17', dataSource: 'Configuration',        clientFile: 'configApi.ts',           backendRoute: '/api/config/types, /api/config/items', operations: 'GET, POST, PUT, DELETE', description: 'Dropdown config types and option values (inc. Code Guide entries)' },
+  { key: '18', dataSource: 'App Values',           clientFile: 'configApi.ts',           backendRoute: '/api/config/values',                 operations: 'GET, POST',              description: 'Generic key-value app settings store' },
+  { key: '19', dataSource: 'Templates',            clientFile: 'templateApi.ts',         backendRoute: '/api/templates',                     operations: 'GET, POST, DELETE',      description: 'Binary file storage: PIW, SOW, holiday calendar templates' },
+  { key: '20', dataSource: 'Authentication',       clientFile: 'authApi.ts',             backendRoute: '/api/auth/login, /api/auth/logout',  operations: 'POST',                   description: 'Login (PBKDF2-SHA256 + env salt), logout' },
+  { key: '21', dataSource: 'Users',                clientFile: 'authApi.ts',             backendRoute: '/api/users',                         operations: 'GET, POST, PUT, DELETE', description: 'User account management (password never returned)' },
+  { key: '22', dataSource: 'Roles',                clientFile: 'authApi.ts',             backendRoute: '/api/roles',                         operations: 'GET, POST, PUT, DELETE', description: 'Role definitions with page-level permissions JSON' },
+  { key: '23', dataSource: 'User Groups',          clientFile: 'notificationApi.ts',     backendRoute: '/api/user-groups',                   operations: 'GET, POST, PUT, DELETE', description: 'Named user groups for notification targeting' },
+  { key: '24', dataSource: 'Notifications',        clientFile: 'notificationApi.ts',     backendRoute: '/api/notifications',                 operations: 'GET, POST, PUT',         description: 'In-app notifications — list, mark read, send' },
+  { key: '25', dataSource: 'Notification Triggers',clientFile: 'notificationTriggerApi.ts',backendRoute: '/api/notification-triggers',       operations: 'GET, POST, PUT, DELETE', description: 'Auto-fire rules: source table + trigger field → notification' },
+  { key: '26', dataSource: 'User Preferences',     clientFile: 'userPreferencesApi.ts',  backendRoute: '/api/user-preferences/:userId',      operations: 'GET, PUT',               description: 'Per-user UI preferences (column visibility, theme, etc.)' },
+  { key: '27', dataSource: 'AI / LLM',             clientFile: 'aiApi.ts',               backendRoute: '/api/ai/summary',                    operations: 'POST',                   description: 'OpenAI proxy for AI-assisted log summaries (no DB write)' },
+  { key: '28', dataSource: 'Health Check',         clientFile: '—',                      backendRoute: '/api/health',                        operations: 'GET',                    description: 'Server health check: returns DB client type + timestamp' },
+];
+
+// Database Tables — sourced from docs/DATABASE_DESIGN.md
+const DB_TABLES = [
+  { key: '1',  table: 'finance_projects',        domain: 'Finance',         description: 'Billable projects for revenue management', keyColumns: 'id, code (UNIQUE), project, company, status, active' },
+  { key: '2',  table: 'finance_revenue',         domain: 'Finance',         description: 'Monthly revenue entries per project', keyColumns: 'id, project_id (FK), month (YYYY-MM), amount, milestone_type' },
+  { key: '3',  table: 'invoice_projects',        domain: 'Finance',         description: 'Projects for invoice management (separate from finance)', keyColumns: 'id, code (UNIQUE), project, company, status' },
+  { key: '4',  table: 'invoice_amounts',         domain: 'Finance',         description: 'Monthly invoice amounts per invoice project', keyColumns: 'id, project_id (FK), month, amount' },
+  { key: '5',  table: 'client_requests',         domain: 'Client Requests', description: 'Beeline / client resource requests (staffing requests)', keyColumns: 'id, beeline_id (UNIQUE), processing_status, overall_status, is_active' },
+  { key: '6',  table: 'request_comments',        domain: 'Client Requests', description: 'Comments attached to client requests', keyColumns: 'id, request_id (FK), author, tag, body' },
+  { key: '7',  table: 'resources',               domain: 'Resources',       description: 'RA employee/resource records — master list', keyColumns: 'id, ra_id (UNIQUE), emp_name, beeline_id, process_id (FK), allocation_status, engagement_start_date, engagement_end_date' },
+  { key: '8',  table: 'resource_insights',       domain: 'Resources',       description: 'Resource Intelligence log entries (interactions, risks, plans)', keyColumns: 'id, resource_id (FK), section, title, body, status, priority' },
+  { key: '9',  table: 'resource_comments',       domain: 'Resources',       description: 'Free-form comments on resources', keyColumns: 'id, resource_id (FK), author, tag, body' },
+  { key: '10', table: 'ra_process',              domain: 'Internal Process',description: 'SOW (Statement of Work) records — core process table', keyColumns: 'id, sow (UNIQUE), process_id, piw (UNIQUE), salesforce_id, proms_id, open_air_code, eprev, account_anchor' },
+  { key: '11', table: 'audit_log',               domain: 'Cross-cutting',   description: 'Immutable field-level audit trail across all modules', keyColumns: 'id, module, record_id, field, old_value, new_value, changed_by, changed_at' },
+  { key: '12', table: 'app_config_types',        domain: 'Configuration',   description: 'Dropdown category definitions (e.g. code_guide, allocation_status)', keyColumns: 'id, type_id (UNIQUE), name, built_in, linked_to (JSON)' },
+  { key: '13', table: 'app_config_items',        domain: 'Configuration',   description: 'Option values within each config type', keyColumns: 'id, type_id (FK), item_value, label, color, sort_order' },
+  { key: '14', table: 'app_values',              domain: 'Configuration',   description: 'Generic key-value store for app-level settings', keyColumns: 'id, key (UNIQUE), value, description' },
+  { key: '15', table: 'templates',               domain: 'Configuration',   description: 'Binary file storage: PIW, SOW, holiday calendar templates', keyColumns: 'id (UUID), type (UNIQUE), file_name, file_size, file_data (BLOB), uploaded_by' },
+  { key: '16', table: 'roles',                   domain: 'Auth',            description: 'User access roles with page-level permissions JSON', keyColumns: 'id, name (UNIQUE), permissions (JSON: {page_id: {view,edit,delete}})' },
+  { key: '17', table: 'users',                   domain: 'Auth',            description: 'Application user accounts', keyColumns: 'id, username (UNIQUE), password_hash, display_name, role_id (FK), active' },
+  { key: '18', table: 'user_groups',             domain: 'Auth',            description: 'Named groups for notification targeting', keyColumns: 'id, name, description, user_type_config_id' },
+  { key: '19', table: 'user_group_members',      domain: 'Auth',            description: 'Members of user groups (many-to-many)', keyColumns: 'id, group_id (FK), user_id (FK) — UNIQUE(group_id, user_id)' },
+  { key: '20', table: 'user_preferences',        domain: 'Auth',            description: 'Per-user UI preferences blob', keyColumns: 'id, user_id (UNIQUE FK), preferences (JSON)' },
+  { key: '21', table: 'notifications',           domain: 'Notifications',   description: 'In-app notifications (bell icon)', keyColumns: 'id, type, title, message, target_user_id, target_group_id, read_by (JSON), trigger_id (FK)' },
+  { key: '22', table: 'notification_triggers',   domain: 'Notifications',   description: 'Auto-fire rules: watch a field on a table and create notifications', keyColumns: 'id, source_table, trigger_field, message_template, notify_target_type, is_active' },
+];
+
+// Key Workflows — sourced from docs/WORKFLOW.md
+const WORKFLOWS = [
   {
-    key: '1',
-    dataSource: 'Finance',
-    clientFile: 'financeApi.ts',
-    backendRoute: '/api/finance/projects',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'Manage finance projects with full CRUD operations'
+    key: '1', title: 'Resource Onboarding',
+    steps: [
+      'Upload Excel → POST /api/resources/bulk-upload',
+      'System upserts records by ra_id (INSERT or UPDATE)',
+      'Audit log written for each changed field',
+      'Resource appears in Resource Hub list',
+      '(Optional) Link to SOW: PUT /api/resources/:id/link-process',
+      '(Optional) Set engagement dates: PUT /api/resources/batch',
+    ]
   },
   {
-    key: '2',
-    dataSource: 'Invoices',
-    clientFile: 'invoiceApi.ts',
-    backendRoute: '/api/invoice/projects',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'Invoice management and tracking'
+    key: '2', title: 'PIW Upload → Resource Date Sync',
+    steps: [
+      'User selects process and clicks Upload PIW',
+      'Upload .xlsm file → POST /api/piwGeneration/upload',
+      'Server parses Excel: extracts PIW filename, RAID tab, Resource Summary',
+      'UPDATE ra_process SET piw = filename + write audit_log',
+      'For each resource in RAID tab: match by ra_id, UPDATE engagement dates',
+      'Audit log written per resource date change',
+    ]
   },
   {
-    key: '3',
-    dataSource: 'Resources',
-    clientFile: 'resourceApi.ts',
-    backendRoute: '/api/resources',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'Resource allocation and management'
+    key: '3', title: 'PIW Generation',
+    steps: [
+      'Select PIW template, holiday calendar, billing period (Step 1)',
+      'POST /api/piwGeneration/generate → load .xlsm template from DB',
+      'Populate sheets: Resource Summary, RAID, Calculation; inject holidays',
+      'Preview filled data (Step 2)',
+      'Download generated .xlsm file (Step 3)',
+    ]
   },
   {
-    key: '4',
-    dataSource: 'Requests',
-    clientFile: 'requestApi.ts',
-    backendRoute: '/api/requests',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'Request lifecycle management'
+    key: '4', title: 'SOW Generation',
+    steps: [
+      'Click Generate SOW on a process',
+      'POST /api/sowGeneration/generate',
+      'Load SOW Word template from templates table',
+      'Replace placeholders: {{sow_name}}, {{start_date}}, {{resources}}, etc.',
+      'Return filled .docx as download',
+    ]
   },
   {
-    key: '5',
-    dataSource: 'Internal Process',
-    clientFile: 'processApi.ts',
-    backendRoute: '/api/process',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'Internal workflow and process tracking'
+    key: '5', title: 'Audit Trail Flow',
+    steps: [
+      'Any data mutation (edit, link, upload) triggers audit write',
+      'POST /api/audit with: {module, record_id, field, old_value, new_value, changed_by}',
+      'Server inserts into audit_log table',
+      'Process audit: GET /api/audit/process-combined/:id (merges field + link + engagement changes)',
+      'Resource audit: GET /api/audit/resources/:id',
+      'Visible in: SOW Detail → Audit tab, Resource panel → Audit Log, Resource Intelligence panel',
+    ]
   },
   {
-    key: '6',
-    dataSource: 'Configuration',
-    clientFile: 'configApi.ts',
-    backendRoute: '/api/config/*',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'Application configuration management'
+    key: '6', title: 'Notification Trigger Flow',
+    steps: [
+      'User edits a field (e.g. processing_status on a client request)',
+      'PUT /api/requests/:id → UPDATE client_requests',
+      'Server calls evaluateTriggers(db, "client_requests", changedFields)',
+      'Query notification_triggers WHERE source_table matches AND is_active = 1',
+      'For each matching trigger: resolve target users/groups',
+      'INSERT into notifications',
+      'Bell icon in UI updates (polling every 30s)',
+    ]
   },
   {
-    key: '7',
-    dataSource: 'User Settings',
-    clientFile: 'userPreferencesApi.ts',
-    backendRoute: '/api/user-preferences/:userId',
-    operations: 'GET, PUT',
-    description: 'User preferences and settings'
+    key: '7', title: 'Browser Navigation (Back/Forward)',
+    steps: [
+      'Click sidebar → navigateTo(page, section) in App.tsx',
+      'window.history.pushState({module, page}, "", "#/eam/page_id")',
+      'setState: activePage, activeModule',
+      'Browser Back pressed → "popstate" event fires',
+      'Restore: activePage and activeModule from event.state',
+      'Previous filters, selected tab, open panels are all preserved',
+    ]
   },
   {
-    key: '8',
-    dataSource: 'User Access Control',
-    clientFile: 'authApi.ts',
-    backendRoute: '/api/users, /api/roles, /api/user-groups',
-    operations: 'GET, POST, PUT, DELETE',
-    description: 'User management and access control'
-  }
+    key: '8', title: 'SOW → Resource Cross-Navigation',
+    steps: [
+      'Resource has process_id linked to ra_process',
+      'User clicks "Linked SOW" tag in Resource Hub or Resource Intelligence panel',
+      'onNavigateToProcess(sowName) callback fires in App.tsx',
+      'App.tsx sets initialProcessSow = sowName and navigates to internal process',
+      'InternalProcess renders with initialSow prop → filters pre-filled → detail auto-opens',
+    ]
+  },
 ];
 
 // Download guide as Word document
 async function downloadGuide() {
   try {
-    console.log('Generating Word document...');
     const doc = new Document({
     sections: [{
       properties: {},
@@ -578,7 +658,6 @@ async function downloadGuide() {
   });
 
   const blob = await Packer.toBlob(doc);
-    console.log('Document generated, size:', blob.size);
     
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -588,9 +667,7 @@ async function downloadGuide() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log('Download initiated');
   } catch (error) {
-    console.error('Error generating document:', error);
     alert('Failed to generate document: ' + error.message);
   }
 }
@@ -625,16 +702,16 @@ function CodeGuide() {
 
   // Global search: Check which tabs have matching content
   const searchMatchesByTab = useMemo(() => {
-    if (!searchQuery) return { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+    if (!searchQuery) return { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0 };
     
     const query = searchQuery.toLowerCase();
-    const matches: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
+    const matches: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0, '6': 0, '7': 0 };
     
     // Tab 1: Overview (check tech stack and quick links)
     const overviewKeywords = [
       'react', 'typescript', 'vite', 'ant design', 'excel', 'xlsx', 'dayjs', 
       'recharts', 'html2canvas', 'jspdf', 'context', 'node', 'express', 'sqlite',
-      'knex', 'bcrypt', 'eslint', 'git', 'backend', 'frontend', 'server', 'migrate', 'seed'
+      'pbkdf2', 'logger', 'eslint', 'git', 'backend', 'frontend', 'server', 'migrate', 'seed'
     ];
     matches['1'] = overviewKeywords.filter(kw => kw.includes(query) || query.includes(kw)).length;
     
@@ -661,6 +738,26 @@ function CodeGuide() {
         query.includes('checklist') || query.includes('build') || query.includes('bundle') ||
         query.includes('removed') || query.includes('files') || query.includes('cloud')) {
       matches['5'] += 5;
+    }
+
+    // Tab 6: Database
+    matches['6'] = DB_TABLES.filter(t =>
+      t.table.includes(query) || t.domain.toLowerCase().includes(query) ||
+      t.description.toLowerCase().includes(query) || t.keyColumns.toLowerCase().includes(query)
+    ).length;
+    if (query.includes('table') || query.includes('db') || query.includes('schema') || query.includes('sqlite')) {
+      matches['6'] += 3;
+    }
+
+    // Tab 7: Workflows
+    matches['7'] = WORKFLOWS.filter(wf =>
+      wf.title.toLowerCase().includes(query) ||
+      wf.steps.some(s => s.toLowerCase().includes(query))
+    ).length;
+    if (query.includes('workflow') || query.includes('flow') || query.includes('process') ||
+        query.includes('upload') || query.includes('piv') || query.includes('sow') ||
+        query.includes('audit') || query.includes('notification')) {
+      matches['7'] += 3;
     }
     
     return matches;
@@ -834,9 +931,9 @@ function CodeGuide() {
               header={<Text strong style={{ fontSize: '12px' }}>Server</Text>}
               dataSource={[
                 'Node.js + Express (REST API)',
-                'SQLite (embedded database)',
-                'Knex.js (query builder)',
-                'bcrypt (password hashing)'
+                'SQLite via better-sqlite3 (embedded)',
+                'Native crypto (PBKDF2-SHA256 hashing)',
+                'Structured JSON logger (server/utils/logger.js)'
               ]}
               renderItem={(item) => (
                 <List.Item style={{ padding: '2px 0', lineHeight: '1.4' }}>
@@ -853,7 +950,8 @@ function CodeGuide() {
               dataSource={[
                 'TypeScript (type safety)',
                 'ESLint (code quality)',
-                'Git (version control)'
+                'Git (version control)',
+                'Veracode + SonarQube (security scans)'
               ]}
               renderItem={(item) => (
                 <List.Item style={{ padding: '2px 0', lineHeight: '1.4' }}>
@@ -1143,7 +1241,7 @@ function CodeGuide() {
                     size="small"
                     style={{ marginTop: 4 }}
                     dataSource={[
-                      'Updated EngagementMapping.tsx import (ResourceMgmt ? ResourceInformation)',
+                      'Updated EngagementMapping.tsx import (ResourceMgmt ? ResourceHub)',
                       'Removed ~1,500+ lines of dead code',
                       'All builds verified successful after each deletion'
                     ]}
@@ -1179,7 +1277,7 @@ function CodeGuide() {
             <span style={{ fontSize: '11px', color: '#000' }}>localStorage used ONLY as fallback when server is offline</span>
           </Descriptions.Item>
           <Descriptions.Item label={<span style={{ fontSize: '11px', color: '#000' }}>Authentication</span>}>
-            <span style={{ fontSize: '11px', color: '#000' }}>No auth layer currently - add guard in main.tsx around ConfigProvider</span>
+            <span style={{ fontSize: '11px', color: '#000' }}>Login via JWT-style session token stored in localStorage; roles control page-level access via UserAccessControl</span>
           </Descriptions.Item>
           <Descriptions.Item label={<span style={{ fontSize: '11px', color: '#000' }}>Optimization</span>}>
             <span style={{ fontSize: '11px', color: '#000' }}>Tree-shake antd via vite.config.ts for bundle optimization</span>
@@ -1189,6 +1287,63 @@ function CodeGuide() {
           </Descriptions.Item>
         </Descriptions>
       </Card>
+    </Space>
+  );
+
+  // Tab 6: Database Design Content
+  const databaseContent = (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Alert
+        message="22 tables — all defined in server/db/migrate.js and documented in docs/DATABASE_DESIGN.md"
+        type="info"
+        showIcon
+        style={{ fontSize: '11px', padding: '4px 12px' }}
+      />
+      <Table
+        columns={[
+          { title: 'Table', dataIndex: 'table', key: 'table', render: (t: string) => <code style={{ fontSize: '11px', background: '#f5f5f5', padding: '2px 4px', borderRadius: '2px', fontFamily: 'monospace' }}>{t}</code> },
+          { title: 'Domain', dataIndex: 'domain', key: 'domain', filters: Array.from(new Set(DB_TABLES.map(d => d.domain))).map(v => ({ text: v, value: v })), onFilter: (val: any, rec: any) => rec.domain === val, render: (t: string) => <Tag color="blue" style={{ fontSize: '11px' }}>{t}</Tag> },
+          { title: 'Purpose', dataIndex: 'description', key: 'description', render: (t: string) => <Text style={{ fontSize: '11px', color: '#000' }}>{t}</Text> },
+          { title: 'Key Columns', dataIndex: 'keyColumns', key: 'keyColumns', render: (t: string) => <Text type="secondary" style={{ fontSize: '11px' }}>{t}</Text> },
+        ]}
+        dataSource={DB_TABLES}
+        pagination={{ pageSize: 12, showTotal: (total) => `Total ${total} tables` }}
+        size="small"
+      />
+    </Space>
+  );
+
+  // Tab 7: Workflow Content
+  const workflowContent = (
+    <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+      <Alert
+        message="Key end-to-end workflows — full diagrams in docs/WORKFLOW.md"
+        type="info"
+        showIcon
+        style={{ fontSize: '11px', padding: '4px 12px' }}
+      />
+      <Collapse
+        size="small"
+        items={WORKFLOWS.map(wf => ({
+          key: wf.key,
+          label: <span style={{ fontSize: '12px' }}><SwapOutlined style={{ marginRight: 6 }} />{wf.title}</span>,
+          children: (
+            <List
+              size="small"
+              dataSource={wf.steps}
+              renderItem={(step, i) => (
+                <List.Item style={{ padding: '2px 0', lineHeight: '1.5' }}>
+                  <Text style={{ fontSize: '12px', color: '#000' }}>
+                    <Text type="secondary" style={{ fontSize: '11px', marginRight: 8 }}>{i + 1}.</Text>
+                    {step}
+                  </Text>
+                </List.Item>
+              )}
+            />
+          )
+        }))}
+        defaultActiveKey={['1']}
+      />
     </Space>
   );
 
@@ -1317,6 +1472,38 @@ function CodeGuide() {
                   </span>
                 ),
                 children: productionContent
+              },
+              {
+                key: '6',
+                label: (
+                  <span style={{ fontSize: '12px' }}>
+                    <DatabaseOutlined />
+                    Database
+                    {searchQuery && searchMatchesByTab['6'] > 0 && (
+                      <Badge 
+                        count={searchMatchesByTab['6']} 
+                        style={{ marginLeft: 8, fontSize: '10px' }} 
+                      />
+                    )}
+                  </span>
+                ),
+                children: databaseContent
+              },
+              {
+                key: '7',
+                label: (
+                  <span style={{ fontSize: '12px' }}>
+                    <SwapOutlined />
+                    Workflows
+                    {searchQuery && searchMatchesByTab['7'] > 0 && (
+                      <Badge 
+                        count={searchMatchesByTab['7']} 
+                        style={{ marginLeft: 8, fontSize: '10px' }} 
+                      />
+                    )}
+                  </span>
+                ),
+                children: workflowContent
               }
             ]}
           />
@@ -1327,3 +1514,4 @@ function CodeGuide() {
 }
 
 export { CodeGuide };
+

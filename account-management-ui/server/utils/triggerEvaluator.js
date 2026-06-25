@@ -9,7 +9,10 @@
  *   3. Add it to SPECIAL_AGGREGATE_FIELDS below
  */
 
+'use strict';
+
 const { FIELD_LABEL_MAP } = require('../config/triggerSources');
+const logger = require('./logger');
 
 // Special field pseudo-values
 const WILDCARD_FIELD = '__any__';
@@ -39,6 +42,7 @@ function evaluateTriggers(db, sourceTable, changedValues, oldRecord, newRecord, 
         [sourceTable]
       );
     } catch (tableErr) {
+      logger.warn('notification_triggers table not found', { err: tableErr.message });
       return;
     }
 
@@ -143,13 +147,14 @@ function evaluateTriggers(db, sourceTable, changedValues, oldRecord, newRecord, 
           notifMessage,
           targetUserId,
           targetGroupId,
-          changedBy || 'system',
+          'Change Triggers',
           trigger.id,
           ts,
         ]
       );
     }
-  } catch (err) {
+  } catch (e) {
+    logger.error('Trigger evaluation error', { sourceTable, err: e.message });
   }
 }
 

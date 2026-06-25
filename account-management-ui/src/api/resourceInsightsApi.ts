@@ -1,3 +1,7 @@
+/**
+ * Resource Intelligence API client
+ */
+
 const BASE = '/api/resource-insights';
 
 export interface InsightEntry {

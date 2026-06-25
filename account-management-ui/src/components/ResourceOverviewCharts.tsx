@@ -33,7 +33,7 @@ const EXP_BUCKETS = [
 interface Props {
   resources: ResourceRow[];
   /** Called when user clicks a chart segment/bar to filter. Only relevant in ResourceInformation. */
-  onFilterClick?: (type: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket', name: string) => void;
+  onFilterClick?: (type: 'piwRole' | 'roleOrDomain' | 'engagement' | 'allocationStatus' | 'skills' | 'expBucket', name: string) => void;
 }
 
 function parseExpYears(workex: string): number {
@@ -76,9 +76,9 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
     return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
   }, [resources]);
 
-  const engagementData = useMemo(() => {
+  const allocationStatusData = useMemo(() => {
     const map: Record<string, number> = {};
-    resources.forEach(r => { const e = r.engagement || 'Unassigned'; map[e] = (map[e] || 0) + 1; });
+    resources.forEach(r => { const s = r.allocationStatus || 'Unknown'; map[s] = (map[s] || 0) + 1; });
     return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
   }, [resources]);
 
@@ -89,11 +89,11 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
 
   const benchCount = useMemo(() => resources.filter(r => r.engagement === 'Bench').length, [resources]);
 
-  const handleClick = (type: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket', name: string) => {
+  const handleClick = (type: 'piwRole' | 'roleOrDomain' | 'engagement' | 'allocationStatus' | 'skills' | 'expBucket', name: string) => {
     onFilterClick?.(type, name);
   };
 
-  const renderMiniPie = (data: { name: string; value: number }[], title: string, clickType: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket') => (
+  const renderMiniPie = (data: { name: string; value: number }[], title: string, clickType: 'piwRole' | 'roleOrDomain' | 'engagement' | 'allocationStatus' | 'skills' | 'expBucket') => (
     <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0' }}>
       <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 2 }}>{title}</Text>
       <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginBottom: 8 }}>
@@ -116,7 +116,7 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
     </div>
   );
 
-  const renderHBar = (data: { name: string; value: number }[], title: string, clickType: 'piwRole' | 'roleOrDomain' | 'engagement' | 'skills' | 'expBucket', max?: number) => {
+  const renderHBar = (data: { name: string; value: number }[], title: string, clickType: 'piwRole' | 'roleOrDomain' | 'engagement' | 'allocationStatus' | 'skills' | 'expBucket', max?: number) => {
     const maxVal = max || Math.max(...data.map(d => d.value), 1);
     return (
       <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0' }}>
@@ -217,7 +217,7 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
             </Row>
             <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
               <Col xs={24} md={12}>{renderMiniPie(domainData.slice(0, 8), 'Resources by Role/Domain', 'roleOrDomain')}</Col>
-              <Col xs={24} md={12}>{renderMiniPie(engagementData, 'Resources by Engagement', 'engagement')}</Col>
+              <Col xs={24} md={12}>{renderMiniPie(allocationStatusData, 'Breakdown by Allocation Status', 'allocationStatus')}</Col>
             </Row>
             <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0' }}>
               <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 2 }}>Top Skills (count across resources)</Text>
@@ -242,7 +242,7 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
             <Col xs={24} md={12}>{renderHBar(roleData, 'By PIW Role', 'piwRole')}</Col>
             <Col xs={24} md={12}>{renderHBar(expData, 'By Experience Range', 'expBucket')}</Col>
             <Col xs={24} md={12}>{renderHBar(domainData, 'By Role/Domain', 'roleOrDomain')}</Col>
-            <Col xs={24} md={12}>{renderHBar(engagementData, 'By Engagement', 'engagement')}</Col>
+            <Col xs={24} md={12}>{renderHBar(allocationStatusData, 'By Allocation Status', 'allocationStatus')}</Col>
             <Col xs={24}>{renderHBar(skillData, 'Top Skills', 'skills')}</Col>
           </Row>
         )}

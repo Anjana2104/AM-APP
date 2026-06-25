@@ -6,10 +6,13 @@
  *   /api/finance/*   — finance revenue data
  *   /api/health      — health check
  */
+'use strict';
 
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const { getDb } = require('./db/connection');
+const logger = require('./utils/logger');
 const financeRoutes = require('./routes/finance');
 const invoiceRoutes = require('./routes/invoices');
 const resourceRoutes = require('./routes/resources');
@@ -24,12 +27,13 @@ const userGroupRoutes = require('./routes/user-groups');
 const notificationRoutes = require('./routes/notifications');
 const notificationTriggerRoutes = require('./routes/notification-triggers');
 const userPreferencesRoutes = require('./routes/user-preferences');
+const notificationRulesRoutes = require('./routes/notification-rules');
+const { evaluateRules } = require('./utils/evaluateRules');
 const resourceInsightsRoutes = require('./routes/resource-insights');
 const aiRoutes = require('./routes/ai');
 const templatesRoutes = require('./routes/templates');
 const piwGenerationRoutes = require('./routes/piwGeneration');
 const sowGenerationRoutes = require('./routes/sowGeneration');
-const { hashPassword } = require('./routes/auth');
 
 const PORT = process.env.PORT || 3001;
 
@@ -37,9 +41,9 @@ const app = express();
 
 // ── Run DB migrations on startup ─────────────────────────────────────
 async function runMigrations() {
-  console.log('🔄 Running database migrations...');
+  logger.info('Running database migrations...');
   const db = await getDb();
-  console.log('✅ Database connection established');
+  logger.info('Database connection established');
   
   // finance_projects base table
   db.run(`CREATE TABLE IF NOT EXISTS finance_projects (
@@ -81,9 +85,12 @@ async function runMigrations() {
     email_id TEXT DEFAULT "", piw_role TEXT DEFAULT "",
     role_or_domain TEXT DEFAULT "", previous_workex TEXT DEFAULT "",
     doj TEXT DEFAULT "", total_workex TEXT DEFAULT "",
-    engagement TEXT DEFAULT "", skills TEXT DEFAULT "",
+    engagement TEXT DEFAULT "", skills TEXT DEFAULT "", is_active INTEGER DEFAULT 1,
+    allocation_percentage REAL DEFAULT NULL,
     created_at TEXT, updated_at TEXT
   )`);
+  try { db.run(`ALTER TABLE resources ADD COLUMN is_active INTEGER DEFAULT 1`); } catch (_) {}
+  try { db.run(`ALTER TABLE resources ADD COLUMN allocation_percentage REAL DEFAULT NULL`); } catch (_) {}
   db.run(`CREATE TABLE IF NOT EXISTS ra_process (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
     sow TEXT NOT NULL UNIQUE, start_date TEXT DEFAULT "",
@@ -218,6 +225,51 @@ async function runMigrations() {
   // Backfill sort_order with id order for existing rows
   db.run(`UPDATE notification_triggers SET sort_order = id WHERE sort_order = 0 OR sort_order IS NULL`);
 
+  // ── Scheduled Notification Rules table ────────────────────────────────────
+  // Proactive time-based rules; evaluated by evaluateRules.js on a schedule.
+  db.run(`CREATE TABLE IF NOT EXISTS notification_rules (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                 TEXT    NOT NULL,
+    description          TEXT    DEFAULT '',
+    source_table         TEXT    NOT NULL,
+    condition_type       TEXT    NOT NULL,
+    date_field           TEXT    DEFAULT '',
+    lead_time_days       INTEGER DEFAULT 0,
+    filter_field         TEXT    DEFAULT '',
+    filter_operator      TEXT    DEFAULT '',
+    filter_value         TEXT    DEFAULT '',
+    threshold_field      TEXT    DEFAULT '',
+    threshold_operator   TEXT    DEFAULT '',
+    threshold_value      REAL    DEFAULT NULL,
+    config_value_key     TEXT    DEFAULT '',
+    schedule_type        TEXT    DEFAULT 'daily',
+    schedule_day         INTEGER DEFAULT NULL,
+    notification_type    TEXT    DEFAULT 'alert',
+    notify_target_type   TEXT    DEFAULT 'group',
+    notify_target_value  TEXT    DEFAULT '',
+    message_template     TEXT    DEFAULT '',
+    is_active            INTEGER DEFAULT 1,
+    last_run_at          TEXT    DEFAULT NULL,
+    sort_order           INTEGER DEFAULT 0,
+    created_at           TEXT,
+    updated_at           TEXT
+  )`);
+  // Migration: add sort_order if it doesn't exist (for existing databases)
+  try { db.run('ALTER TABLE notification_rules ADD COLUMN sort_order INTEGER DEFAULT 0'); } catch (_) { /* already exists */ }
+  // Migration: normalize source_user values to consistent tab names
+  db.run(`UPDATE notifications SET source_user = 'Scheduled Rules' WHERE source_user = 'Rule Engine'`);
+  db.run(`UPDATE notifications SET source_user = 'Change Triggers' WHERE source_user NOT IN ('Scheduled Rules', 'System Error') AND source_user != ''`);
+
+  // Deduplication log for scheduled rules — one entry per rule+record per day
+  db.run(`CREATE TABLE IF NOT EXISTS notification_rule_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id    INTEGER NOT NULL,
+    record_id  INTEGER NOT NULL,
+    fired_date TEXT    NOT NULL,
+    fired_at   TEXT    NOT NULL,
+    UNIQUE (rule_id, record_id, fired_date)
+  )`);
+
   // ── User Preferences table ────────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS user_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -239,8 +291,10 @@ async function runMigrations() {
     author TEXT NOT NULL DEFAULT "",
     tag TEXT NOT NULL DEFAULT "General",
     body TEXT NOT NULL DEFAULT "",
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    updated_at TEXT
   )`);
+  try { db.run(`ALTER TABLE resource_comments ADD COLUMN updated_at TEXT`); } catch (_) {}
 
   // ── Request Comments table ─────────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS request_comments (
@@ -295,7 +349,7 @@ async function runMigrations() {
   // and visible in UAC for other roles to configure.
   const ALL_KNOWN_PAGES = [
     'account_summary','executive_summary','executive_revenue','executive_invoicing',
-    'resources_info','resources_utilization','resources_upskilling','resources_insights',
+    'resources_info','resources_utilization','resources_upskilling','resources_insights','resources_forecasting',
     'clientmgmt_requests','clientmgmt_connects',
     'information_ratecard','information_teamhierarchy','information_process','information_codeguide',
     'configuration','user_settings','user_access_control',
@@ -334,13 +388,78 @@ async function runMigrations() {
 
   const adminUser = db.get("SELECT id FROM users WHERE username = 'admin'");
   if (!adminUser) {
-    const crypto = require('crypto');
-    const hash = crypto.createHash('sha256').update('admin123' + 'eam_salt_2024').digest('hex');
+    const adminPassword = process.env.EAM_ADMIN_DEFAULT_PASSWORD || 'admin123';
+    const adminSalt = process.env.EAM_PASSWORD_SALT || 'eam_default_salt';
+    const hash = crypto.pbkdf2Sync(adminPassword, adminSalt, 100000, 32, 'sha256').toString('hex');
     const ts = new Date().toISOString();
     db.run(
-      "INSERT INTO users (username, password_hash, password_plain, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-      ['admin', hash, 'admin123', 'Administrator', adminRoleId, 1, ts, ts]
+      "INSERT INTO users (username, password_hash, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+      ['admin', hash, 'Administrator', adminRoleId, 1, ts, ts]
     );
+  }
+
+  // ── Seed / repair default non-admin users ────────────────────────────
+  // These users are always seeded on startup so that a fresh or upgraded DB
+  // has working credentials. We also rehash any existing user whose password_hash
+  // no longer matches (e.g., after the SHA-256 → PBKDF2 migration).
+  const salt = process.env.EAM_PASSWORD_SALT || 'eam_default_salt';
+  function seedHash(pw) {
+    return crypto.pbkdf2Sync(String(pw), salt, 100000, 32, 'sha256').toString('hex');
+  }
+
+  // Ensure supporting roles exist before seeding users
+  function ensureRole(name, description) {
+    const existing = db.get("SELECT id FROM roles WHERE name = ?", [name]);
+    if (existing) return existing.id;
+    const allPages = ALL_KNOWN_PAGES;
+    const permissions = {};
+    allPages.forEach(p => { permissions[p] = { view: true, edit: false, delete: false }; });
+    const ts = new Date().toISOString();
+    db.run(
+      "INSERT INTO roles (name, description, permissions, created_at, updated_at) VALUES (?,?,?,?,?)",
+      [name, description, JSON.stringify(permissions), ts, ts]
+    );
+    return db.lastId();
+  }
+
+  const staffingRoleId = ensureRole('Staffing Team', 'Staffing team access');
+  const aaRoleId       = ensureRole('AA Team', 'AA team access');
+  const pcRoleId       = ensureRole('PC Team', 'PC team access');
+
+  const defaultUsers = [
+    { username: 'StaffingTeam', password: 'st@123',  displayName: 'Staffing Team', roleId: staffingRoleId },
+    { username: 'AATeam',       password: 'aa@123',  displayName: 'AA Team',       roleId: aaRoleId },
+    { username: 'PCTeam',       password: 'pc@123',  displayName: 'PC Team',       roleId: pcRoleId },
+  ];
+
+  for (const u of defaultUsers) {
+    const correctHash = seedHash(u.password);
+    const ts = new Date().toISOString();
+    const row = db.get("SELECT id, password_hash FROM users WHERE LOWER(username) = LOWER(?)", [u.username]);
+    if (!row) {
+      // Create missing user
+      db.run(
+        "INSERT INTO users (username, password_hash, display_name, role_id, active, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+        [u.username, correctHash, u.displayName, u.roleId, 1, ts, ts]
+      );
+      logger.info('Default user seeded', { username: u.username });
+    } else if (row.password_hash !== correctHash) {
+      // Rehash: user exists but hash is from old SHA-256 scheme or different salt
+      db.run("UPDATE users SET password_hash=?, updated_at=? WHERE id=?", [correctHash, ts, row.id]);
+      logger.info('Default user password rehashed to PBKDF2', { username: u.username });
+    }
+  }
+
+  // Also repair admin if it exists with a stale hash
+  const adminRow = db.get("SELECT id, password_hash FROM users WHERE username = 'admin'");
+  if (adminRow) {
+    const adminPw = process.env.EAM_ADMIN_DEFAULT_PASSWORD || 'admin123';
+    const correctAdminHash = seedHash(adminPw);
+    if (adminRow.password_hash !== correctAdminHash) {
+      db.run("UPDATE users SET password_hash=?, updated_at=? WHERE id=?",
+        [correctAdminHash, new Date().toISOString(), adminRow.id]);
+      logger.info('Admin password rehashed to PBKDF2', {});
+    }
   }
 
   console.log('✅ Database migrations completed');
@@ -348,19 +467,14 @@ async function runMigrations() {
 
 // ── Global error handlers ─────────────────────────────────────────────
 process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught exception:', err.message || err);
-  console.error(err.stack);
+  logger.error('Uncaught exception', { err: err.message, stack: err.stack });
   // Don't exit — keep server alive for non-fatal errors
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('❌ Unhandled rejection:', reason);
+  logger.error('Unhandled promise rejection', { reason: String(reason) });
   // Don't exit — keep server alive; individual request errors are handled in routes
 });
 
-// ── Request logger ────────────────────────────────────────────────────
-app.use((req, _res, next) => {
-  next();
-});
 
 app.use(cors({
   origin: process.env.ALLOWED_ORIGIN || 'http://localhost:5173',
@@ -391,6 +505,7 @@ app.use('/api/audit', auditRoutes);
 app.use('/api/user-groups', userGroupRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/notification-triggers', notificationTriggerRoutes);
+app.use('/api/notification-rules', notificationRulesRoutes);
 app.use('/api/user-preferences', userPreferencesRoutes);
 app.use('/api/resource-insights', resourceInsightsRoutes);
 app.use('/api/ai', aiRoutes);
@@ -404,8 +519,10 @@ app.use((req, res) => {
 });
 
 // ── Error handler ─────────────────────────────────────────────────────
-app.use((err, req, res, _next) => {
-  res.status(500).json({ error: err.message || 'Internal server error' });
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  logger.error('Unhandled route error', { method: req.method, path: req.path, err: err.message });
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 // ── Start ─────────────────────────────────────────────────────────────
@@ -413,14 +530,33 @@ runMigrations().then(() => {
   app.listen(PORT, () => {
     try {
       const dbConfig = require('./config/database');
-      console.log(`✅ Server running on http://localhost:${PORT}`);
-      console.log(`📦 Database: ${dbConfig.client}`);
+      logger.info(`Server started`, { port: PORT, database: dbConfig.client, url: `http://localhost:${PORT}` });
     } catch (e) {
-      console.log(`✅ Server running on http://localhost:${PORT}`);
+      logger.info(`Server started`, { port: PORT });
     }
   });
-}).catch(err => { 
-  console.error('❌ Server startup failed:', err.message || err);
-  console.error(err.stack);
+
+  // ── Scheduled Rule Engine ─────────────────────────────────────────────
+  // Evaluate active notification rules every hour.
+  // Rules with schedule_type='daily' fire at most once per day,
+  // 'monthly' once on the configured day-of-month, 'weekly' once on Monday.
+  async function runRuleEngine() {
+    try {
+      const db = await getDb();
+      const result = await evaluateRules(db, false); // scheduled — respects dedup
+      if (result.totalFired > 0) {
+        logger.info('Rule engine cycle complete', { notificationsFired: result.totalFired });
+      }
+    } catch (err) {
+      logger.error('Rule engine error', { err: err.message });
+    }
+  }
+  // Run once on startup (catches any missed runs if server was down)
+  runRuleEngine();
+  // Then every 60 minutes
+  setInterval(runRuleEngine, 60 * 60 * 1000);
+
+}).catch(err => {
+  logger.error('Server startup failed', { err: err.message, stack: err.stack });
   process.exit(1);
 });

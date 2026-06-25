@@ -17,7 +17,6 @@ const express   = require('express');
 const router    = express.Router();
 const { getDb } = require('../db/connection');
 
-console.log('📋 Loading SOW generation routes...');
 
 const MONTHS = ['January','February','March','April','May','June',
                 'July','August','September','October','November','December'];
@@ -116,7 +115,6 @@ router.post('/generate', async (req, res) => {
     const todayStr     = new Date().toISOString().slice(0, 10);
     const todayFmt     = fmtDateLong(todayStr); // e.g. "18 June 2026"
 
-    console.log(`📄 SOW Generate: "${sowNumber || '(no work order)'}" | ${resources.length} resource(s)`);
 
     const db = await getDb();
     const template = db.get(
@@ -128,7 +126,6 @@ router.post('/generate', async (req, res) => {
     }
 
     const fileBuffer = Buffer.from(template.file_data);
-    console.log(`📂 SOW Template: ${template.file_name} (${fileBuffer.length} bytes)`);
 
     const PizZip = require('pizzip');
     const zip = new PizZip(fileBuffer);
@@ -187,7 +184,6 @@ router.post('/generate', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}.docx"`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     res.send(buf);
-    console.log(`✅ SOW generated: ${buf.length} bytes → ${safeFileName}.docx`);
   } catch (err) {
     console.error('❌ SOW generation error:', err.message || err);
     res.status(500).json({ error: err.message || 'SOW generation failed' });
@@ -195,3 +191,4 @@ router.post('/generate', async (req, res) => {
 });
 
 module.exports = router;
+

@@ -4,28 +4,23 @@ import {
   Table, Tooltip, Badge, Tabs,
 } from 'antd';
 import {
-  ClockCircleOutlined, MessageOutlined, PlusOutlined, LinkOutlined,
+  ClockCircleOutlined, MessageOutlined, PlusOutlined, LinkOutlined, DeleteOutlined, EditOutlined, CheckOutlined, CloseOutlined,
 } from '@ant-design/icons';
 import * as auditApi from '../api/auditApi';
 import type { AuditEntry } from '../api/auditApi';
 import * as resourceApi from '../api/resourceApi';
 import type { ResourceComment } from '../api/resourceApi';
 import type { ResourceRow } from '../types/resource';
-import { useConfig } from '../context/ConfigContext';
+import { AllocPctTag } from '../utils/allocUtils';
 
 const { Text, Title } = Typography;
 
 const DEFAULT_COMMENT_TAGS = [
-  { value: 'General',               label: 'General',               color: 'default' },
-  { value: 'Connect with Resource', label: 'Connect with Resource', color: 'blue' },
-  { value: 'Escalation',            label: 'Escalation',            color: 'red' },
-  { value: 'Follow-up',             label: 'Follow-up',             color: 'orange' },
-  { value: 'Action Required',       label: 'Action Required',       color: 'volcano' },
-  { value: 'Important',             label: 'Important',             color: 'purple' },
-  { value: 'Rejected by Client',    label: 'Rejected by Client',    color: 'magenta' },
-  { value: 'Project Ended',         label: 'Project Ended',         color: 'gray' },
-  { value: 'Candidate Declined',    label: 'Candidate Declined',    color: 'orange' },
-  { value: 'On Hold',               label: 'On Hold',               color: 'gold' },
+  { value: 'General',      label: 'General',      color: 'default' },
+  { value: 'Interactions', label: 'Interactions', color: 'blue' },
+  { value: 'Escalations',  label: 'Escalations',  color: 'red' },
+  { value: 'Career',       label: 'Career',       color: 'purple' },
+  { value: 'Plans',        label: 'Plans',        color: 'green' },
 ];
 
 interface Props {
@@ -56,16 +51,9 @@ function cleanVal(v: string | null | undefined): string {
   }
 }
 
-export default function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }: Props) {
+function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }: Props) {
   const resourceId = resource.id;
-  const { getConfigByLink } = useConfig();
-
-  const commentTags = useMemo(() => {
-    const linked = getConfigByLink('resource_comment_tag_field');
-    if (linked && linked.items.length > 0)
-      return linked.items.map(i => ({ value: i.value, label: i.label, color: i.color || 'default' }));
-    return DEFAULT_COMMENT_TAGS;
-  }, [getConfigByLink]);
+  const commentTags = DEFAULT_COMMENT_TAGS;
 
   const defaultTag = commentTags[0]?.value || 'General';
 
@@ -82,6 +70,10 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
   const [newCommentBody, setNewCommentBody] = useState('');
   const [newCommentTag, setNewCommentTag]   = useState<string>(defaultTag);
   const [savingComment, setSavingComment]   = useState(false);
+  const [editingCommentId, setEditingCommentId] = useState<number | null>(null);
+  const [editingBody, setEditingBody]       = useState('');
+  const [editingTag, setEditingTag]         = useState('');
+  const [savingEdit, setSavingEdit]         = useState(false);
 
   // Keep tag in sync when config changes
   useEffect(() => {
@@ -165,8 +157,36 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
     }
   };
 
-  const tagColor = (tagValue: string) =>
-    commentTags.find(t => t.value === tagValue)?.color || 'default';
+  const getTagColor = (tagValue: string) => {
+    const map: Record<string, string> = { Interactions: 'blue', Escalations: 'red', Career: 'purple', Plans: 'green', General: 'default' };
+    return map[tagValue] ?? 'default';
+  };
+
+  const startEditComment = (c: ResourceComment) => {
+    setEditingCommentId(c.id);
+    setEditingBody(c.body);
+    setEditingTag(c.tag || 'General');
+  };
+
+  const cancelEdit = () => {
+    setEditingCommentId(null);
+    setEditingBody('');
+    setEditingTag('');
+  };
+
+  const handleSaveEdit = async (commentId: number) => {
+    if (!resourceId || !editingBody.trim()) return;
+    setSavingEdit(true);
+    const result = await resourceApi.updateResourceComment(resourceId, commentId, { body: editingBody.trim(), tag: editingTag });
+    if (result.ok) {
+      setComments(prev => prev.map(c => c.id === commentId
+        ? { ...c, body: editingBody.trim(), tag: editingTag, updated_at: result.updated_at || new Date().toISOString() }
+        : c
+      ));
+      cancelEdit();
+    }
+    setSavingEdit(false);
+  };
 
   const formatDate = (iso: string) => {
     try { return new Date(iso).toLocaleString(); } catch { return iso; }
@@ -182,6 +202,7 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
   const infoFields: Array<[string, string | React.ReactNode]> = [
     ['RA ID', resource.raId],
     ['Email', resource.emailId],
+    ['Resource Status', resource.isActive === false ? 'Inactive' : 'Active'],
     ['Role / Domain', resource.roleOrDomain],
     ['Prev Experience', resource.previousWorkex],
     ['Date of Joining', fmtDate(resource.doj)],
@@ -190,6 +211,7 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
     ['Eng. Start Date', fmtDate(resource.engagementStartDate || '')],
     ['Eng. End Date', fmtDate(resource.engagementEndDate || '')],
     ['Allocation Status', resource.allocationStatus || '—'],
+    ['Allocation %', resource.allocationPercentage != null ? <AllocPctTag pct={resource.allocationPercentage} /> : '—'],
     ...(resource.beelineId ? [['Beeline ID', <Tag icon={<LinkOutlined />} color="blue" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onNavigateToRequest?.(resource.beelineId!)}>{resource.beelineId}</Tag>] as [string, React.ReactNode]] : []),
     ...(resource.sowName ? [['Linked SOW', <Tag icon={<LinkOutlined />} color="green" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onNavigateToProcess?.(resource.sowName!)}>{resource.sowName}</Tag>] as [string, React.ReactNode]] : []),
   ];
@@ -312,16 +334,16 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
 
       <Divider style={{ margin: '4px 0' }} />
 
-      {/* Navigate to Individual Resource tab to view all comments */}
-      <div style={{ background: '#f6f8ff', border: '1px solid #d6e4ff', borderRadius: 6, padding: '10px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <MessageOutlined style={{ color: '#1890ff', fontSize: 14 }} />
+      {/* Navigate link on top + inline comment list below */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <Space size={6}>
+          <MessageOutlined style={{ color: '#1890ff', fontSize: 13 }} />
           <span style={{ fontSize: 11, color: '#595959' }}>
-            {commentsLoading ? 'Loading…' : comments.length > 0 ? (
-              <><Text strong style={{ fontSize: 11 }}>{comments.length}</Text> comment{comments.length !== 1 ? 's' : ''} added</>
-            ) : 'No comments yet'}
+            {commentsLoading ? 'Loading…' : (
+              <><strong>{comments.length}</strong> comment{comments.length !== 1 ? 's' : ''}</>
+            )}
           </span>
-        </div>
+        </Space>
         {onNavigateToInsights && (
           <Button
             type="link"
@@ -332,10 +354,73 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
               onNavigateToInsights();
             }}
           >
-            View all →
+            View in Resources →
           </Button>
         )}
       </div>
+
+      {/* Inline comment list */}
+      {commentsLoading ? (
+        <div style={{ textAlign: 'center', padding: '12px 0', color: '#bbb', fontSize: 11 }}>Loading comments…</div>
+      ) : comments.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '10px 0', color: '#bbb', fontSize: 11 }}>No comments yet</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto', paddingRight: 2 }}>
+          {comments.map(c => {
+            const isOwn = c.author === currentUser;
+            const isEditing = editingCommentId === c.id;
+            const displayDate = c.updated_at
+              ? `Edited ${new Date(c.updated_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}`
+              : c.created_at ? new Date(c.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
+            return (
+              <div key={c.id} style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '7px 10px', fontSize: 11 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
+                  <Space size={4}>
+                    {isEditing
+                      ? <Select size="small" value={editingTag} onChange={setEditingTag}
+                          options={commentTags.map(t => ({ value: t.value, label: t.label }))}
+                          style={{ width: 110, fontSize: 10 }} popupMatchSelectWidth={false} />
+                      : <Tag color={getTagColor(c.tag)} style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>{c.tag || 'General'}</Tag>
+                    }
+                    <Text type="secondary" style={{ fontSize: 10 }}>{c.author || 'System'}</Text>
+                  </Space>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap', fontStyle: c.updated_at ? 'italic' : 'normal' }}>
+                      {displayDate}
+                    </Text>
+                    {isOwn && !isEditing && (
+                      <>
+                        <Button type="text" size="small" icon={<EditOutlined />}
+                          style={{ fontSize: 10, color: '#1890ff', padding: '0 2px', height: 16 }}
+                          onClick={() => startEditComment(c)} />
+                        <Button type="text" size="small" icon={<DeleteOutlined />}
+                          style={{ fontSize: 10, color: '#ff4d4f', padding: '0 2px', height: 16 }}
+                          onClick={() => handleDeleteComment(c.id)} />
+                      </>
+                    )}
+                    {isEditing && (
+                      <>
+                        <Button type="text" size="small" icon={<CheckOutlined />} loading={savingEdit}
+                          style={{ fontSize: 10, color: '#52c41a', padding: '0 2px', height: 16 }}
+                          onClick={() => handleSaveEdit(c.id)} />
+                        <Button type="text" size="small" icon={<CloseOutlined />}
+                          style={{ fontSize: 10, color: '#8c8c8c', padding: '0 2px', height: 16 }}
+                          onClick={cancelEdit} />
+                      </>
+                    )}
+                  </div>
+                </div>
+                {isEditing
+                  ? <Input.TextArea size="small" rows={2} value={editingBody}
+                      onChange={e => setEditingBody(e.target.value)}
+                      style={{ fontSize: 11, marginTop: 2 }} autoFocus />
+                  : <div style={{ fontSize: 11, color: '#333', lineHeight: '1.5', wordBreak: 'break-word' }}>{c.body}</div>
+                }
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 
@@ -346,8 +431,8 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
       <div style={{ background: 'linear-gradient(135deg, #667eea10, #764ba210)', padding: '12px 14px', borderRadius: 8, border: '1px solid #e8eaf0' }}>
         <Title level={5} style={{ margin: '0 0 2px', fontSize: 14 }}>{resource.empName}</Title>
         <Text type="secondary" style={{ fontSize: 11 }}>{resource.piwRole || '—'}</Text>
-        {resource.allocationStatus && (
-          <div style={{ marginTop: 6 }}>
+        <div style={{ marginTop: 6 }}>
+          {resource.allocationStatus && (
             <Tag color={
               resource.allocationStatus === 'Joined' ? 'green' :
               resource.allocationStatus === 'On Bench' || resource.allocationStatus === 'Available' ? 'orange' :
@@ -355,11 +440,14 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
             } style={{ fontSize: 11 }}>
               {resource.allocationStatus}
             </Tag>
-            {resource.engagement && resource.engagement !== 'No Value' && (
-              <Tag color="purple" style={{ fontSize: 11 }}>{resource.engagement}</Tag>
-            )}
-          </div>
-        )}
+          )}
+          <Tag color={resource.isActive === false ? 'red' : 'green'} style={{ fontSize: 11 }}>
+            {resource.isActive === false ? 'Inactive' : 'Active'}
+          </Tag>
+          {resource.engagement && resource.engagement !== 'No Value' && (
+            <Tag color="purple" style={{ fontSize: 11 }}>{resource.engagement}</Tag>
+          )}
+        </div>
         {resource.beelineId && (
           <div style={{ marginTop: 6 }}>
             <Tag icon={<LinkOutlined />} color="blue" style={{ fontSize: 10, cursor: 'pointer' }}
@@ -425,6 +513,9 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
                   {resource.allocationStatus}
                 </Tag>
               )}
+              <Tag color={resource.isActive === false ? 'red' : 'green'} style={{ fontSize: 11 }}>
+                {resource.isActive === false ? 'Inactive' : 'Active'}
+              </Tag>
               {resource.engagement && resource.engagement !== 'No Value' && (
                 <Tag color="purple" style={{ fontSize: 11 }}>{resource.engagement}</Tag>
               )}
@@ -537,3 +628,5 @@ export default function ResourceDetailPanel({ resource, currentUser, expanded, o
     </div>
   );
 }
+
+export default React.memo(ResourceDetailPanel);

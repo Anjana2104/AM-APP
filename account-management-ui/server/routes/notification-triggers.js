@@ -21,6 +21,72 @@ router.get('/sources', (_req, res) => {
   res.json({ sources: TRIGGER_SOURCES });
 });
 
+// GET /api/notification-triggers/relevant?userId=X
+// Returns only active, non-empty triggers that are relevant to the given user
+// (based on group membership for group-targeted, role page-permissions for field_value)
+router.get('/relevant', async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  try {
+    const db = await getDb();
+    const userIdInt = parseInt(userId, 10);
+
+    // User's group IDs
+    const groupRows = db.all('SELECT group_id FROM user_group_members WHERE user_id = ?', [userIdInt]);
+    const userGroupIds = new Set(groupRows.map(r => String(r.group_id)));
+
+    // User's role permissions → which pages they can view
+    const userRow = db.get(
+      'SELECT u.role_id, r.permissions FROM users u LEFT JOIN roles r ON u.role_id = r.id WHERE u.id = ?',
+      [userIdInt]
+    );
+    let permissions = {};
+    try { permissions = JSON.parse(userRow?.permissions || '{}'); } catch { permissions = {}; }
+    const viewablePages = new Set(
+      Object.entries(permissions).filter(([, p]) => p?.view).map(([pid]) => pid)
+    );
+
+    // source_table → page IDs that gate visibility
+    const SOURCE_PAGE_MAP = {
+      resources:       ['resources_info', 'resources_utilization', 'resources_insights'],
+      requests:        ['clientmgmt_requests'],
+      client_requests: ['clientmgmt_requests'],
+      ra_process:      ['clientmgmt_connects'],
+      process:         ['clientmgmt_connects'],
+      finance:         ['executive_summary', 'executive_revenue'],
+      sow:             ['executive_summary', 'executive_revenue'],
+      invoice:         ['executive_invoicing'],
+      invoices:        ['executive_invoicing'],
+    };
+
+    // Only active triggers with a real non-empty name
+    const allTriggers = db.all(
+      "SELECT * FROM notification_triggers WHERE is_active = 1 AND name IS NOT NULL AND TRIM(name) != '' ORDER BY sort_order ASC, id ASC"
+    );
+
+    const relevant = allTriggers.filter(t => {
+      const targetType  = (t.notify_target_type  || '').trim();
+      const targetValue = (t.notify_target_value || '').trim();
+
+      if (!targetType || targetType === 'broadcast') return true;
+
+      if (targetType === 'group') return userGroupIds.has(targetValue);
+
+      if (targetType === 'field_value') {
+        const pageIds = SOURCE_PAGE_MAP[(t.source_table || '').toLowerCase().trim()];
+        if (!pageIds) return true; // unmapped → show by default
+        return pageIds.some(pid => viewablePages.has(pid));
+      }
+
+      return true;
+    });
+
+    res.json({ triggers: relevant });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/notification-triggers
 router.get('/', async (_req, res) => {
   try {

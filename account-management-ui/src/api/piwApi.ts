@@ -31,7 +31,6 @@ export interface PIWFormData {
  */
 export const generatePIW = async (data: PIWFormData): Promise<Blob> => {
   try {
-    console.log('📋 Sending PIW generation request to server...');
     
     const response = await fetch('http://localhost:3001/api/piwGeneration/generate', {
       method: 'POST',
@@ -47,10 +46,8 @@ export const generatePIW = async (data: PIWFormData): Promise<Blob> => {
     }
 
     const blob = await response.blob();
-    console.log(`✅ PIW generated: ${blob.size} bytes`);
     return blob;
   } catch (e: any) {
-    console.error('Error generating PIW:', e);
     throw e;
   }
 };
@@ -67,5 +64,5 @@ export const downloadPIW = (piw: Blob, fileName: string): void => {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-  console.log(`✅ PIW downloaded: ${fileName}.xlsm`);
 };
+

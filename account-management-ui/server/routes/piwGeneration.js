@@ -30,7 +30,6 @@ const router = express.Router();
 const XlsxPopulate = require('xlsx-populate');
 const { getDb } = require('../db/connection');
 
-console.log('📋 Loading PIW generation routes...');
 
 // ── RA Bangalore FIXED Public Holidays ───────────────────────────────────
 // Only mandatory/fixed holidays — excludes restricted/optional leaves.
@@ -148,7 +147,6 @@ router.post('/generate', async (req, res) => {
       resources = []
     } = req.body;
 
-    console.log(`📋 PIW Generate: "${projectName}" | ${contractType} | ${resources.length} resource(s)`);
 
     const db = await getDb();
     const template = db.get(
@@ -160,7 +158,6 @@ router.post('/generate', async (req, res) => {
     }
 
     const fileBuffer = Buffer.from(template.file_data);
-    console.log(`📂 Template: ${template.file_name} (${fileBuffer.length} bytes)`);
 
     // ── Load holiday calendar from uploaded Excel (if available) ─────────
     let activeHolidays = [...RA_BANGALORE_HOLIDAYS]; // default: hardcoded list
@@ -206,11 +203,9 @@ router.post('/generate', async (req, res) => {
         });
         if (parsed.length > 0) {
           activeHolidays = parsed;
-          console.log(`  📅 Loaded ${parsed.length} holidays from Excel: ${holTemplate.file_name}`);
         }
       }
     } catch (holErr) {
-      console.warn('  ⚠️ Could not parse holiday calendar Excel, using default list:', holErr.message);
     }
 
     // Rebuild holiday sets from active list
@@ -240,7 +235,6 @@ router.post('/generate', async (req, res) => {
     };
 
     const wb = await XlsxPopulate.fromDataAsync(fileBuffer);
-    console.log(`📑 Sheets: ${wb.sheets().map(s => s.name()).join(', ')}`);
 
     // ── 1. Fill FrontPage (plain data entry cells only) ───────────────────
     const fp = wb.sheet('FrontPage');
@@ -256,15 +250,12 @@ router.post('/generate', async (req, res) => {
     // B8 (Currency) is hardcoded in the template — do not overwrite
     if (projectMonday) fp.cell('B9').value(projectMonday);   // week-1 header = this Monday
     if (plannedEndDate) fp.cell('B10').value(new Date(plannedEndDate));
-    console.log(`  ✅ FrontPage: "${projectName}" | ${contractType} | week1Monday=${projectMonday?.toISOString().slice(0,10)} | end=${plannedEndDate}`);
 
     // ── 2. Fill BOTH delivery sheets ──────────────────────────────────────
     if (resources.length > 0) {
-      console.log(`📅 ${resources.length} resource(s)`);
 
       for (const cfg of DELIVERY_SHEETS) {
         const sheet = wb.sheet(cfg.sheetName);
-        if (!sheet) { console.warn(`  ⚠️ Sheet "${cfg.sheetName}" not found`); continue; }
 
         resources.forEach((resource, i) => {
           const row = cfg.dataStartRow + i;
@@ -339,7 +330,6 @@ router.post('/generate', async (req, res) => {
           }
         });
 
-        console.log(`  ✅ Sheet "${cfg.sheetName}": ${resources.length} resource(s) written`);
       }
     }
 
@@ -523,21 +513,17 @@ router.post('/generate', async (req, res) => {
         try { calcSheet.column(i + 1).width(w); } catch (_) {}
       });
 
-      console.log('  ✅ Calculation sheet built with holiday deductions');
     } catch (calcErr) {
-      console.warn('  ⚠️ Could not build Calculation sheet:', calcErr.message, calcErr.stack);
     }
 
     // ── 4. Output ─────────────────────────────────────────────────────────
     const outBuffer = await wb.outputAsync();    const safeName = (projectName || 'PIW').replace(/[^a-zA-Z0-9]/g, '-');
     const fileName = `PIW-${safeName}.xlsm`;
-    console.log(`📦 Output: ${outBuffer.length} bytes → ${fileName}`);
 
     res.set('Content-Type', 'application/vnd.ms-excel.sheet.macroEnabled.12');
     res.set('Content-Disposition', `attachment; filename="${fileName}"`);
     res.set('Content-Length', outBuffer.length);
     res.end(outBuffer);
-    console.log(`✅ Sent: ${fileName}`);
 
   } catch (error) {
     console.error('❌ PIW generation error:', error.message);
@@ -545,5 +531,5 @@ router.post('/generate', async (req, res) => {
   }
 });
 
-console.log('✅ PIW generation routes loaded');
 module.exports = router;
+

@@ -1,8 +1,11 @@
-/** Shared ResourceRow type — imported by ResourceInformation, ResourceDetailPanel, EngagementMapping etc. */
+/**
+ * Shared resource type definitions
+ */
 
 export type ResourceRow = {
   key: string;
   id?: number;
+  isActive?: boolean;
   sno: string;
   raId: string;
   empName: string;
@@ -19,6 +22,7 @@ export type ResourceRow = {
   sowName?: string;                // Linked SOW name (from ra_process)
   engagement?: string;
   allocationStatus?: string;
+  allocationPercentage?: number | null;
   beelineId?: string;
   allocationRequests?: Array<{
     id: string;

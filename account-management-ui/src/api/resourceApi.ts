@@ -1,8 +1,5 @@
 /**
- * src/api/resourceApi.ts
- *
- * Resource data API client — mirrors financeApi pattern.
- * Falls back gracefully if server is offline.
+ * Resource Hub API client
  */
 
 const BASE = '/api/resources';
@@ -10,6 +7,7 @@ const BASE = '/api/resources';
 export interface ResourcePayload {
   id?: number;
   sno?: number;
+  isActive?: boolean;
   raId: string;
   empName: string;
   emailId: string;
@@ -21,6 +19,7 @@ export interface ResourcePayload {
   engagement: string;
   skills: string;
   allocationStatus?: string;
+  allocationPercentage?: number | null;
   beelineId?: string;
   processId?: number | null;
   engagementStartDate?: string;
@@ -108,6 +107,7 @@ export interface ResourceComment {
   tag: string;
   body: string;
   created_at: string;
+  updated_at?: string;
 }
 
 export async function getResourceComments(resourceId: number): Promise<ResourceComment[]> {
@@ -146,6 +146,22 @@ export async function batchUpdateResources(
   });
   const data = await res.json();
   return { ok: data.ok === true, updated: data.updated || 0, notFound: data.notFound || 0 };
+}
+
+export async function updateResourceComment(
+  resourceId: number,
+  commentId: number,
+  payload: { body: string; tag?: string }
+): Promise<{ ok: boolean; updated_at?: string }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false };
+  const res = await fetch(`${BASE}/${resourceId}/comments/${commentId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  return { ok: data.ok === true, updated_at: data.updated_at };
 }
 
 export async function deleteResourceComment(resourceId: number, commentId: number): Promise<boolean> {

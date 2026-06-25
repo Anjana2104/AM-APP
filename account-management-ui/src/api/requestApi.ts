@@ -1,6 +1,5 @@
 /**
- * src/api/requestApi.ts
- * Client Requests API client — mirrors resourceApi pattern.
+ * Client Requests API client
  */
 
 const BASE = '/api/requests';
@@ -166,7 +165,6 @@ export async function addRequestComment(
   payload: { author: string; tag: string; body: string }
 ): Promise<{ ok: boolean; error?: string }> {
   const url = `${BASE}/${requestId}/comments`;
-  console.log('[addRequestComment] POST', url, payload);
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -175,12 +173,10 @@ export async function addRequestComment(
     });
     let data: Record<string, unknown>;
     try { data = await res.json(); } catch { data = {}; }
-    console.log('[addRequestComment] response', res.status, data);
     if (data.ok === true) return { ok: true };
     return { ok: false, error: String(data.error || `HTTP ${res.status}`) };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.error('[addRequestComment] fetch error', msg);
     return { ok: false, error: msg };
   }
 }
@@ -193,3 +189,4 @@ export async function deleteRequestComment(requestId: number, commentId: number)
     return data.ok === true;
   } catch { return false; }
 }
+

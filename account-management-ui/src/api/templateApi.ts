@@ -55,14 +55,12 @@ export const uploadTemplate = async (file: File, type: string, description?: str
 
         if (response.ok) {
           const data = await response.json();
-          console.log('Template uploaded to server:', data);
           return { ok: true, data };
         } else {
           const errorData = await response.json();
           throw new Error(errorData.error || 'Upload failed');
         }
       } catch (serverError: any) {
-        console.error('Server upload failed:', serverError);
         return { ok: false, error: serverError.message || 'Upload failed' };
       }
     }
@@ -70,7 +68,6 @@ export const uploadTemplate = async (file: File, type: string, description?: str
     // Fallback: localStorage (offline mode)
     return fallbackUploadTemplate(file, type, description);
   } catch (e: any) {
-    console.error('Template upload error:', e);
     return { ok: false, error: e.message || 'Upload failed' };
   }
 };
@@ -89,13 +86,11 @@ export const getTemplates = async (type?: string): Promise<{ ok: boolean; data?:
         const response = await fetch(url);
         if (response.ok) {
           const data = await response.json();
-          console.log('Templates fetched from server:', data);
           return { ok: true, data };
         } else {
           throw new Error('Failed to fetch templates');
         }
       } catch (serverError: any) {
-        console.error('Server fetch failed:', serverError);
         // Fall back to localStorage
       }
     }
@@ -103,10 +98,8 @@ export const getTemplates = async (type?: string): Promise<{ ok: boolean; data?:
     // Fallback: localStorage
     const localTemplates = JSON.parse(localStorage.getItem('eam_templates') || '[]') as any[];
     const localFiltered = type ? localTemplates.filter(t => t.type === type) : localTemplates;
-    console.log('Templates fetched from localStorage (offline):', localFiltered);
     return { ok: true, data: localFiltered };
   } catch (e: any) {
-    console.error('Template fetch error:', e);
     return { ok: false, error: e.message || 'Fetch failed' };
   }
 };
@@ -121,16 +114,13 @@ export const getTemplate = async (templateId: string): Promise<{ ok: boolean; bl
         const response = await fetch(`http://localhost:3001/api/templates/${encodeURIComponent(templateId)}`);
         if (response.ok) {
           const blob = await response.blob();
-          console.log('Template downloaded from server');
           return { ok: true, blob };
         } else if (response.status === 404) {
-          console.warn('Template not found on server');
           // Fall back to localStorage
         } else {
           throw new Error('Failed to download template');
         }
       } catch (serverError: any) {
-        console.error('Server download failed:', serverError);
         // Fall back to localStorage
       }
     }
@@ -138,7 +128,6 @@ export const getTemplate = async (templateId: string): Promise<{ ok: boolean; bl
     // Fallback: localStorage
     return fallbackGetTemplate(templateId);
   } catch (e: any) {
-    console.error('Template get error:', e);
     return { ok: false, error: e.message || 'Get failed' };
   }
 };
@@ -155,13 +144,11 @@ export const deleteTemplate = async (templateId: string): Promise<{ ok: boolean;
         });
         
         if (response.ok) {
-          console.log('Template deleted from server');
           return { ok: true };
         } else {
           throw new Error('Failed to delete from server');
         }
       } catch (serverError: any) {
-        console.error('Server delete failed:', serverError);
         // Fall back to localStorage
       }
     }
@@ -170,10 +157,8 @@ export const deleteTemplate = async (templateId: string): Promise<{ ok: boolean;
     const templates = JSON.parse(localStorage.getItem('eam_templates') || '[]') as any[];
     const filtered = templates.filter(t => t.id !== templateId);
     localStorage.setItem('eam_templates', JSON.stringify(filtered));
-    console.log('Template deleted from localStorage');
     return { ok: true };
   } catch (e: any) {
-    console.error('Template delete error:', e);
     return { ok: false, error: e.message || 'Delete failed' };
   }
 };
@@ -223,10 +208,8 @@ const fallbackUploadTemplate = async (file: File, type: string, description?: st
           
           filtered.push(newTemplate);
           localStorage.setItem('eam_templates', JSON.stringify(filtered));
-          console.log('Template saved to localStorage (offline)');
           resolve({ ok: true, data: newTemplate });
         } catch (e: any) {
-          console.error('Offline upload error:', e);
           resolve({ ok: false, error: e.message || 'Failed to save template' });
         }
       };
@@ -238,7 +221,6 @@ const fallbackUploadTemplate = async (file: File, type: string, description?: st
       reader.readAsDataURL(file);
     });
   } catch (e: any) {
-    console.error('Fallback upload error:', e);
     return { ok: false, error: e.message || 'Upload failed' };
   }
 };
@@ -249,21 +231,19 @@ const fallbackGetTemplate = async (templateId: string): Promise<{ ok: boolean; b
     const template = templates.find(t => t.id === templateId);
     
     if (template && template.data) {
-      console.log('Template found in localStorage (offline)');
       try {
         const response = await fetch(template.data);
         const blob = await response.blob();
         return { ok: true, blob };
       } catch (e) {
-        console.error('Error converting base64 to blob:', e);
         return { ok: false, error: 'Failed to process template data' };
       }
     }
     
     return { ok: false, error: 'Template not found' };
   } catch (e: any) {
-    console.error('Fallback get error:', e);
     return { ok: false, error: e.message || 'Get failed' };
   }
 };
+
 
