@@ -448,3 +448,9 @@ code {
   color: inherit !important;
 }
 
+/* Consistent small font for all Ant Design form validation messages */
+.ant-form-item-explain-error,
+.ant-form-item-explain-warning,
+.ant-form-item-explain-success {
+  font-size: 11px !important;
+}

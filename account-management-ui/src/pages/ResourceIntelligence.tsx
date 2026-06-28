@@ -11,7 +11,7 @@ import {
   Select, Tabs, Button, Modal, Form, Input, Tag, Space, Row, Col,
   Empty, Card, Tooltip, Spin, Typography, Dropdown, message,
   DatePicker, Divider, Alert, Table, Skeleton, Badge,
-  Descriptions, Avatar,
+  Descriptions, Avatar, Segmented,
 } from 'antd';
 import {
   MessageOutlined, WarningOutlined, UserOutlined, BulbOutlined,
@@ -457,27 +457,14 @@ function SectionTab({ section, entries, linkedComments, loading, currentUser, re
   }, [editingEntry, resourceId, section, currentUser, onRefresh]);
 
   const handleDelete = useCallback(async (id: number) => {
-    const entry = entries.find(e => e.id === id);
     const ok = await resourceInsightsApi.deleteInsight(id);
     if (ok) {
       message.success('Entry deleted');
-      // Log deletion to audit trail
-      if (entry) {
-        await auditApi.addAuditLog({
-          module: 'resources',
-          record_id: resourceId,
-          record_name: resourceName,
-          field: `${section.charAt(0).toUpperCase() + section.slice(1).replace('_', ' ')} Entry Deleted`,
-          old_value: [entry.title, entry.body, entry.tag].filter(Boolean).join(' | '),
-          new_value: '',
-          changed_by: currentUser,
-        });
-      }
       onRefresh();
     } else {
       message.error('Failed to delete');
     }
-  }, [entries, onRefresh, resourceId, resourceName, section, currentUser]);
+  }, [onRefresh]);
 
   const handleEdit = useCallback((entry: InsightEntry) => {
     setEditingEntry(entry);
@@ -1076,6 +1063,7 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
   // ── Log Summary state (lifted from SectionTab) ───────────────────────────
   const [summaryModal, setSummaryModal] = useState(false);
   const [summaryRange, setSummaryRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([null, null]);
+  const [summarySectionFilter, setSummarySectionFilter] = useState<string>('all');
   const [aiSummary, setAiSummary] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
@@ -1087,20 +1075,14 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
       const d = dayjs(iso);
       return d.isAfter(from.startOf('day').subtract(1, 'ms')) && d.isBefore(to.endOf('day').add(1, 'ms'));
     };
-    const isSection = activeTab in SECTION_META;
-    // Insight entries pool
-    const entryPool = isSection ? (sectionEntries[activeTab as SectionKey] || []) : [...entries];
-    const filteredInsights = entryPool.filter(e => inRange(e.created_at));
-    // Comments pool — adapt to InsightEntry shape for unified display & AI summary
-    const commentPool = isSection
-      ? (commentsBySection[activeTab as SectionKey] || [])
-      : resourceComments;
-    const filteredComments: InsightEntry[] = commentPool
+    // Always pull ALL entries across all sections (filtering happens inside the modal)
+    const filteredInsights = [...entries].filter(e => inRange(e.created_at));
+    const filteredComments: InsightEntry[] = resourceComments
       .filter(c => inRange(c.created_at))
       .map(c => ({
-        id: -(c.id),           // negative id to avoid collision with insights
+        id: -(c.id),
         resource_id: c.resource_id,
-        section: (isSection ? activeTab : 'interaction') as InsightEntry['section'],
+        section: 'interaction' as InsightEntry['section'],
         title: c.tag || 'Comment',
         body: c.body,
         tag: c.tag,
@@ -1114,120 +1096,61 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
     return [...filteredInsights, ...filteredComments].sort((a, b) =>
       dayjs(b.created_at).unix() - dayjs(a.created_at).unix()
     );
-  }, [sectionEntries, entries, commentsBySection, resourceComments, activeTab, summaryRange]);
+  }, [entries, resourceComments, summaryRange]);
 
   // ── Rule-based local summary (no API key required) ───────────────────────
-  const generateLocalSummary = useCallback((entries: InsightEntry[], from?: string, to?: string): string => {
+  const generateLocalSummary = useCallback((entries: InsightEntry[]): string => {
     if (!entries.length) return 'No entries in the selected period.';
 
-    const period = (from && to) ? `${from} – ${to}` : 'the selected period';
-    const total = entries.length;
-
-    // Section counts
-    const sectionCount: Record<string, number> = {};
-    entries.forEach(e => { sectionCount[e.section] = (sectionCount[e.section] || 0) + 1; });
-
-    // Tag frequency
-    const tagCount: Record<string, number> = {};
-    entries.forEach(e => { if (e.tag) tagCount[e.tag] = (tagCount[e.tag] || 0) + 1; });
-    const topTags = Object.entries(tagCount).sort((a, b) => b[1] - a[1]).slice(0, 4);
-
-    // Authors
-    const authors = Array.from(new Set(entries.map(e => e.author).filter(Boolean)));
-
-    // Build section breakdown text
-    const sectionLabels: Record<string, string> = {
-      interaction: 'Interaction', escalation: 'Escalation',
-      career_preference: 'Career Preference', plan: 'Plan', general: 'Comment',
+    const sections: Record<string, { label: string; items: InsightEntry[] }> = {
+      interaction: { label: 'Interactions', items: [] },
+      escalation: { label: 'Escalations', items: [] },
+      career_preference: { label: 'Career & Preferences', items: [] },
+      plan: { label: 'Plans & Actions', items: [] },
+      general: { label: 'General Notes', items: [] },
     };
-    const sectionBreakdown = Object.entries(sectionCount)
-      .sort((a, b) => b[1] - a[1])
-      .map(([s, n]) => `${n} ${sectionLabels[s] || s}${n > 1 ? 's' : ''}`)
-      .join(', ');
 
-    // Escalation highlight
-    const escalations = entries.filter(e => e.section === 'escalation');
-    const openEscalations = escalations.filter(e => e.status === 'open' || !e.status);
+    entries.forEach(e => {
+      const key = e.section in sections ? e.section : 'general';
+      sections[key].items.push(e);
+    });
 
-    // Career preferences
-    const careerEntries = entries.filter(e => e.section === 'career_preference');
-
-    // Plans
-    const planEntries = entries.filter(e => e.section === 'plan');
-
-    // Key tags sentence
-    const tagSentence = topTags.length
-      ? `Most frequent topics: ${topTags.map(([t, n]) => `${t} (${n})`).join(', ')}.`
-      : '';
-
-    // Build narrative
     const lines: string[] = [];
-    lines.push(`## Period: ${period}`);
-    lines.push('');
-    lines.push(`## Overview`);
-    lines.push(`- ${total} log entr${total > 1 ? 'ies' : 'y'} recorded: ${sectionBreakdown}.`);
-    if (authors.length) lines.push(`- Logged by: ${authors.join(', ')}.`);
-    if (tagSentence) lines.push(`- ${tagSentence}`);
-
-    if (escalations.length > 0) {
+    Object.values(sections).forEach(({ label, items }) => {
+      if (!items.length) return;
+      lines.push(`## ${label}`);
+      items.forEach(e => {
+        const text = [e.title, e.body].filter(Boolean).join(' — ');
+        if (text.trim()) lines.push(`- ${text}`);
+      });
       lines.push('');
-      lines.push('## Escalations');
-      lines.push(`- ${escalations.length} escalation${escalations.length > 1 ? 's' : ''} recorded in this period.`);
-      if (openEscalations.length > 0)
-        lines.push(`- ${openEscalations.length} escalation${openEscalations.length > 1 ? 's' : ''} currently open — follow-up recommended.`);
-      else
-        lines.push(`- All escalations resolved/closed in this period.`);
-      escalations.forEach(e => { if (e.title) lines.push(`  • ${e.title}${e.body ? ': ' + e.body.slice(0, 80) + (e.body.length > 80 ? '…' : '') : ''}`); });
-    }
+    });
 
-    if (careerEntries.length > 0) {
-      lines.push('');
-      lines.push('## Career & Preferences');
-      lines.push(`- ${careerEntries.length} career preference note${careerEntries.length > 1 ? 's' : ''} logged.`);
-      careerEntries.forEach(e => { if (e.title) lines.push(`  • ${e.title}${e.body ? ': ' + e.body.slice(0, 80) + (e.body.length > 80 ? '…' : '') : ''}`); });
-    }
-
-    if (planEntries.length > 0) {
-      lines.push('');
-      lines.push('## Plans & Actions');
-      lines.push(`- ${planEntries.length} plan${planEntries.length > 1 ? 's' : ''} recorded.`);
-      planEntries.forEach(e => { if (e.title) lines.push(`  • ${e.title}${e.body ? ': ' + e.body.slice(0, 80) + (e.body.length > 80 ? '…' : '') : ''}`); });
-    }
-
-    lines.push('');
-    lines.push('## Recommendation');
-    if (openEscalations.length > 0)
-      lines.push(`- Address ${openEscalations.length} open escalation${openEscalations.length > 1 ? 's' : ''} at the earliest.`);
-    if (careerEntries.length > 0)
-      lines.push(`- Review career preferences and align next engagement accordingly.`);
-    if (planEntries.length > 0)
-      lines.push(`- Follow up on planned actions to ensure timely execution.`);
-    if (!openEscalations.length && !careerEntries.length && !planEntries.length)
-      lines.push(`- ${total} interaction${total > 1 ? 's' : ''} logged — continue regular connect cadence.`);
-
-    return lines.join('\n');
+    return lines.join('\n').trim();
   }, []);
 
   const handleGenerateAiSummary = useCallback(async () => {
-    if (!summaryEntries.length) return;
+    const filtered = summarySectionFilter === 'all'
+      ? summaryEntries
+      : summaryEntries.filter(e => e.section === summarySectionFilter);
+    if (!filtered.length) return;
     setAiLoading(true); setAiError(''); setAiSummary('');
     const [from, to] = summaryRange;
     const result = await aiApi.summarizeInteractions(
-      summaryEntries.map(e => ({ title: e.title, body: e.body, tag: e.tag, author: e.author, created_at: e.created_at })),
+      filtered.map(e => ({ title: e.title, body: e.body, tag: e.tag, author: e.author, created_at: e.created_at })),
       from?.format('DD MMM YYYY'), to?.format('DD MMM YYYY'),
     );
     if (result.ok && result.summary) {
       setAiSummary(result.summary);
     } else if (result.error?.includes('API key') || result.error?.includes('not configured')) {
-      // Fall back to local rule-based summary
-      const local = generateLocalSummary(summaryEntries, from?.format('DD MMM YYYY'), to?.format('DD MMM YYYY'));
+      const local = generateLocalSummary(filtered);
       setAiSummary(local);
       setAiError('');
     } else {
       setAiError(result.error || 'Failed to generate summary');
     }
     setAiLoading(false);
-  }, [summaryEntries, summaryRange, generateLocalSummary]);
+  }, [summaryEntries, summarySectionFilter, summaryRange, generateLocalSummary]);
 
   // Unified cross-tab search results (when globalSearch is active)
   const SECTION_KEYS: SectionKey[] = ['interaction', 'escalation', 'career_preference', 'plan'];
@@ -1890,48 +1813,60 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
             {/* Log Summary Modal */}
             <Modal
               open={summaryModal}
-              title={<Space><FileTextOutlined style={{ color: '#1677ff' }} />{activeTab in SECTION_META ? (SECTION_META[activeTab as SectionKey]?.label) : 'All Sections'} — Log Summary</Space>}
-              onCancel={() => { setSummaryModal(false); setAiSummary(''); setAiError(''); }}
-              footer={[<Button key="close" onClick={() => { setSummaryModal(false); setAiSummary(''); setAiError(''); }}>Close</Button>]}
+              title={<Space><FileTextOutlined style={{ color: '#1677ff' }} />Log Summary</Space>}
+              onCancel={() => { setSummaryModal(false); setAiSummary(''); setAiError(''); setSummarySectionFilter('all'); }}
+              footer={[<Button key="close" onClick={() => { setSummaryModal(false); setAiSummary(''); setAiError(''); setSummarySectionFilter('all'); }}>Close</Button>]}
               width={600}
             >
               <div style={{ paddingTop: 8 }}>
+                {/* Section filter */}
                 <div style={{ marginBottom: 12 }}>
-                  <Text style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 6 }}>Select Period</Text>
+                  <Text style={{ fontSize: 11, color: '#8c8c8c', display: 'block', marginBottom: 6 }}>Section</Text>
+                  <Segmented
+                    size="small"
+                    value={summarySectionFilter}
+                    onChange={val => { setSummarySectionFilter(val as string); setAiSummary('__auto__'); setAiError(''); }}
+                    options={[
+                      { label: 'All Tabs', value: 'all' },
+                      ...Object.entries(SECTION_META).map(([key, meta]) => ({ label: meta.label, value: key })),
+                    ]}
+                    style={{ fontSize: 11, width: '100%' }}
+                    block
+                  />
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <Text style={{ fontSize: 11, color: '#8c8c8c', display: 'block', marginBottom: 6 }}>Period</Text>
                   <DatePicker.RangePicker
                     style={{ width: '100%' }}
                     value={summaryRange[0] && summaryRange[1] ? [summaryRange[0], summaryRange[1]] : undefined}
-                    onChange={(dates) => { setSummaryRange(dates ? [dates[0], dates[1]] : [null, null]); setAiSummary(''); setAiError(''); }}
+                    onChange={(dates) => {
+                      setSummaryRange(dates ? [dates[0], dates[1]] : [null, null]);
+                      setAiError('');
+                      if (dates?.[0] && dates?.[1]) {
+                        setTimeout(() => setAiSummary('__auto__'), 0);
+                      } else {
+                        setAiSummary('');
+                      }
+                    }}
                     format="DD MMM YYYY"
                     disabledDate={d => d.isAfter(dayjs())}
                   />
                 </div>
-                {summaryRange[0] && summaryRange[1] && (
-                  <>
-                    {summaryEntries.length === 0 ? (
-                      <Empty description="No entries or comments in this period" imageStyle={{ height: 40 }} />
-                    ) : (
-                      <>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <Text style={{ fontSize: 12, fontWeight: 600 }}>
-                            {summaryEntries.length} item{summaryEntries.length > 1 ? 's' : ''}
-                          </Text>
-                          <Space size={6}>
-                            <Button
-                              size="small"
-                              icon={<FileTextOutlined />}
-                              onClick={() => {
-                                const [from, to] = summaryRange;
-                                const local = generateLocalSummary(summaryEntries, from?.format('DD MMM YYYY'), to?.format('DD MMM YYYY'));
-                                setAiSummary(local); setAiError('');
-                              }}
-                              style={{ fontSize: 11 }}
-                            >
-                              Quick Summary
-                            </Button>
-                            {aiSummary && (
-                              <Tooltip title="Download Summary" overlayInnerStyle={{ fontSize: 11 }}>
-                                <Button
+                {summaryRange[0] && summaryRange[1] && (() => {
+                  const filtered = summarySectionFilter === 'all'
+                    ? summaryEntries
+                    : summaryEntries.filter(e => e.section === summarySectionFilter);
+                  return (
+                    <>
+                      {filtered.length === 0 ? (
+                        <Empty description="No entries in this period" imageStyle={{ height: 40 }} />
+                      ) : (
+                        <>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                            <Space size={6}>
+                              {aiSummary && aiSummary !== '__auto__' && (
+                                <Tooltip title="Download Summary" overlayInnerStyle={{ fontSize: 11 }}>
+                                  <Button
                                   size="small"
                                   icon={<DownloadOutlined />}
                                   onClick={() => {
@@ -1960,36 +1895,24 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
                           <Alert type="warning" message={aiError} closable onClose={() => setAiError('')}
                             style={{ marginBottom: 10, borderRadius: 6, fontSize: 12 }} />
                         )}
-                        {aiSummary && (
-                          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
-                            <Text style={{ fontSize: 12, fontWeight: 600, color: '#52c41a', display: 'block', marginBottom: 6 }}>
-                              <FileTextOutlined style={{ marginRight: 6 }} />Log Summary
-                            </Text>
-                            {aiSummary.split('\n').map((line, i) => {
-                              if (line.startsWith('## ')) return <Text key={i} strong style={{ display: 'block', marginTop: 8, marginBottom: 2, color: '#389e0d', fontSize: 12 }}>{line.replace('## ', '')}</Text>;
-                              if (line.startsWith('- ')) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959', paddingLeft: 8 }}>• {line.replace('- ', '')}</Text>;
-                              if (line.trim()) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959' }}>{line}</Text>;
-                              return <br key={i} />;
-                            })}
-                          </div>
-                        )}
-                        <Divider style={{ margin: '8px 0' }} />
-                        <div style={{ maxHeight: 260, overflowY: 'auto' }}>
-                          {summaryEntries.map(e => (
-                            <div key={e.id} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                                <Text strong style={{ fontSize: 12 }}>{e.title}</Text>
-                                {e.tag && <Tag color="#1677ff" style={{ fontSize: 10, margin: 0, padding: '0 4px' }}>{e.tag}</Tag>}
-                              </div>
-                              {e.body && <Text style={{ fontSize: 11, color: '#595959', display: 'block' }}>{e.body}</Text>}
-                              <Text type="secondary" style={{ fontSize: 10 }}>By {e.author || '—'} · {fmtDate(e.created_at)}</Text>
+                        {(() => {
+                          const summary = aiSummary === '__auto__' ? generateLocalSummary(filtered) : aiSummary;
+                          return summary ? (
+                            <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '12px 14px' }}>
+                              {summary.split('\n').map((line, i) => {
+                                if (line.startsWith('## ')) return <Text key={i} strong style={{ display: 'block', marginTop: 8, marginBottom: 2, color: '#389e0d', fontSize: 12 }}>{line.replace('## ', '')}</Text>;
+                                if (line.startsWith('- ')) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959', paddingLeft: 8 }}>• {line.replace('- ', '')}</Text>;
+                                if (line.trim()) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959' }}>{line}</Text>;
+                                return <br key={i} />;
+                              })}
                             </div>
-                          ))}
-                        </div>
+                          ) : null;
+                        })()}
                       </>
                     )}
                   </>
-                )}
+                );
+              })()}
               </div>
             </Modal>
           </Col>

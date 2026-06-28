@@ -141,3 +141,81 @@ export async function updateMilestoneTypes(
   const data = await res.json();
   return data.ok === true;
 }
+
+// ── Bookings ──────────────────────────────────────────────────────────────────
+export interface ProjectBooking {
+  id: number;
+  project_id: number;
+  milestone_month: string;
+  booking_month: string;
+  amount: number;
+  notes: string;
+  created_by: string;
+  created_at: string;
+  booking_type: 'fixed' | 'anticipated';
+}
+
+export async function getBookings(projectId: number): Promise<ProjectBooking[]> {
+  const online = await isServerAvailable();
+  if (!online) return [];
+  const res = await fetch(`${BASE}/projects/${projectId}/bookings`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.bookings || [];
+}
+
+export async function addBooking(
+  projectId: number,
+  booking: { milestone_month: string; booking_month: string; amount: number; notes?: string; created_by?: string; booking_type?: 'fixed' | 'anticipated' },
+): Promise<{ ok: boolean; id?: number; error?: string }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false, error: 'Server unavailable' };
+  const res = await fetch(`${BASE}/projects/${projectId}/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(booking),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data.error || 'Failed' };
+  return { ok: true, id: data.id };
+}
+
+export async function addBookingsBatch(
+  projectId: number,
+  bookings: Array<{ milestone_month: string; booking_month: string; amount: number; notes?: string; created_by?: string; booking_type?: 'fixed' | 'anticipated' }>,
+): Promise<{ ok: boolean; count?: number; error?: string }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false, error: 'Server unavailable' };
+  const res = await fetch(`${BASE}/projects/${projectId}/bookings/batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bookings }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data.error || 'Failed' };
+  return { ok: true, count: data.count };
+}
+
+export async function deleteBooking(projectId: number, bookingId: number): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/projects/${projectId}/bookings/${bookingId}`, { method: 'DELETE' });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+export async function deleteAllProjectBookings(projectId: number): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/projects/${projectId}/bookings`, { method: 'DELETE' });
+  const data = await res.json();
+  return data.ok === true;
+}
+
+export async function deleteAllBookings(): Promise<boolean> {
+  const online = await isServerAvailable();
+  if (!online) return false;
+  const res = await fetch(`${BASE}/bookings/all`, { method: 'DELETE' });
+  const data = await res.json();
+  return data.ok === true;
+}

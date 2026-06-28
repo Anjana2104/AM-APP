@@ -10,6 +10,8 @@ import * as auditApi from '../api/auditApi';
 import type { AuditEntry } from '../api/auditApi';
 import * as resourceApi from '../api/resourceApi';
 import type { ResourceComment } from '../api/resourceApi';
+import * as resourceInsightsApi from '../api/resourceInsightsApi';
+import type { InsightEntry } from '../api/resourceInsightsApi';
 import type { ResourceRow } from '../types/resource';
 import { AllocPctTag } from '../utils/allocUtils';
 
@@ -27,6 +29,7 @@ interface Props {
   resource: ResourceRow;
   currentUser?: string;
   expanded?: boolean;
+  panelOpen?: boolean;  // triggers re-fetch when drawer opens
   onToggleExpand?: () => void;
   onNavigateToRequest?: (beelineId: string) => void;
   onNavigateToInsights?: () => void;
@@ -51,7 +54,7 @@ function cleanVal(v: string | null | undefined): string {
   }
 }
 
-function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }: Props) {
+function ResourceDetailPanel({ resource, currentUser, expanded, panelOpen, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }: Props) {
   const resourceId = resource.id;
   const commentTags = DEFAULT_COMMENT_TAGS;
 
@@ -66,6 +69,7 @@ function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequ
 
   // Comment state
   const [comments, setComments]             = useState<ResourceComment[]>([]);
+  const [insights, setInsights]             = useState<InsightEntry[]>([]);
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [newCommentBody, setNewCommentBody] = useState('');
   const [newCommentTag, setNewCommentTag]   = useState<string>(defaultTag);
@@ -92,11 +96,38 @@ function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequ
       setAuditLoading(false);
     });
     setCommentsLoading(true);
-    resourceApi.getResourceComments(resourceId).then(rows => {
-      setComments(rows);
+    Promise.all([
+      resourceApi.getResourceComments(resourceId),
+      resourceInsightsApi.getInsights(resourceId),
+    ]).then(([cmts, ins]) => {
+      setComments(cmts);
+      setInsights(ins);
       setCommentsLoading(false);
     });
   }, [resourceId]);
+
+  // Re-fetch comments when user navigates back to this page (comments may have been added in ResourceIntelligence)
+  useEffect(() => {
+    if (!resourceId) return;
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      Promise.all([
+        resourceApi.getResourceComments(resourceId),
+        resourceInsightsApi.getInsights(resourceId),
+      ]).then(([cmts, ins]) => { setComments(cmts); setInsights(ins); });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [resourceId]);
+
+  // Re-fetch when drawer/panel is opened (panelOpen goes from false → true)
+  useEffect(() => {
+    if (!resourceId || !panelOpen) return;
+    Promise.all([
+      resourceApi.getResourceComments(resourceId),
+      resourceInsightsApi.getInsights(resourceId),
+    ]).then(([cmts, ins]) => { setComments(cmts); setInsights(ins); });
+  }, [resourceId, panelOpen]);
 
   const filteredAudit = useMemo(() => {
     const q = auditSearch.toLowerCase().trim();
@@ -127,8 +158,12 @@ function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequ
       body: newCommentBody.trim(),
     });
     if (ok) {
-      const updated = await resourceApi.getResourceComments(resourceId);
+      const [updated, ins] = await Promise.all([
+        resourceApi.getResourceComments(resourceId),
+        resourceInsightsApi.getInsights(resourceId),
+      ]);
       setComments(updated);
+      setInsights(ins);
       setNewCommentBody('');
       setNewCommentTag(commentTags[0]?.value || 'General');
     }
@@ -137,24 +172,8 @@ function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequ
 
   const handleDeleteComment = async (commentId: number) => {
     if (!resourceId) return;
-    const comment = comments.find(c => c.id === commentId);
     await resourceApi.deleteResourceComment(resourceId, commentId);
     setComments(prev => prev.filter(c => c.id !== commentId));
-    // Log comment deletion to audit trail
-    if (comment) {
-      await auditApi.addAuditLog({
-        module: 'resources',
-        record_id: resourceId,
-        record_name: resource.empName || '',
-        field: `Comment Deleted [${comment.tag || 'General'}]`,
-        old_value: comment.body,
-        new_value: '',
-        changed_by: currentUser || 'Unknown',
-      });
-      // Refresh audit log so deletion appears immediately
-      const updated = await auditApi.getAuditLog('resources', resourceId);
-      setAuditLog(updated);
-    }
   };
 
   const getTagColor = (tagValue: string) => {
@@ -334,13 +353,12 @@ function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequ
 
       <Divider style={{ margin: '4px 0' }} />
 
-      {/* Navigate link on top + inline comment list below */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
         <Space size={6}>
           <MessageOutlined style={{ color: '#1890ff', fontSize: 13 }} />
           <span style={{ fontSize: 11, color: '#595959' }}>
             {commentsLoading ? 'Loading…' : (
-              <><strong>{comments.length}</strong> comment{comments.length !== 1 ? 's' : ''}</>
+              <><strong>{comments.length + insights.length}</strong> comment{comments.length + insights.length !== 1 ? 's' : ''}</>
             )}
           </span>
         </Space>
@@ -362,63 +380,101 @@ function ResourceDetailPanel({ resource, currentUser, expanded, onNavigateToRequ
       {/* Inline comment list */}
       {commentsLoading ? (
         <div style={{ textAlign: 'center', padding: '12px 0', color: '#bbb', fontSize: 11 }}>Loading comments…</div>
-      ) : comments.length === 0 ? (
+      ) : (comments.length + insights.length) === 0 ? (
         <div style={{ textAlign: 'center', padding: '10px 0', color: '#bbb', fontSize: 11 }}>No comments yet</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 320, overflowY: 'auto', paddingRight: 2 }}>
-          {comments.map(c => {
-            const isOwn = c.author === currentUser;
-            const isEditing = editingCommentId === c.id;
-            const displayDate = c.updated_at
-              ? `Edited ${new Date(c.updated_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}`
-              : c.created_at ? new Date(c.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
-            return (
-              <div key={c.id} style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '7px 10px', fontSize: 11 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
-                  <Space size={4}>
-                    {isEditing
-                      ? <Select size="small" value={editingTag} onChange={setEditingTag}
-                          options={commentTags.map(t => ({ value: t.value, label: t.label }))}
-                          style={{ width: 110, fontSize: 10 }} popupMatchSelectWidth={false} />
-                      : <Tag color={getTagColor(c.tag)} style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>{c.tag || 'General'}</Tag>
-                    }
-                    <Text type="secondary" style={{ fontSize: 10 }}>{c.author || 'System'}</Text>
-                  </Space>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap', fontStyle: c.updated_at ? 'italic' : 'normal' }}>
-                      {displayDate}
-                    </Text>
-                    {isOwn && !isEditing && (
-                      <>
-                        <Button type="text" size="small" icon={<EditOutlined />}
-                          style={{ fontSize: 10, color: '#1890ff', padding: '0 2px', height: 16 }}
-                          onClick={() => startEditComment(c)} />
-                        <Button type="text" size="small" icon={<DeleteOutlined />}
-                          style={{ fontSize: 10, color: '#ff4d4f', padding: '0 2px', height: 16 }}
-                          onClick={() => handleDeleteComment(c.id)} />
-                      </>
-                    )}
-                    {isEditing && (
-                      <>
-                        <Button type="text" size="small" icon={<CheckOutlined />} loading={savingEdit}
-                          style={{ fontSize: 10, color: '#52c41a', padding: '0 2px', height: 16 }}
-                          onClick={() => handleSaveEdit(c.id)} />
-                        <Button type="text" size="small" icon={<CloseOutlined />}
-                          style={{ fontSize: 10, color: '#8c8c8c', padding: '0 2px', height: 16 }}
-                          onClick={cancelEdit} />
-                      </>
-                    )}
+          {/* Merge comments + insights sorted by created_at desc */}
+          {[
+            ...comments.map(c => ({ type: 'comment' as const, date: c.created_at || '', data: c })),
+            ...insights.map(i => ({ type: 'insight' as const, date: i.created_at || '', data: i })),
+          ]
+            .sort((a, b) => (b.date > a.date ? 1 : -1))
+            .map(item => {
+              if (item.type === 'insight') {
+                const ins = item.data as InsightEntry;
+                const sectionLabel: Record<string, string> = {
+                  interaction: 'Interactions', escalation: 'Escalations',
+                  career_preference: 'Career', plan: 'Plans',
+                };
+                const sectionColor: Record<string, string> = {
+                  interaction: 'blue', escalation: 'red',
+                  career_preference: 'purple', plan: 'green',
+                };
+                return (
+                  <div key={`ins-${ins.id}`} style={{ background: '#f6f0ff', border: '1px solid #d9c7ff', borderRadius: 6, padding: '7px 10px', fontSize: 11 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
+                      <Space size={4}>
+                        <Tag color={sectionColor[ins.section] || 'blue'} style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>
+                          {sectionLabel[ins.section] || ins.section}
+                        </Tag>
+                        {ins.tag && ins.tag !== ins.section && (
+                          <Tag style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>{ins.tag}</Tag>
+                        )}
+                        <Text type="secondary" style={{ fontSize: 10 }}>{ins.author || 'System'}</Text>
+                      </Space>
+                      <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
+                        {ins.created_at ? new Date(ins.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : ''}
+                      </Text>
+                    </div>
+                    {ins.title && <div style={{ fontSize: 11, fontWeight: 500, color: '#4a3580', marginBottom: 2 }}>{ins.title}</div>}
+                    <div style={{ fontSize: 11, color: '#333', lineHeight: '1.5', wordBreak: 'break-word' }}>{ins.body}</div>
                   </div>
+                );
+              }
+              const c = item.data as ResourceComment;
+              const isOwn = c.author === currentUser;
+              const isEditing = editingCommentId === c.id;
+              const displayDate = c.updated_at
+                ? `Edited ${new Date(c.updated_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' })}`
+                : c.created_at ? new Date(c.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
+              return (
+                <div key={`cmt-${c.id}`} style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '7px 10px', fontSize: 11 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 3 }}>
+                    <Space size={4}>
+                      {isEditing
+                        ? <Select size="small" value={editingTag} onChange={setEditingTag}
+                            options={commentTags.map(t => ({ value: t.value, label: t.label }))}
+                            style={{ width: 110, fontSize: 10 }} popupMatchSelectWidth={false} />
+                        : <Tag color={getTagColor(c.tag)} style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>{c.tag || 'General'}</Tag>
+                      }
+                      <Text type="secondary" style={{ fontSize: 10 }}>{c.author || 'System'}</Text>
+                    </Space>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap', fontStyle: c.updated_at ? 'italic' : 'normal' }}>
+                        {displayDate}
+                      </Text>
+                      {isOwn && !isEditing && (
+                        <>
+                          <Button type="text" size="small" icon={<EditOutlined />}
+                            style={{ fontSize: 10, color: '#1890ff', padding: '0 2px', height: 16 }}
+                            onClick={() => startEditComment(c)} />
+                          <Button type="text" size="small" icon={<DeleteOutlined />}
+                            style={{ fontSize: 10, color: '#ff4d4f', padding: '0 2px', height: 16 }}
+                            onClick={() => handleDeleteComment(c.id)} />
+                        </>
+                      )}
+                      {isEditing && (
+                        <>
+                          <Button type="text" size="small" icon={<CheckOutlined />} loading={savingEdit}
+                            style={{ fontSize: 10, color: '#52c41a', padding: '0 2px', height: 16 }}
+                            onClick={() => handleSaveEdit(c.id)} />
+                          <Button type="text" size="small" icon={<CloseOutlined />}
+                            style={{ fontSize: 10, color: '#8c8c8c', padding: '0 2px', height: 16 }}
+                            onClick={cancelEdit} />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {isEditing
+                    ? <Input.TextArea size="small" rows={2} value={editingBody}
+                        onChange={e => setEditingBody(e.target.value)}
+                        style={{ fontSize: 11, marginTop: 2 }} autoFocus />
+                    : <div style={{ fontSize: 11, color: '#333', lineHeight: '1.5', wordBreak: 'break-word' }}>{c.body}</div>
+                  }
                 </div>
-                {isEditing
-                  ? <Input.TextArea size="small" rows={2} value={editingBody}
-                      onChange={e => setEditingBody(e.target.value)}
-                      style={{ fontSize: 11, marginTop: 2 }} autoFocus />
-                  : <div style={{ fontSize: 11, color: '#333', lineHeight: '1.5', wordBreak: 'break-word' }}>{c.body}</div>
-                }
-              </div>
-            );
-          })}
+              );
+            })}
         </div>
       )}
     </div>

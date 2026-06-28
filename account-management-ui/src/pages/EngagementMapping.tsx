@@ -1551,58 +1551,54 @@ export function EngagementMapping({ resources = [], onUpdateResources, onNavigat
                           />
                         )}
                         <div style={{ flex: 1, overflow: 'hidden', minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                          {totalBenchTabCount === 0 ? (
-                            <Empty description="No bench resources. Upload a RAID file or mark resources as bench." style={{ marginTop: 48 }} />
-                          ) : (
-                            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                            <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
-                              <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 300 }} onClick={() => setSelectedSNOs(new Set())}>
-                                <KanbanColumnComp id="available" title="Available" color="#faad14" bgColor="#fffbe6"
-                                  resources={filteredBenchResources} selectedSNOs={selectedSNOs}
-                                  onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
-                                  onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
-                                />
-                                <KanbanColumnComp id="shortlisted" title="Shortlisted" color="#13c2c2" bgColor="#e6fffb"
-                                  resources={shortlistedResources} selectedSNOs={selectedSNOs}
-                                  onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
-                                  onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
-                                  onEdit={openEditModal} canEdit={canEdit}
-                                />
-                                <KanbanColumnComp id="offered" title="Offered" color="#722ed1" bgColor="#f9f0ff"
-                                  resources={offeredResources} selectedSNOs={selectedSNOs}
-                                  onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
-                                  onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
-                                  onEdit={openEditModal} canEdit={canEdit}
-                                />
-                                <KanbanColumnComp id="selected" title="Selected" color="#1890ff" bgColor="#e6f4ff"
-                                  resources={selectedResources} selectedSNOs={selectedSNOs}
-                                  onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
-                                  onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
-                                  onEdit={openEditModal} canEdit={canEdit}
-                                
-                                   headerAction={selectedResources.length > 0 ? (
-                                     <Tooltip title="Mark all as Joined" overlayInnerStyle={{ fontSize: '11px' }}>
-                                       <Button size="small" type="primary" style={{ fontSize: '9px', padding: '0 6px', height: 18, lineHeight: '18px', background: '#389e0d', borderColor: '#389e0d' }}
-                                         onClick={(e) => { e.stopPropagation(); handleBulkUpdateStatus(selectedResources, 'Joined'); message.success({ content: `${selectedResources.length} marked Joined`, duration: 4 }); }}
-                                       >Mark All Joined</Button>
-                                     </Tooltip>
-                                   ) : undefined}/>
-                                
-                              </div>
-                              <DragOverlay>
-                                {draggingResource && (
-                                  <div style={{ background: '#fff', borderRadius: 6, padding: '6px 10px', boxShadow: '0 6px 20px rgba(0,0,0,0.18)', minWidth: 160, border: '2px solid #1890ff', opacity: 0.96 }}>
-                                    <div style={{ fontSize: '11px', fontWeight: 600, color: '#333' }}>{draggingResource.empName}</div>
-                                    <div style={{ fontSize: '9px', color: '#8c8c8c' }}>{draggingResource.raId}  |  {draggingResource.roleOrDomain || draggingResource.piwRole}</div>
-                                    {selectedSNOs.has(draggingResource.sno) && selectedSNOs.size > 1 && (
-                                      <div style={{ fontSize: '9px', color: '#1890ff', marginTop: 2 }}>+{selectedSNOs.size - 1} more moving</div>
-                                    )}
-                                  </div>
-                                )}
-                              </DragOverlay>
-                            </DndContext>
+                          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+                            <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 300 }} onClick={() => setSelectedSNOs(new Set())}>
+                              <KanbanColumnComp id="available" title="Available" color="#faad14" bgColor="#fffbe6"
+                                resources={filteredBenchResources} selectedSNOs={selectedSNOs}
+                                onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
+                                onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
+                              />
+                              <KanbanColumnComp id="shortlisted" title="Shortlisted" color="#13c2c2" bgColor="#e6fffb"
+                                resources={shortlistedResources} selectedSNOs={selectedSNOs}
+                                onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
+                                onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
+                                onEdit={openEditModal} canEdit={canEdit}
+                              />
+                              <KanbanColumnComp id="offered" title="Offered" color="#722ed1" bgColor="#f9f0ff"
+                                resources={offeredResources} selectedSNOs={selectedSNOs}
+                                onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
+                                onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
+                                onEdit={openEditModal} canEdit={canEdit}
+                              />
+                              <KanbanColumnComp id="selected" title="Selected" color="#1890ff" bgColor="#e6f4ff"
+                                resources={selectedResources} selectedSNOs={selectedSNOs}
+                                onToggleSelect={(sno) => setSelectedSNOs(prev => { const n = new Set(prev); n.has(sno) ? n.delete(sno) : n.add(sno); return n; })}
+                                onViewDetails={(r) => { setSelectedDetailResource(r); setDetailsModalOpen(true); }}
+                                onEdit={openEditModal} canEdit={canEdit}
+                              
+                                 headerAction={selectedResources.length > 0 ? (
+                                   <Tooltip title="Mark all as Joined" overlayInnerStyle={{ fontSize: '11px' }}>
+                                     <Button size="small" type="primary" style={{ fontSize: '9px', padding: '0 6px', height: 18, lineHeight: '18px', background: '#389e0d', borderColor: '#389e0d' }}
+                                       onClick={(e) => { e.stopPropagation(); handleBulkUpdateStatus(selectedResources, 'Joined'); message.success({ content: `${selectedResources.length} marked Joined`, duration: 4 }); }}
+                                     >Mark All Joined</Button>
+                                   </Tooltip>
+                                 ) : undefined}/>
+                              
                             </div>
-                          )}
+                            <DragOverlay>
+                              {draggingResource && (
+                                <div style={{ background: '#fff', borderRadius: 6, padding: '6px 10px', boxShadow: '0 6px 20px rgba(0,0,0,0.18)', minWidth: 160, border: '2px solid #1890ff', opacity: 0.96 }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 600, color: '#333' }}>{draggingResource.empName}</div>
+                                  <div style={{ fontSize: '9px', color: '#8c8c8c' }}>{draggingResource.raId}  |  {draggingResource.roleOrDomain || draggingResource.piwRole}</div>
+                                  {selectedSNOs.has(draggingResource.sno) && selectedSNOs.size > 1 && (
+                                    <div style={{ fontSize: '9px', color: '#1890ff', marginTop: 2 }}>+{selectedSNOs.size - 1} more moving</div>
+                                  )}
+                                </div>
+                              )}
+                            </DragOverlay>
+                          </DndContext>
+                          </div>
                         </div>
                       </div>
                       <div style={{ flexShrink: 0, marginTop: 6, fontSize: '11px', color: '#bbb', textAlign: 'center' }}>

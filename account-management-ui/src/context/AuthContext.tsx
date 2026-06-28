@@ -48,7 +48,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => {
     authApi.logout();
     setCurrentUser(null);
-    saveSession(null);
+    // Clear entire sessionStorage so the next login starts a truly fresh session
+    try { sessionStorage.clear(); } catch { /* ignore */ }
   }, []);
 
   const hasPermission = useCallback((pageId: string, action: 'view' | 'edit' | 'delete'): boolean => {

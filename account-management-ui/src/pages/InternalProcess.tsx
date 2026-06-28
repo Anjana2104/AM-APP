@@ -18,8 +18,9 @@ import ProcessDetailPanel from '../components/ProcessDetailPanel';
 import {
   Tabs, Typography, Empty, Table, Button, Space, Tooltip, Upload, message,
   Drawer, Checkbox, Input, Select, Modal, Form, Tag, Popconfirm, Switch, Card,
-  Steps, Dropdown, Spin, Divider, Row, Col, Alert,
+  Steps, Dropdown, Spin, Divider, Row, Col, Alert, DatePicker,
 } from 'antd';
+import dayjs from 'dayjs';
 import {
   NodeIndexOutlined, FileProtectOutlined, IdcardOutlined,
   UploadOutlined, DownloadOutlined, ColumnHeightOutlined, FilterOutlined,
@@ -1083,6 +1084,17 @@ interface ProcessTabProps {
   initialSow?: string;
 }
 
+/** Convert any date string → YYYY-MM-DD for use in <input type="date"> */
+function toInputDate(dateStr: string): string {
+  if (!dateStr) return '';
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  // Try native Date parse (handles ISO, "Jan 03 2026", etc.)
+  const d = new Date(dateStr);
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return '';
+}
+
 function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshKey = 0, initialSow }: ProcessTabProps) {
   const { configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
@@ -1190,10 +1202,13 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshK
     setAllProcResources(mapped);
     const initialChecked = new Set(mapped.filter(r => r.processId === row.id && r.id != null).map(r => r.id));
     setLinkChecked(initialChecked);
-    // Pre-populate existing dates for already-linked resources
+    // Pre-populate existing dates for already-linked resources (normalized to YYYY-MM-DD for date input)
     const initialDates: Record<number, { startDate: string; endDate: string }> = {};
     mapped.filter(r => r.processId === row.id).forEach(r => {
-      initialDates[r.id] = { startDate: r.engagementStartDate || '', endDate: r.engagementEndDate || '' };
+      initialDates[r.id] = {
+        startDate: toInputDate(r.engagementStartDate || ''),
+        endDate: toInputDate(r.engagementEndDate || ''),
+      };
     });
     setLinkDates(initialDates);
     setLoadingLink(false);
@@ -1210,11 +1225,12 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshK
       ...toLink.map(id => resourceApi.setProcessLink(id, processId, currentUser?.username || 'system')),
       ...toUnlink.map(id => resourceApi.setProcessLink(id, null, currentUser?.username || 'system')),
     ]);
-    // Update engagement dates for all checked resources that have dates set
+    // Update engagement dates for all checked resources that have an entry in linkDates
+    // (saving even empty values so users can clear dates)
     await Promise.all(
       [...linkChecked].map(id => {
         const dates = linkDates[id];
-        if (dates && (dates.startDate || dates.endDate)) {
+        if (dates !== undefined) {
           return resourceApi.updateResource(id, {
             engagementStartDate: dates.startDate,
             engagementEndDate: dates.endDate,
@@ -2093,7 +2109,7 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshK
           allowClear
           value={linkSearch}
           onChange={e => setLinkSearch(e.target.value)}
-          style={{ marginBottom: 10 }}
+          style={{ marginBottom: 10, fontSize: '12px' }}
         />
         <Spin spinning={loadingLink} tip="Loading resources…" size="small">
           {!loadingLink && allProcResources.length === 0 ? (
@@ -2123,7 +2139,22 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshK
                         }}
                         onClick={() => {
                           const next = new Set(linkChecked);
-                          if (next.has(res.id)) next.delete(res.id); else next.add(res.id);
+                          if (next.has(res.id)) {
+                            next.delete(res.id);
+                          } else {
+                            next.add(res.id);
+                            // Pre-fill dates from existing resource data if not already set
+                            setLinkDates(prev => {
+                              if (prev[res.id] !== undefined) return prev;
+                              return {
+                                ...prev,
+                                [res.id]: {
+                                  startDate: toInputDate(res.engagementStartDate || ''),
+                                  endDate: toInputDate(res.engagementEndDate || ''),
+                                },
+                              };
+                            });
+                          }
                           setLinkChecked(next);
                         }}
                       >
@@ -2148,35 +2179,36 @@ function ProcessTab({ rows, setRows, fromServer, setFromServer, resourceRefreshK
                           onClick={e => e.stopPropagation()}>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Engagement Start</div>
-                            <Input
-                              type="date" size="small"
-                              value={linkDates[res.id]?.startDate || ''}
-                              onChange={e => {
-                                const val = e.target.value;
-                                setLinkDates(prev => {
-                                  const end = prev[res.id]?.endDate || '';
-                                  if (end && val && val > end) { message.warning('Start date must be before end date'); return prev; }
-                                  return { ...prev, [res.id]: { startDate: val, endDate: end } };
-                                });
+                            <DatePicker
+                              size="small"
+                              style={{ width: '100%', fontSize: '11px' }}
+                              value={linkDates[res.id]?.startDate ? dayjs(linkDates[res.id].startDate) : null}
+                              disabledDate={current => {
+                                const end = linkDates[res.id]?.endDate;
+                                return end ? current.isAfter(dayjs(end)) : false;
                               }}
-                              style={{ fontSize: '11px' }}
+                              onChange={date => {
+                                const val = date ? date.format('YYYY-MM-DD') : '';
+                                setLinkDates(prev => ({ ...prev, [res.id]: { startDate: val, endDate: prev[res.id]?.endDate || '' } }));
+                              }}
+                              getPopupContainer={trigger => trigger.parentElement || document.body}
                             />
                           </div>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Engagement End</div>
-                            <Input
-                              type="date" size="small"
-                              value={linkDates[res.id]?.endDate || ''}
-                              min={linkDates[res.id]?.startDate || undefined}
-                              onChange={e => {
-                                const val = e.target.value;
-                                setLinkDates(prev => {
-                                  const start = prev[res.id]?.startDate || '';
-                                  if (start && val && val < start) { message.warning('End date must be after start date'); return prev; }
-                                  return { ...prev, [res.id]: { startDate: start, endDate: val } };
-                                });
+                            <DatePicker
+                              size="small"
+                              style={{ width: '100%', fontSize: '11px' }}
+                              value={linkDates[res.id]?.endDate ? dayjs(linkDates[res.id].endDate) : null}
+                              disabledDate={current => {
+                                const start = linkDates[res.id]?.startDate;
+                                return start ? current.isBefore(dayjs(start)) : false;
                               }}
-                              style={{ fontSize: '11px' }}
+                              onChange={date => {
+                                const val = date ? date.format('YYYY-MM-DD') : '';
+                                setLinkDates(prev => ({ ...prev, [res.id]: { startDate: prev[res.id]?.startDate || '', endDate: val } }));
+                              }}
+                              getPopupContainer={trigger => trigger.parentElement || document.body}
                             />
                           </div>
                         </div>

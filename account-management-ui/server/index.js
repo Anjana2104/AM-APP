@@ -69,6 +69,22 @@ async function runMigrations() {
     milestone_type TEXT DEFAULT 'booked', UNIQUE(project_id, month)
   )`);
   try { db.run(`ALTER TABLE finance_revenue ADD COLUMN milestone_type TEXT DEFAULT 'booked'`); } catch (_) {}
+
+  // ── Project bookings — when and how much booked per milestone month ──────────
+  db.run(`CREATE TABLE IF NOT EXISTS project_bookings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    milestone_month TEXT NOT NULL,
+    booking_month TEXT NOT NULL,
+    amount REAL NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT "",
+    created_by TEXT DEFAULT "system",
+    booking_type TEXT DEFAULT "fixed",
+    created_at TEXT NOT NULL
+  )`);
+  // Idempotent migration for existing DBs
+  try { db.run(`ALTER TABLE project_bookings ADD COLUMN booking_type TEXT DEFAULT 'fixed'`); } catch (_) {}
+
   db.run(`CREATE TABLE IF NOT EXISTS client_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
     beeline_id TEXT NOT NULL UNIQUE, description TEXT DEFAULT "",

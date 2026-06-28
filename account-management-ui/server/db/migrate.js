@@ -183,6 +183,9 @@ async function migrate() {
     created_at TEXT NOT NULL
   )`);
 
+  // Add booking_type column to project_bookings (idempotent)
+  try { db.run(`ALTER TABLE project_bookings ADD COLUMN booking_type TEXT DEFAULT 'fixed'`); } catch (_) {}
+
   db.close();
   resetDb();
 }

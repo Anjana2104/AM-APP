@@ -19,11 +19,14 @@ import {
   EditOutlined, CalendarOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined,
   WarningOutlined, EllipsisOutlined, DollarOutlined, PictureOutlined, FileTextOutlined,
   EyeOutlined, ClockCircleOutlined, MessageOutlined, FullscreenOutlined, FullscreenExitOutlined,
+  ExclamationCircleOutlined, InfoCircleOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import * as invoiceApi from '../api/invoiceApi';
+import * as financeApi from '../api/financeApi';
+import type { FinanceProject } from '../api/financeApi';
 import * as auditApi from '../api/auditApi';
 import type { AuditEntry } from '../api/auditApi';
 import { useConfig } from '../context/ConfigContext';
@@ -171,6 +174,14 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const [uploadError, setUploadError] = useState<string[] | null>(null);
   const [uploadErrorType, setUploadErrorType] = useState<'template' | 'duplicate' | 'server'>('duplicate');
 
+  // Finance/SOW planned data for cross-comparison
+  const [financeProjects, setFinanceProjects] = useState<FinanceProject[]>([]);
+
+  // Per-session banner dismiss (keyed by username so each user controls their own)
+  const [sowNotInInvBannerDismissed, setSowNotInInvBannerDismissed] = useState<boolean>(() => {
+    try { return sessionStorage.getItem(`eam_sow_notinv_${currentUser?.username}`) === '1'; } catch { return false; }
+  });
+
   // Detail drawer state
   const [detailDrawer, setDetailDrawer] = useState(false);
   const [selectedDetailRow, setSelectedDetailRow] = useState<InvRow | null>(null);
@@ -204,6 +215,10 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         setFromServer(true);
       }
     }).finally(() => setLoading(false));
+    // Load finance/SOW projects silently for cross-check
+    financeApi.getProjects().then(({ projects }) => {
+      setFinanceProjects(projects);
+    }).catch(() => { /* ignore — cross-check is best-effort */ });
   }, []);
 
   const reloadFromServer = async () => {
@@ -700,6 +715,34 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     return `₹ ${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
   };
 
+  // ── Finance/SOW cross-check computed maps ─────────────────────────────────
+  // Map: finance code → { monthLabel → plannedAmount }
+  const financePlanMap = useMemo(() =>
+    new Map(financeProjects.map(p => [p.code, p.revenue])),
+    [financeProjects]
+  );
+  const financeCodeSet = useMemo(() =>
+    new Set(financeProjects.map(p => p.code)),
+    [financeProjects]
+  );
+  const invoiceCodeSet = useMemo(() =>
+    new Set(rows.map(r => deriveCode(r.project))),
+    [rows]
+  );
+  // SOW projects not present in invoicing (only relevant when finance data loaded)
+  const sowCodesNotInInvoice = useMemo(() =>
+    financeProjects.length > 0
+      ? financeProjects.filter(p => !invoiceCodeSet.has(p.code)).map(p => ({ code: p.code, project: p.project }))
+      : [],
+    [financeProjects, invoiceCodeSet]
+  );
+
+  // Helper: format a planned amount string
+  const fmtPlanned = (n: number) =>
+    currency === 'USD'
+      ? `$ ${(n * exchangeRate).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+      : `₹ ${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+
   const columns: ColumnsType<InvRow> = useMemo(() => {
     const hs = { fontWeight: 600, fontSize: '11px' };
     const cs = { fontSize: '11px', textAlign: 'left' as const };
@@ -720,16 +763,27 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       {
         title: 'OA Project Code', dataIndex: 'project', key: 'project', width: 280, fixed: 'left' as const,
         sorter: (a: InvRow, b: InvRow) => (a.project || '').localeCompare(b.project || ''),
-        render: (v: string, r: InvRow) => (
-          <Tooltip title={v} overlayInnerStyle={{ fontSize: '11px' }}>
-            <Input
-              value={v}
-              readOnly={!canEdit}
-              onChange={canEdit ? e => handleFieldChange(r.key, 'project', e.target.value) : undefined}
-              style={{ border: 'none', background: 'transparent', fontSize: '11px', fontWeight: 500 }}
-            />
-          </Tooltip>
-        ),
+        render: (v: string, r: InvRow) => {
+          const code = deriveCode(v);
+          const notInSow = financeCodeSet.size > 0 && !financeCodeSet.has(code);
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Tooltip title={v} overlayInnerStyle={{ fontSize: '11px' }}>
+                <Input
+                  value={v}
+                  readOnly={!canEdit}
+                  onChange={canEdit ? e => handleFieldChange(r.key, 'project', e.target.value) : undefined}
+                  style={{ border: 'none', background: 'transparent', fontSize: '11px', fontWeight: 500 }}
+                />
+              </Tooltip>
+              {notInSow && (
+                <Tooltip title={`Code "${code}" not found in Finance Summary / SOW projects. Consider reconciling.`} overlayInnerStyle={{ fontSize: '11px' }}>
+                  <ExclamationCircleOutlined style={{ color: '#fa8c16', fontSize: 11, flexShrink: 0, cursor: 'help' }} />
+                </Tooltip>
+              )}
+            </div>
+          );
+        },
         onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
       },
       {
@@ -753,7 +807,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
       },
       {
-        title: 'Code', dataIndex: 'code', key: 'code', width: 90, fixed: 'left' as const,
+        title: 'Code', dataIndex: 'code', key: 'code', width: 90,
         render: (_: string, r: InvRow) => (
           <span style={{ fontSize: '11px', fontFamily: 'monospace', color: '#595959' }}>{deriveCode(r.project)}</span>
         ),
@@ -828,11 +882,30 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       const ai = filters.fy ? parseInt(filters.fy) + di : di;
       return {
         title: m, key: m, align: 'left' as const, width: 95,
-        render: (_: any, r: InvRow) => (
-          currency === 'USD'
-            ? <span style={{ fontSize: '11px', color: '#595959' }}>{fmtRev(r.revenue[ai] || 0)}</span>
+        render: (_: any, r: InvRow) => {
+          const actual = r.revenue[ai] || 0;
+          const code = deriveCode(r.project);
+          const planned = financePlanMap.get(code)?.[m] ?? null;
+
+          let cellBg = 'transparent';
+          let tooltipTitle: React.ReactNode = null;
+          if (planned !== null && planned > 0) {
+            if (actual === 0) {
+              cellBg = '#fff1f0';
+              tooltipTitle = `Not invoiced. Expected: ${fmtPlanned(planned)}. Consider adding a comment.`;
+            } else if (actual < planned) {
+              cellBg = '#fff7e6';
+              tooltipTitle = `Under-invoiced by ${fmtPlanned(planned - actual)}. Expected: ${fmtPlanned(planned)}. Consider adding a comment.`;
+            } else if (actual > planned) {
+              cellBg = '#e6f4ff';
+              tooltipTitle = `Exceeds plan by ${fmtPlanned(actual - planned)}. Expected: ${fmtPlanned(planned)}. Consider adding a comment.`;
+            }
+          }
+
+          const inputEl = currency === 'USD'
+            ? <span style={{ fontSize: '11px', color: '#595959' }}>{fmtRev(actual)}</span>
             : <InputNumber
-                value={r.revenue[ai] || 0}
+                value={actual}
                 readOnly={!canEdit}
                 onChange={canEdit ? v => handleRevChange(r.key, ai, String(v ?? 0)) : undefined}
                 formatter={v => `₹ ${Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
@@ -840,8 +913,19 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
                 controls={false}
                 bordered={false}
                 style={{ width: '100%', textAlign: 'left', fontSize: '11px' }}
-              />
-        ),
+              />;
+
+          if (tooltipTitle) {
+            return (
+              <Tooltip title={<span style={{ fontSize: '11px' }}>{tooltipTitle}</span>} overlayInnerStyle={{ fontSize: '11px' }}>
+                <div style={{ background: cellBg, borderRadius: 3, padding: '1px 3px', cursor: 'help' }}>
+                  {inputEl}
+                </div>
+              </Tooltip>
+            );
+          }
+          return inputEl;
+        },
         onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }),
       };
     });
@@ -874,7 +958,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       if (monthCols.find(c => c.key === col.key)) return true;
       return visibleColumns.has(col.key as string);
     });
-  }, [filteredMonthHeaders, rows, filters, visibleColumns, currency, exchangeRate, handleCommentBlur, openDetailDrawer, canEdit, canDelete]);
+  }, [filteredMonthHeaders, rows, filters, visibleColumns, currency, exchangeRate, handleCommentBlur, openDetailDrawer, canEdit, canDelete, financePlanMap, financeCodeSet, fmtPlanned]);
 
   const displayRows = useMemo(() => rows.filter(r => {
     if (filters.project && !r.project.toLowerCase().includes(filters.project.toLowerCase())) return false;
@@ -1131,6 +1215,39 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
                   Download correct template
                 </Button>
               )}
+            </div>
+          }
+          style={{ marginBottom: 8 }}
+        />
+      )}
+
+      {sowCodesNotInInvoice.length > 0 && rows.length > 0 && !sowNotInInvBannerDismissed && (
+        <Alert
+          type="info"
+          showIcon
+          icon={<InfoCircleOutlined />}
+          closable
+          onClose={() => {
+            setSowNotInInvBannerDismissed(true);
+            try { sessionStorage.setItem(`eam_sow_notinv_${currentUser?.username}`, '1'); } catch { /* ignore */ }
+          }}
+          message={
+            <span style={{ fontSize: '12px', fontWeight: 600 }}>
+              {sowCodesNotInInvoice.length} SOW project{sowCodesNotInInvoice.length > 1 ? 's' : ''} not found in Invoicing
+            </span>
+          }
+          description={
+            <div>
+              <div style={{ fontSize: '11px', color: '#595959', marginBottom: 4 }}>
+                The following SOW/Finance projects have no matching invoice entries — consider adding them:
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {sowCodesNotInInvoice.map(({ code, project }) => (
+                  <Tooltip key={code} title={project} overlayInnerStyle={{ fontSize: '11px' }}>
+                    <Tag color="blue" style={{ fontSize: '10px', cursor: 'default' }}>{code}</Tag>
+                  </Tooltip>
+                ))}
+              </div>
             </div>
           }
           style={{ marginBottom: 8 }}

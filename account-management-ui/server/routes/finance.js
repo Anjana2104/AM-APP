@@ -468,4 +468,107 @@ router.delete("/projects", async (req, res) => {
   }
 });
 
+// ── Bookings ────────────────────────────────────────────────────────────────
+// GET /api/finance/projects/:id/bookings
+router.get("/projects/:id/bookings", async (req, res) => {
+  try {
+    const db = await getDb();
+    const rows = db.all(
+      "SELECT * FROM project_bookings WHERE project_id=? ORDER BY booking_month ASC, milestone_month ASC",
+      [req.params.id]
+    );
+    res.json({ bookings: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/finance/projects/:id/bookings
+router.post("/projects/:id/bookings", async (req, res) => {
+  const { milestone_month, booking_month, amount, notes, created_by, booking_type } = req.body;
+  if (!milestone_month || !booking_month || amount == null) {
+    return res.status(400).json({ error: "milestone_month, booking_month and amount are required" });
+  }
+  try {
+    const db = await getDb();
+    const created_at = new Date().toISOString();
+    db.run(
+      "INSERT INTO project_bookings (project_id, milestone_month, booking_month, amount, notes, created_by, booking_type, created_at) VALUES (?,?,?,?,?,?,?,?)",
+      [req.params.id, milestone_month, booking_month, amount, notes || "", created_by || "system", booking_type || "fixed", created_at]
+    );
+    const id = db.lastId();
+    res.json({ ok: true, id });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/finance/projects/:id/bookings/batch — atomic multi-row insert
+router.post("/projects/:id/bookings/batch", async (req, res) => {
+  const { bookings } = req.body;
+  if (!Array.isArray(bookings) || !bookings.length) {
+    return res.status(400).json({ error: "bookings array required" });
+  }
+  // Validate all rows before touching the DB
+  const created_at = new Date().toISOString();
+  const errors = [];
+  for (const [i, b] of bookings.entries()) {
+    const { milestone_month, booking_month, amount } = b;
+    if (!milestone_month || !booking_month || amount == null) {
+      errors.push(`Row ${i + 1}: milestone_month, booking_month, and amount are required`);
+    }
+  }
+  if (errors.length) {
+    return res.status(400).json({ error: errors.join("; ") });
+  }
+  try {
+    const db = await getDb();
+    db.runInTransaction((run) => {
+      for (const b of bookings) {
+        const { milestone_month, booking_month, amount, notes, created_by, booking_type } = b;
+        run(
+          "INSERT INTO project_bookings (project_id, milestone_month, booking_month, amount, notes, created_by, booking_type, created_at) VALUES (?,?,?,?,?,?,?,?)",
+          [req.params.id, milestone_month, booking_month, amount, notes || "", created_by || "system", booking_type || "fixed", created_at]
+        );
+      }
+    });
+    res.json({ ok: true, count: bookings.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message || "Transaction failed — no data was written." });
+  }
+});
+
+// DELETE /api/finance/projects/:id/bookings/:bookingId
+router.delete("/projects/:id/bookings/:bookingId", async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM project_bookings WHERE id=? AND project_id=?", [req.params.bookingId, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/finance/projects/:id/bookings  — delete ALL bookings for a project
+router.delete("/projects/:id/bookings", async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM project_bookings WHERE project_id=?", [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/finance/bookings/all — delete ALL bookings across all projects
+router.delete("/bookings/all", async (req, res) => {
+  try {
+    const db = await getDb();
+    db.run("DELETE FROM project_bookings");
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

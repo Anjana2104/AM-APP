@@ -17,6 +17,7 @@ class SqliteAdapter {
     this.dbPath = dbPath;
     this.db = null;
     this._lastId = null;
+    this._inTransaction = false;
   }
 
   async connect() {
@@ -31,8 +32,9 @@ class SqliteAdapter {
     this.db.run("PRAGMA journal_mode = MEMORY");
   }
 
-  /** Persist in-memory DB back to file */
+  /** Persist in-memory DB back to file — skipped during open transactions */
   _save() {
+    if (this._inTransaction) return;
     const data = this.db.export();
     fs.mkdirSync(path.dirname(this.dbPath), { recursive: true });
     fs.writeFileSync(this.dbPath, Buffer.from(data));
@@ -45,6 +47,34 @@ class SqliteAdapter {
     const res = this.db.exec("SELECT last_insert_rowid() as id");
     this._lastId = res[0] ? res[0].values[0][0] : null;
     this._save();
+  }
+
+  /**
+   * Run multiple statements atomically in a single transaction.
+   * callback receives `runStmt(sql, params)` — does NOT auto-save.
+   * Only saves once after COMMIT. ROLLBACK is attempted on error (best-effort).
+   */
+  runInTransaction(callback) {
+    if (this._inTransaction) {
+      throw new Error("Nested transactions are not supported");
+    }
+    this._inTransaction = true;
+    this.db.run("BEGIN");
+    try {
+      const runStmt = (sql, params = []) => {
+        this.db.run(sql, params);
+        const res = this.db.exec("SELECT last_insert_rowid() as id");
+        this._lastId = res[0] ? res[0].values[0][0] : null;
+      };
+      callback(runStmt);
+      this.db.run("COMMIT");
+      this._inTransaction = false;
+      this._save();
+    } catch (err) {
+      this._inTransaction = false;
+      try { this.db.run("ROLLBACK"); } catch (_) { /* already rolled back or never opened */ }
+      throw err;
+    }
   }
 
   /** Return all matching rows as plain objects */

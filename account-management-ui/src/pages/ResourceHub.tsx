@@ -31,7 +31,9 @@ import {
   Progress,
   Spin,
   InputNumber,
+  DatePicker,
 } from 'antd';
+import dayjs from 'dayjs';
 import type { ColumnsType } from 'antd/es/table';
 import {
   UploadOutlined,
@@ -1886,25 +1888,65 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
           <Form.Item
             label="Previous Experience"
             name="previousWorkex"
-            rules={[{ required: true, message: 'Previous experience is required' }]}
+            rules={[
+              { required: true, message: 'Previous experience is required' },
+              {
+                validator(_, value) {
+                  const num = parseFloat(String(value ?? ''));
+                  if (value === '' || value == null) return Promise.resolve();
+                  if (isNaN(num) || num < 0 || num > 100) return Promise.reject(new Error('Must be between 0 and 100 years'));
+                  return Promise.resolve();
+                },
+              },
+            ]}
+            getValueProps={val => ({ value: val != null && val !== '' ? parseFloat(String(val).replace(/[^\d.]/g, '')) || 0 : null })}
+            getValueFromEvent={(val: number | null) => val != null ? String(val) : ''}
           >
-            <Input placeholder="e.g., 2 years" />
+            <InputNumber
+              min={0} precision={1}
+              addonAfter="years"
+              style={{ width: '100%', fontSize: '12px' }}
+              size="small"
+            />
           </Form.Item>
 
           <Form.Item
             label="Date of Joining"
             name="doj"
             rules={[{ required: true, message: 'DOJ is required' }]}
+            getValueProps={val => ({ value: val ? dayjs(val) : null })}
+            getValueFromEvent={(date: any) => date ? date.format('YYYY-MM-DD') : ''}
           >
-            <Input placeholder="YYYY-MM-DD" />
+            <DatePicker
+              style={{ width: '100%', fontSize: '12px' }}
+              size="small"
+              getPopupContainer={trigger => trigger.parentElement || document.body}
+            />
           </Form.Item>
 
           <Form.Item
             label="Total Experience"
             name="totalWorkex"
-            rules={[{ required: true, message: 'Total experience is required' }]}
+            rules={[
+              { required: true, message: 'Total experience is required' },
+              {
+                validator(_, value) {
+                  const num = parseFloat(String(value ?? ''));
+                  if (value === '' || value == null) return Promise.resolve();
+                  if (isNaN(num) || num < 0 || num > 100) return Promise.reject(new Error('Must be between 0 and 100 years'));
+                  return Promise.resolve();
+                },
+              },
+            ]}
+            getValueProps={val => ({ value: val != null && val !== '' ? parseFloat(String(val).replace(/[^\d.]/g, '')) || 0 : null })}
+            getValueFromEvent={(val: number | null) => val != null ? String(val) : ''}
           >
-            <Input placeholder="e.g., 5 years" />
+            <InputNumber
+              min={0} precision={1}
+              addonAfter="years"
+              style={{ width: '100%', fontSize: '12px' }}
+              size="small"
+            />
           </Form.Item>
 
           <Form.Item
@@ -1921,12 +1963,17 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             />
           </Form.Item>
 
-          <Form.Item label="Engagement Start Date" name="engagementStartDate">
-            <Input
-              type="date"
-              placeholder="YYYY-MM-DD"
-              style={{ fontSize: '12px' }}
+          <Form.Item
+            label="Engagement Start Date"
+            name="engagementStartDate"
+            getValueProps={val => ({ value: val ? dayjs(val) : null })}
+            getValueFromEvent={(date: any) => date ? date.format('YYYY-MM-DD') : ''}
+          >
+            <DatePicker
+              style={{ width: '100%', fontSize: '12px' }}
+              size="small"
               disabled={editingResource?.allocationStatus?.toLowerCase() === 'available'}
+              getPopupContainer={trigger => trigger.parentElement || document.body}
             />
           </Form.Item>
 
@@ -1934,6 +1981,8 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             label="Engagement End Date"
             name="engagementEndDate"
             dependencies={['engagementStartDate']}
+            getValueProps={val => ({ value: val ? dayjs(val) : null })}
+            getValueFromEvent={(date: any) => date ? date.format('YYYY-MM-DD') : ''}
             rules={[
               ({ getFieldValue }) => ({
                 validator(_, value) {
@@ -1944,11 +1993,11 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
               }),
             ]}
           >
-            <Input
-              type="date"
-              placeholder="YYYY-MM-DD"
-              style={{ fontSize: '12px' }}
+            <DatePicker
+              style={{ width: '100%', fontSize: '12px' }}
+              size="small"
               disabled={editingResource?.allocationStatus?.toLowerCase() === 'available'}
+              getPopupContainer={trigger => trigger.parentElement || document.body}
             />
           </Form.Item>
 
@@ -2028,6 +2077,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
             resource={selectedResource}
             currentUser={currentUser?.username}
             expanded={detailExpanded}
+            panelOpen={detailDrawer && !!selectedResource}
             onToggleExpand={() => setDetailExpanded(v => !v)}
             onNavigateToRequest={(beelineId) => { onNavigateToRequest?.(beelineId); setDetailDrawer(false); }}
             onNavigateToInsights={onNavigateToInsights ? () => { setDetailDrawer(false); onNavigateToInsights(); } : undefined}

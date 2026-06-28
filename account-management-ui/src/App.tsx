@@ -95,10 +95,26 @@ function toHash(module: 'home' | 'eam', page?: EAMPage) {
 }
 
 /* ─── Sidebar sub-components ──────────────────────────────────── */
-function SectionLabel({ label }: { label: string }) {
+function SectionLabel({ label, collapsible, collapsed, onToggle }: { label: string; collapsible?: boolean; collapsed?: boolean; onToggle?: () => void }) {
   return (
-    <div style={{ padding: '10px 12px 4px', fontSize: '9.5px', fontWeight: 700, letterSpacing: '0.8px', color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', userSelect: 'none' }}>
-      {label}
+    <div
+      onClick={collapsible ? onToggle : undefined}
+      style={{
+        padding: '10px 12px 4px', fontSize: '9.5px', fontWeight: 700, letterSpacing: '0.8px',
+        color: 'rgba(255,255,255,0.28)', textTransform: 'uppercase', userSelect: 'none',
+        cursor: collapsible ? 'pointer' : 'default',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        transition: 'color 0.15s',
+      }}
+    >
+      <span>{label}</span>
+      {collapsible && (
+        <span style={{ marginTop: 2 }}>
+          {collapsed
+            ? <RightOutlined style={{ fontSize: '7px', opacity: 0.55 }} />
+            : <DownOutlined style={{ fontSize: '7px', opacity: 0.55 }} />}
+        </span>
+      )}
     </div>
   );
 }
@@ -557,6 +573,19 @@ export default function App() {
       ? new Set<EAMSection>([PAGE_SECTION_MAP[initialHash.page]])
       : new Set<EAMSection>()
   );
+  // Track which top-level section groups (Account Ops / Settings / Information) are collapsed
+  // All three start collapsed — user activity overrides thereafter
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    new Set(['account_ops', 'settings_config', 'information'])
+  );
+
+  const toggleGroupCollapse = (key: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [resources, setResources] = useState<ResourceRow[]>([]);
   const [resourceInfoRoleFilter, setResourceInfoRoleFilter] = useState<string | undefined>(undefined);
@@ -603,10 +632,10 @@ export default function App() {
     prevAuthRef.current = isAuthenticated;
   }, [isAuthenticated]);
 
-  // Replace initial history entry so popstate works on first back press
   useEffect(() => {
     if (!window.history.state) {
-      window.history.replaceState({ module: activeModule, page: activePage }, '', `#${activePage}`);
+      const hash = activeModule === 'eam' ? toHash('eam', activePage) : '#/home';
+      window.history.replaceState({ module: activeModule, page: activePage }, '', hash);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -615,7 +644,8 @@ export default function App() {
   // Push state on navigate; restore on popstate (browser Back/Forward)
   const navigateTo = (page: EAMPage, section: EAMSection) => {
     const prev = { module: activeModule, page: activePage };
-    window.history.pushState({ module: 'eam', page, prev }, '', `#${page}`);
+    const hash = toHash('eam', page);
+    window.history.pushState({ module: 'eam', page, prev }, '', hash);
     setActivePage(page);
     setExpandedSections(s => new Set([...s, section]));
     setActiveModule('eam');
@@ -822,11 +852,11 @@ export default function App() {
                     </button>
                   </Popover>
                 )}
-                {/* Knowledge Base — popover */}
+                {/* Information — popover */}
                 {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (
                   <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 160 }} content={
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Knowledge Base</div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Information</div>
                       {hasPermission('information_ratecard', 'view') && <button onClick={() => { navigateTo('information_ratecard', 'information'); }} style={{ background: activePage === 'information_ratecard' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_ratecard' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_ratecard' ? 600 : 400 }}>Client Rate Card</button>}
                       {hasPermission('information_teamhierarchy', 'view') && <button onClick={() => { navigateTo('information_teamhierarchy', 'information'); }} style={{ background: activePage === 'information_teamhierarchy' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_teamhierarchy' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_teamhierarchy' ? 600 : 400 }}>Team Hierarchy</button>}
                       {hasPermission('information_process', 'view') && <button onClick={() => { navigateTo('information_process', 'information'); }} style={{ background: activePage === 'information_process' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_process' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_process' ? 600 : 400 }}>Client Process</button>}
@@ -840,7 +870,7 @@ export default function App() {
                 )}
                 <div style={{ margin: '4px 6px', borderTop: '1px solid rgba(255,255,255,0.08)' }} />
                 <Tooltip title="Expand" placement="right">
-                  <button onClick={() => setSidebarCollapsed(false)} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+                  <button onClick={() => { setSidebarCollapsed(false); setExpandedSections(new Set()); }} style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.35)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
                     <MenuUnfoldOutlined style={{ fontSize: '13px' }} />
                   </button>
                 </Tooltip>
@@ -859,7 +889,14 @@ export default function App() {
                 )}
 
                 {/* ── ACCOUNT OPERATIONS section ── */}
-                <SectionLabel label="Account Operations" />
+                <SectionLabel
+                  label="Account Operations"
+                  collapsible
+                  collapsed={collapsedGroups.has('account_ops')}
+                  onToggle={() => toggleGroupCollapse('account_ops')}
+                />
+
+                {!collapsedGroups.has('account_ops') && (<>
 
                 {/* Finance */}
                 {(hasPermission('executive_summary', 'view') || hasPermission('executive_revenue', 'view') || hasPermission('executive_invoicing', 'view')) && (
@@ -911,8 +948,19 @@ export default function App() {
                 />
                 )}
 
+                {/* Knowledge Base items are moved into the Information section below */}
+
+                </>)}
+
                 {/* ── SETTINGS & CONFIGURATION section ── */}
-                <SectionLabel label="Settings & Configuration" />
+                <SectionLabel
+                  label="Settings & Configuration"
+                  collapsible
+                  collapsed={collapsedGroups.has('settings_config')}
+                  onToggle={() => toggleGroupCollapse('settings_config')}
+                />
+
+                {!collapsedGroups.has('settings_config') && (<>
 
                 {/* User Access Control — admin-only */}
                 {hasPermission('user_access_control', 'view') && (
@@ -942,20 +990,40 @@ export default function App() {
                   showArrow
                 />
 
-                {/* Knowledge Base */}
-                {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (
-                <SideNavGroup
-                  icon={<InfoCircleOutlined />} label="Knowledge Base"
-                  active={activePage.startsWith('information')}
-                  expanded={isExp('information')}
-                  onToggle={() => toggleSection('information')}
-                >
-                  {hasPermission('information_ratecard', 'view') && <SubNavItem label="Client Rate Card" active={activePage === 'information_ratecard'} onClick={() => navigateTo('information_ratecard', 'information')} />}
-                  {hasPermission('information_teamhierarchy', 'view') && <SubNavItem label="Team Hierarchy" active={activePage === 'information_teamhierarchy'} onClick={() => navigateTo('information_teamhierarchy', 'information')} />}
-                  {hasPermission('information_process', 'view') && <SubNavItem label="Client Process" active={activePage === 'information_process'} onClick={() => navigateTo('information_process', 'information')} />}
-                  {hasPermission('information_codeguide', 'view') && <SubNavItem label="Code Guide" active={activePage === 'information_codeguide'} onClick={() => navigateTo('information_codeguide', 'information')} />}
-                </SideNavGroup>
-                )}
+                </>)}
+
+                {/* ── INFORMATION section ── */}
+                {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (<>
+                <SectionLabel
+                  label="Information"
+                  collapsible
+                  collapsed={collapsedGroups.has('information')}
+                  onToggle={() => toggleGroupCollapse('information')}
+                />
+
+                {!collapsedGroups.has('information') && (<>
+                  {hasPermission('information_ratecard', 'view') && (
+                  <SideNavItem icon={<CreditCardOutlined />} label="Client Rate Card"
+                    active={activePage === 'information_ratecard'}
+                    onClick={() => navigateTo('information_ratecard', 'information')} showArrow />
+                  )}
+                  {hasPermission('information_teamhierarchy', 'view') && (
+                  <SideNavItem icon={<ApartmentOutlined />} label="Team Hierarchy"
+                    active={activePage === 'information_teamhierarchy'}
+                    onClick={() => navigateTo('information_teamhierarchy', 'information')} showArrow />
+                  )}
+                  {hasPermission('information_process', 'view') && (
+                  <SideNavItem icon={<RocketOutlined />} label="Client Process"
+                    active={activePage === 'information_process'}
+                    onClick={() => navigateTo('information_process', 'information')} showArrow />
+                  )}
+                  {hasPermission('information_codeguide', 'view') && (
+                  <SideNavItem icon={<FileTextOutlined />} label="Code Guide"
+                    active={activePage === 'information_codeguide'}
+                    onClick={() => navigateTo('information_codeguide', 'information')} showArrow />
+                  )}
+                </>)}
+                </>)}
 
               </div>
             )}
@@ -1008,7 +1076,7 @@ export default function App() {
       iconBg: '#e6f4ff',
       title: 'Financial Intelligence',
       desc: 'Track revenue, billing, and performance with clarity.',
-      page: 'executive_revenue' as EAMPage,
+      page: 'executive_summary' as EAMPage,
       section: 'executive' as EAMSection,
     },
     {
