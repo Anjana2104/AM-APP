@@ -72,6 +72,11 @@ async function migrate() {
   `);
   // Add is_active to existing client_requests rows (idempotent)
   try { db.run(`ALTER TABLE client_requests ADD COLUMN is_active INTEGER DEFAULT 1`); } catch (_) {}
+  try {
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_client_requests_beeline_id_ci_unique
+      ON client_requests (LOWER(TRIM(beeline_id)))
+      WHERE beeline_id IS NOT NULL AND TRIM(beeline_id) != ''`);
+  } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS resources (
@@ -120,6 +125,7 @@ async function migrate() {
       open_air_code   TEXT DEFAULT "",
       comments        TEXT DEFAULT "",
       account_anchor  TEXT DEFAULT "",
+      step_completed_at TEXT DEFAULT "{}",
       created_at      TEXT,
       updated_at      TEXT
     )
@@ -131,6 +137,8 @@ async function migrate() {
   try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (_) {}
   // Add eprev stage column (idempotent)
   try { db.run(`ALTER TABLE ra_process ADD COLUMN eprev TEXT DEFAULT ''`); } catch (_) {}
+  // Per-step completion timestamp map
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN step_completed_at TEXT DEFAULT '{}'`); } catch (_) {}
   // Unique partial index for PIW name (non-empty) — prevents duplicate PIW names
   try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (_) {}
 
@@ -172,6 +180,25 @@ async function migrate() {
       updated_at  TEXT
     )
   `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS team_hierarchy_entries (
+      id            TEXT PRIMARY KEY,
+      team_type     TEXT NOT NULL,
+      name          TEXT NOT NULL DEFAULT "",
+      title         TEXT DEFAULT "",
+      department    TEXT DEFAULT "",
+      reporting_to  TEXT DEFAULT NULL,
+      email         TEXT DEFAULT "",
+      phone         TEXT DEFAULT "",
+      responsibility TEXT DEFAULT "",
+      sort_order    INTEGER DEFAULT 0,
+      created_at    TEXT,
+      updated_at    TEXT
+    )
+  `);
+  try { db.run(`ALTER TABLE team_hierarchy_entries ADD COLUMN phone TEXT DEFAULT ''`); } catch (_) {}
+  db.run(`CREATE INDEX IF NOT EXISTS idx_team_hierarchy_team_type_sort ON team_hierarchy_entries(team_type, sort_order)`);
 
   // Request comments table (idempotent)
   db.run(`CREATE TABLE IF NOT EXISTS request_comments (

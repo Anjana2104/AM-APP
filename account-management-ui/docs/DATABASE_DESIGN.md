@@ -154,6 +154,7 @@ Internal process / SOW records.
 | eprev | TEXT | ePrev stage |
 | comments | TEXT | |
 | account_anchor | TEXT | Account manager |
+| step_completed_at | TEXT (JSON) | Per-step completion timestamps map (UTC ISO), used for process-progress analytics |
 | created_at / updated_at | TEXT | |
 
 ---
@@ -248,6 +249,27 @@ Generic key-value store for app-level settings.
 | key | TEXT UNIQUE | Setting key |
 | value | TEXT | Setting value |
 | description | TEXT | |
+
+---
+
+### `team_hierarchy_entries`
+Stakeholder network records for Client and Internal Team structures.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | TEXT PK | Stable stakeholder ID |
+| team_type | TEXT | `client` \| `ra` |
+| name | TEXT | Stakeholder name |
+| title | TEXT | Role/title |
+| department | TEXT | Department/group |
+| reporting_to | TEXT | Parent stakeholder ID (nullable) |
+| email | TEXT | Email |
+| phone | TEXT | Phone number |
+| responsibility | TEXT | Notes/responsibility |
+| sort_order | INTEGER | Deterministic display/order index |
+| created_at / updated_at | TEXT | ISO timestamps |
+
+**Index:** `idx_team_hierarchy_team_type_sort(team_type, sort_order)`
 
 ---
 
@@ -386,4 +408,5 @@ notifications ── trigger_id ──► notification_triggers
 user_preferences ── user_id ──► users
 finance_revenue ── project_id ──► finance_projects
 invoice_amounts ── project_id ──► invoice_projects
+team_hierarchy_entries ── reporting_to ──► team_hierarchy_entries.id (logical self-link)
 ```

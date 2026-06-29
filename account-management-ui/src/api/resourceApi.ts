@@ -106,6 +106,8 @@ export interface ResourceComment {
   author: string;
   tag: string;
   body: string;
+  reported_by?: string;
+  source_module?: string;
   created_at: string;
   updated_at?: string;
 }

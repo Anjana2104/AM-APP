@@ -103,8 +103,9 @@ export const AVAILABLE_LINK_TARGETS: LinkTarget[] = [
   { id: 'request_type_field',           label: 'Request Type dropdown',     section: 'Request Management', module: 'Request Management',   description: 'Type tabs + edit modal + filters' },
   { id: 'request_processing_status_field', label: 'Processing Status dropdown', section: 'Request Management', module: 'Request Management', description: 'Inline edit + filters' },
   { id: 'request_overall_status_field', label: 'Overall Status dropdown',   section: 'Request Management', module: 'Request Management',   description: 'Inline edit + filters' },
+  { id: 'request_owner_field',          label: 'Owner dropdown',             section: 'Request Management', module: 'Request Management',   description: 'Edit modal + filters + tables' },
   // ── Internal Process ───────────────────────────────────────────────
-  { id: 'ra_process_account_anchor_field', label: 'Account Anchor dropdown', section: 'Internal Process', module: 'Internal Process',     description: 'Inline allocation edit' },
+  { id: 'ra_process_account_anchor_field', label: 'Owner dropdown', section: 'Internal Process', module: 'Internal Process',     description: 'Inline allocation edit' },
   { id: 'piw_engagement_field',            label: 'PIW — Project / Engagement Name dropdown', section: 'Internal Process', module: 'PIW Generation', description: 'Project/Engagement name dropdown in PIW generation form' },
   // ── Resources → Comment Tags ───────────────────────────────────────
   { id: 'resource_comment_tag_field',   label: 'Comment Tag dropdown',      section: 'Resources',          module: 'Resource Information & Engagement Mapping', description: 'Tag picker when adding comments in resource detail view' },
@@ -335,4 +336,3 @@ export function useConfig() {
   if (!ctx) throw new Error('useConfig must be used inside ConfigProvider');
   return ctx;
 }
-

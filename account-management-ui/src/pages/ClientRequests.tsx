@@ -24,7 +24,6 @@ import {
   Col,
   Divider,
   Tooltip,
-  Popover,
   Dropdown,
   Tabs,
   Tag,
@@ -39,11 +38,8 @@ import {
 } from 'antd';
 const { Text } = Typography;
 import {
-  PlusOutlined,
   DeleteOutlined,
   EditOutlined,
-  UploadOutlined,
-  DownloadOutlined,
   FilterOutlined,
   SettingOutlined,
   ClearOutlined,
@@ -52,29 +48,35 @@ import {
   AppstoreOutlined,
   TableOutlined,
   UnorderedListOutlined,
-  CloseOutlined,
   ColumnHeightOutlined,
   CloudServerOutlined,
   FileExcelOutlined,
   EyeOutlined,
   LinkOutlined,
-  StopOutlined,
-  CheckCircleOutlined,
   ExpandAltOutlined,
   ShrinkOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import * as XLSXStyle from 'xlsx-js-style';
-import dayjs from 'dayjs';
 import { RequestInsightsChart, BeelineResourcePanel } from './RequestInsightsChart';
 import { EnhancedInsights } from './EnhancedInsights';
 import RequestDetailPanel from '../components/RequestDetailPanel';
+import BulkSelectionActionsBar from './client-requests/BulkSelectionActionsBar';
+import ClientRequestsFilterPanel from './client-requests/ClientRequestsFilterPanel';
+import { buildRequestConfigMappings, formatDateReadable, formatDateTimeUtc, formatDateToDDMMYYYY, mapResourceApiRow } from './client-requests/clientRequestsMappers';
+import { buildClientRequestCardMenuItems, buildClientRequestsToolbarMenuItems } from './client-requests/clientRequestsMenus';
+import { mergeClientRequestRows, parseClientRequestWorksheet, toRequestBulkSavePayload, type ClientRequestUploadRow } from './client-requests/requestUploadUtils';
+import { mapApiRequestRow, toCreateRequestPayload } from './client-requests/requestRowMappers';
+import { buildRequestUpdatePayload } from './client-requests/requestUpdateUtils';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
 import { useUserPreferences } from '../context/UserPreferencesContext';
 import * as requestApi from '../api/requestApi';
 import * as resourceApi from '../api/resourceApi';
 import type { ResourcePayload } from '../api/resourceApi';
+import { clearModuleArtifact } from '../utils/moduleCleanupApi';
+import { buildStyledWorksheetFromAoa, getCurrentDateStamp } from '../utils/styledExcelExport';
+import { writeJsonSheetFile } from '../utils/xlsxExport';
 import '../style.css';
 
 // Types and interfaces
@@ -93,43 +95,22 @@ interface ClientRequest {
   isActive?: boolean;
 }
 
-// Utility Functions
-const formatDateToDDMMYYYY = (dateString: string | number | Date | undefined): string => {
-  if (!dateString && dateString !== 0) return '';
-  // Excel serial number — convert: Excel epoch is Dec 30, 1899
-  if (typeof dateString === 'number') {
-    const excelEpoch = new Date(1899, 11, 30);
-    const d = new Date(excelEpoch.getTime() + dateString * 86400000);
-    return dayjs(d).format('DD/MM/YYYY');
-  }
-  // Native Date object
-  if (dateString instanceof Date) {
-    return dayjs(dateString).format('DD/MM/YYYY');
-  }
-  const s = String(dateString).trim();
-  // Already in D/M/YYYY or DD/MM/YYYY — normalise padding
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
-    const [d, m, y] = s.split('/');
-    return `${d.padStart(2, '0')}/${m.padStart(2, '0')}/${y}`;
-  }
-  // ISO or other standard format (YYYY-MM-DD etc.)
-  const parsed = dayjs(s);
-  if (parsed.isValid()) return parsed.format('DD/MM/YYYY');
-  return s;
-};
-
-const formatDateReadable = (dateString: string | undefined): string => {
-  if (!dateString) return '';
-  // Handle DD/MM/YYYY stored format
-  const ddmmyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(dateString);
+function toSortableTimestamp(value?: string): number {
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+  const ddmmyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
   if (ddmmyyyy) {
-    const parsed = dayjs(`${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2,'0')}-${ddmmyyyy[1].padStart(2,'0')}`);
-    if (parsed.isValid()) return parsed.format('DD MMM YYYY');
+    const isoDate = `${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2, '0')}-${ddmmyyyy[1].padStart(2, '0')}T00:00:00Z`;
+    const ts = Date.parse(isoDate);
+    return Number.isNaN(ts) ? 0 : ts;
   }
-  const parsed = dayjs(dateString);
-  if (parsed.isValid()) return parsed.format('DD MMM YYYY');
-  return dateString;
-};
+  const ts = Date.parse(raw);
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+function getRequestRecencyTimestamp(row: ClientRequest): number {
+  return Math.max(toSortableTimestamp(row.updatedOn), toSortableTimestamp(row.dateRaised));
+}
 
 const OVERALL_STATUS_COLOR_MAP: Record<string, string> = {
   'not_started': '#1890ff', 'in_progress': '#faad14', 'completed': '#52c41a',
@@ -144,28 +125,34 @@ const getOverallStatusColor = (status: string): string => OVERALL_STATUS_COLOR_M
 const getOverallStatusBackgroundColor = (status: string): string => OVERALL_STATUS_BG_MAP[status] || '#f5f5f5';
 
 // Main Component
-export default function RequestManagement({ initialBeelineFilter, onFilterApplied }: { initialBeelineFilter?: string; onFilterApplied?: () => void } = {}) {
-  const { getConfigByLink } = useConfig();
+export default function ClientRequests({ initialBeelineFilter, initialFilters, onFilterApplied }: { initialBeelineFilter?: string; initialFilters?: Record<string, any>; onFilterApplied?: () => void } = {}) {
+  const { getConfigByLink, configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
   const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('clientmgmt_requests', 'edit');
   const canDelete = hasPermission('clientmgmt_requests', 'delete');
+  const changedBy = currentUser?.username || 'system';
 
   // Derive processing/overall status + request type options dynamically from config context
   const typeItems = getConfigByLink('request_type_field')?.items ?? [];
   const processingStatusItems = getConfigByLink('request_processing_status_field')?.items ?? [];
   const overallStatusItems = getConfigByLink('request_overall_status_field')?.items ?? [];
+  const ownerItems = useMemo(() => {
+    const topLinked = configs.find(c =>
+      (c.linkedTo ?? []).includes('request_owner_field') || (c.linkedTo ?? []).includes('request_account_anchor_field')
+    );
+    return topLinked?.items ?? [];
+  }, [configs]);
 
-  const REQUEST_TYPE_OPTIONS = typeItems.map(i => ({ label: i.label, value: i.value }));
-  const REQUEST_TYPE_LABEL: Record<string, string> = Object.fromEntries(typeItems.map(i => [i.value, i.label]));
-  const REQUEST_TYPE_COLOR: Record<string, string> = Object.fromEntries(typeItems.map(i => [i.value, i.color ?? 'default']));
-
-  const PROCESSING_STATUS_OPTIONS = processingStatusItems.map(i => ({ label: i.label, value: i.value }));
-  const OVERALL_STATUS_OPTIONS = overallStatusItems.map(i => ({ label: i.label, value: i.value }));
-
-  // Build display maps from config
-  const PROCESSING_STATUS_DISPLAY_MAP: Record<string, string> = Object.fromEntries(processingStatusItems.map(i => [i.value, i.label]));
-  const OVERALL_STATUS_DISPLAY_MAP: Record<string, string> = Object.fromEntries(overallStatusItems.map(i => [i.value, i.label]));
+  const {
+    REQUEST_TYPE_OPTIONS,
+    REQUEST_TYPE_LABEL,
+    REQUEST_TYPE_COLOR,
+    PROCESSING_STATUS_OPTIONS,
+    OVERALL_STATUS_OPTIONS,
+    PROCESSING_STATUS_DISPLAY_MAP,
+    OVERALL_STATUS_DISPLAY_MAP,
+  } = buildRequestConfigMappings(typeItems, processingStatusItems, overallStatusItems);
   const [requests, setRequests] = useState<ClientRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [fromServer, setFromServer] = useState(false);
@@ -180,6 +167,8 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [viewDetailRecord, setViewDetailRecord] = useState<ClientRequest | null>(null);
   const [panelExpanded, setPanelExpanded] = useState(false);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(15);
   const [visibleColumns, setVisibleColumnsState] = useState<Record<string, boolean>>({
     sno: true,
     beelineId: true,
@@ -192,6 +181,14 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     dateRaised: true,
   });
   const [activeTab, setActiveTab] = useState<string>('overview');
+  const ownerOptions = useMemo(() => {
+    return ownerItems.map(i => ({ label: i.label, value: i.value }));
+  }, [ownerItems]);
+  const beelineOptions = useMemo(() => {
+    return Array.from(new Set(requests.map(r => (r.beelineId || '').trim()).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b))
+      .map(v => ({ label: v, value: v }));
+  }, [requests]);
 
   // Apply saved user preferences once loaded
   useEffect(() => {
@@ -205,19 +202,39 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     saveColumnVisibility('requests', newVis);
   };
 
+  const sortedRequests = useMemo(() => {
+    return [...requests].sort((a, b) => {
+      const recencyDiff = getRequestRecencyTimestamp(b) - getRequestRecencyTimestamp(a);
+      if (recencyDiff !== 0) return recencyDiff;
+      return Number.parseInt(b.sno || '0', 10) - Number.parseInt(a.sno || '0', 10);
+    });
+  }, [requests]);
+
   // Filtered requests
   const filteredRequests = useMemo(() => {
-    return requests.filter(req => {
+    return sortedRequests.filter(req => {
       for (const [key, value] of Object.entries(filters)) {
         if (!value && value !== false) continue;
         if (key === 'sno' && !req.sno.toString().includes(value)) return false;
-        if (key === 'beelineId' && !req.beelineId.toLowerCase().includes(value.toLowerCase())) return false;
+        if (key === 'beelineId' && req.beelineId !== value) return false;
         if (key === 'description' && !req.description.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'raisedBy' && !req.raisedBy.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'accountAnchor' && !req.accountAnchor.toLowerCase().includes(value.toLowerCase())) return false;
         if (key === 'requestType' && req.requestType !== value) return false;
         if (key === 'overallStatus' && req.overallStatus !== value) return false;
         if (key === 'processingStatus' && req.processingStatus !== value) return false;
+        if (key === 'dateRaisedFrom') {
+          const raisedTs = toSortableTimestamp(req.dateRaised);
+          const fromTs = Date.parse(`${String(value)}T00:00:00Z`);
+          if (!Number.isFinite(raisedTs) || !Number.isFinite(fromTs) || raisedTs < fromTs) return false;
+        }
+        if (key === 'dateRaisedTo') {
+          const raisedTs = toSortableTimestamp(req.dateRaised);
+          const toTs = Date.parse(`${String(value)}T23:59:59Z`);
+          if (!Number.isFinite(raisedTs) || !Number.isFinite(toTs) || raisedTs > toTs) return false;
+        }
+        if (key === 'accountAnchorPresent' && value === true && !req.accountAnchor?.trim()) return false;
+        if (key === 'accountAnchorMissing' && value === true && !!req.accountAnchor?.trim()) return false;
         if (key === 'isActive' && value !== 'all') {
           const active = req.isActive !== false;
           if (value === 'active' && !active) return false;
@@ -226,7 +243,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
       }
       return true;
     });
-  }, [requests, filters]);
+  }, [sortedRequests, filters]);
 
   // Handlers
   const handleUpload = (file: File) => {
@@ -236,92 +253,36 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
         const data = e.target?.result;
         const workbook = XLSX.read(data, { type: 'array', cellDates: true });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-        // raw:false ensures dates come back as formatted strings, not serial numbers
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { raw: false, dateNF: 'DD/MM/YYYY' });
-
-        if (!jsonData || jsonData.length === 0) {
-          message.warning('No data found in the Excel file');
-          return;
-        }
-
-        const uploaded: ClientRequest[] = jsonData.map((row: any) => {
-          let processingStatus = PROCESSING_STATUS_OPTIONS[0]?.value || '';
-          const processingValue = row['Processing Status'] || '';
-          for (const [code, display] of Object.entries(PROCESSING_STATUS_DISPLAY_MAP)) {
-            if (display === processingValue) { processingStatus = code; break; }
-          }
-
-          let overallStatus = OVERALL_STATUS_OPTIONS[0]?.value || 'not_started';
-          const overallValue = row['Overall Status'] || '';
-          for (const [code, display] of Object.entries(OVERALL_STATUS_DISPLAY_MAP)) {
-            if (display === overallValue) { overallStatus = code; break; }
-          }
-
-          let requestType = '';
-          const typeValue = (row['Request Type'] || '').toString().trim();
-          const matchedType = typeItems.find(t => t.label.toLowerCase() === typeValue.toLowerCase() || t.value === typeValue.toLowerCase().replace(/\s+/g, '_'));
-          if (matchedType) requestType = matchedType.value;
-          else if (typeValue) requestType = typeValue;
-
-          return {
-            sno: '',
-            beelineId: String(row['Beeline ID'] || '').trim(),
-            description: row['Description'] || '',
-            raisedBy: row['Raised by'] || '',
-            processingStatus,
-            overallStatus,
-            accountAnchor: row['Account Anchor'] || row['Account Anchor Assigned'] || '',
-            dateRaised: formatDateToDDMMYYYY(row['Date Raised']),
-            requestType,
-            updatedOn: formatDateToDDMMYYYY(new Date().toISOString()),
-          };
-        }).filter(r => r.beelineId);
+        const uploaded = parseClientRequestWorksheet(worksheet, {
+          processingDefault: PROCESSING_STATUS_OPTIONS[0]?.value || '',
+          overallDefault: OVERALL_STATUS_OPTIONS[0]?.value || 'not_started',
+          processingDisplayMap: PROCESSING_STATUS_DISPLAY_MAP,
+          overallDisplayMap: OVERALL_STATUS_DISPLAY_MAP,
+          typeItems,
+          formatDateToDDMMYYYY,
+        }) as ClientRequestUploadRow[];
 
         if (!uploaded.length) { message.warning('No valid rows with Beeline ID found'); return; }
 
         let uploadSummary = { newCount: 0, updCount: 0 };
-        let mergedRows: ClientRequest[] = [];
+        let mergedRows: ClientRequestUploadRow[] = [];
 
         setRequests(prev => {
-          const existingMap = new Map(prev.map(r => [r.beelineId.toLowerCase(), r]));
-          let newCount = 0, updCount = 0;
-          uploaded.forEach(u => {
-            const key = u.beelineId.toLowerCase();
-            if (existingMap.has(key)) { existingMap.set(key, { ...existingMap.get(key)!, ...u, id: existingMap.get(key)!.id }); updCount++; }
-            else { existingMap.set(key, u); newCount++; }
-          });
-          uploadSummary = { newCount, updCount };
-          mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: String(i + 1) }));
-          return mergedRows;
+          const result = mergeClientRequestRows(prev as ClientRequestUploadRow[], uploaded);
+          uploadSummary = { newCount: result.newCount, updCount: result.updCount };
+          mergedRows = result.mergedRows;
+          return mergedRows as ClientRequest[];
         });
 
         // Save to DB outside the updater (avoids Strict Mode double-invoke)
         setTimeout(() => {
-          requestApi.bulkSave(mergedRows.map(r => ({
-            beelineId: r.beelineId, sno: Number(r.sno), description: r.description,
-            raisedBy: r.raisedBy, processingStatus: r.processingStatus,
-            overallStatus: r.overallStatus, accountAnchor: r.accountAnchor,
-            dateRaised: r.dateRaised, requestType: r.requestType || '',
-            updatedOn: r.updatedOn || '',
-          }))).then(result => {
+          requestApi.bulkSave(toRequestBulkSavePayload(mergedRows)).then(result => {
             if (result.ok) {
               setFromServer(true);
               // Re-fetch from server to get proper DB IDs for all records (esp. newly inserted)
               requestApi.getRequests().then(({ requests: fresh }) => {
                 if (fresh.length > 0) {
-                  setRequests(fresh.map((r: any, i: number) => ({
-                    id: r.id, sno: String(r.sno || i + 1),
-                    beelineId: String(r.beeline_id || r.beelineId || ''),
-                    description: String(r.description || ''),
-                    raisedBy: String(r.raised_by || r.raisedBy || ''),
-                    processingStatus: String(r.processing_status || r.processingStatus || ''),
-                    overallStatus: String(r.overall_status || r.overallStatus || ''),
-                    accountAnchor: String(r.account_anchor || r.accountAnchor || ''),
-                    dateRaised: String(r.date_raised || r.dateRaised || ''),
-                    requestType: String(r.request_type || r.requestType || ''),
-                    updatedOn: String(r.updated_on || r.updatedOn || ''),
-                    isActive: r.is_active === undefined ? true : r.is_active !== 0,
-                  })));
+                  setRequests(fresh.map((r: any, i: number) => mapApiRequestRow(r, i) as ClientRequest));
                 }
               });
             }
@@ -329,12 +290,24 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
           message.success(`Upload complete: ${uploadSummary.newCount} new, ${uploadSummary.updCount} updated`);
         }, 0);
       } catch (error) {
+        console.error('[ClientRequests] Upload parse/save failed', error);
         message.error('Failed to upload file');
       }
     };
     reader.onerror = () => message.error('Failed to read file');
     reader.readAsArrayBuffer(file);
     return false;
+  };
+
+  const handleUploadRequestsPicker = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.xlsx,.xls';
+    inp.onchange = (ev) => {
+      const f = (ev.target as HTMLInputElement).files?.[0];
+      if (f) handleUpload(f);
+    };
+    inp.click();
   };
 
   const downloadTemplate = () => {
@@ -346,15 +319,11 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
         'Raised by': 'John Doe',
         'Processing Status': 'Accepted by Staffing Team',
         'Overall Status': 'Not Started',
-        'Account Anchor': 'Team A',
+        'Owner': 'Team A',
         'Date Raised': '01/01/2024',
       },
     ];
-
-    const ws = XLSX.utils.json_to_sheet(template);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    XLSX.writeFile(wb, 'ClientM_Template.xlsx');
+    writeJsonSheetFile(XLSX, template, 'Template', 'ClientM_Template.xlsx');
   };
 
   const handleAddNew = () => {
@@ -401,37 +370,49 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     }
   };
 
-  const handleSaveEdit = (values: any) => {
+  const handleSaveEdit = async (values: any) => {
+    const normalizedBeeline = String(values.beelineId || '').trim().toLowerCase();
+    if (!normalizedBeeline) {
+      message.error('Beeline ID is required');
+      return;
+    }
+    const duplicate = requests.find(r => {
+      const sameBeeline = String(r.beelineId || '').trim().toLowerCase() === normalizedBeeline;
+      if (!sameBeeline) return false;
+      if (editingRequest?.id && r.id) return r.id !== editingRequest.id;
+      return r.sno !== editingRequest?.sno;
+    });
+    if (duplicate) {
+      message.error(`Beeline ID "${values.beelineId}" already exists`);
+      return;
+    }
+
     if (editingRequest) {
-      const updated = { ...editingRequest, ...values, updatedOn: formatDateToDDMMYYYY(new Date().toISOString()) };
+      const updated = { ...editingRequest, ...values, updatedOn: new Date().toISOString() };
       if (editingRequest.id) {
-        requestApi.updateRequest(editingRequest.id, {
-          description: updated.description, raisedBy: updated.raisedBy,
-          processingStatus: updated.processingStatus, overallStatus: updated.overallStatus,
-          accountAnchor: updated.accountAnchor, dateRaised: updated.dateRaised,
-          requestType: updated.requestType || '', updatedOn: updated.updatedOn,
-          changedBy: currentUser?.username || 'system',
-        } as any);
+        const ok = await requestApi.updateRequest(editingRequest.id, buildRequestUpdatePayload(updated, {}, changedBy) as any);
+        if (!ok) {
+          message.error('Failed to update request. Beeline ID may already exist.');
+          return;
+        }
       }
-      setRequests(prev => prev.map(r => r.sno === editingRequest.sno ? updated : r));
+      setRequests(prev => prev.map(r => (editingRequest.id && r.id === editingRequest.id) ? updated : (r.sno === editingRequest.sno ? updated : r)));
+      message.success('Request updated');
     } else {
       const sno = (requests.length + 1).toString();
       const newReq: ClientRequest = {
         sno,
         ...values,
         dateRaised: formatDateToDDMMYYYY(values.dateRaised),
-        updatedOn: formatDateToDDMMYYYY(new Date().toISOString()),
+        updatedOn: new Date().toISOString(),
       };
-      requestApi.createRequest({
-        beelineId: newReq.beelineId, sno: Number(newReq.sno),
-        description: newReq.description, raisedBy: newReq.raisedBy,
-        processingStatus: newReq.processingStatus, overallStatus: newReq.overallStatus,
-        accountAnchor: newReq.accountAnchor, dateRaised: newReq.dateRaised,
-        requestType: newReq.requestType || '', updatedOn: newReq.updatedOn || '',
-      }).then(result => {
-        if (result.id) setRequests(prev => prev.map(r => r.sno === sno ? { ...r, id: result.id } : r));
-      });
-      setRequests(prev => [...prev, newReq]);
+      const result = await requestApi.createRequest(toCreateRequestPayload(newReq));
+      if (!result.ok || !result.id) {
+        message.error((result as any).error || 'Failed to create request. Beeline ID may already exist.');
+        return;
+      }
+      setRequests(prev => [...prev, { ...newReq, id: result.id }]);
+      message.success('Request created');
     }
     setEditDrawer(false);
     form.resetFields();
@@ -460,54 +441,34 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
   };
 
   const handleClearAllAudit = async () => {
-    try {
-      const res = await fetch('http://localhost:3001/api/requests/all-audit', { method: 'DELETE' });
-      if (!res.ok) throw new Error();
+    const ok = await clearModuleArtifact('requests', 'audit', 'ClientRequests');
+    if (ok) {
       message.success('All request audit history deleted');
-    } catch { message.error('Failed to delete audit history'); }
+    } else {
+      message.error('Failed to delete audit history');
+    }
   };
 
   const handleClearAllComments = async () => {
-    try {
-      const res = await fetch('http://localhost:3001/api/requests/all-comments', { method: 'DELETE' });
-      if (!res.ok) throw new Error();
+    const ok = await clearModuleArtifact('requests', 'comments', 'ClientRequests');
+    if (ok) {
       message.success('All request comments deleted');
-    } catch { message.error('Failed to delete comments'); }
+    } else {
+      message.error('Failed to delete comments');
+    }
   };
 
   const handleExportExcel = () => {
     if (!typeFilteredRequests.length) { message.warning('No data to export'); return; }
-    const headers = ['S.No', 'Beeline ID', 'Type', 'Description', 'Raised By', 'Processing Status', 'Overall Status', 'Account Anchor', 'Date Raised'];
+    const headers = ['S.No', 'Beeline ID', 'Type', 'Description', 'Raised By', 'Processing Status', 'Overall Status', 'Owner', 'Date Raised'];
     const aoa: any[][] = [headers];
     typeFilteredRequests.forEach(r => {
       aoa.push([r.sno, r.beelineId, r.requestType || '', r.description || '', r.raisedBy, r.processingStatus || '', r.overallStatus || '', r.accountAnchor || '', r.dateRaised || '']);
     });
-    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 16 }, { wch: 40 }, { wch: 20 }, { wch: 22 }, { wch: 18 }, { wch: 20 }, { wch: 14 }];
-    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
-    ws['!sheetViews'] = [{ showGridLines: false }];
-    const numCols = headers.length, numRows = aoa.length;
-    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
-    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
-    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
-    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
-    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
-    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
-    for (let R = 0; R < numRows; R++) {
-      for (let C = 0; C < numCols; C++) {
-        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
-        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
-        ws[addr].s = {
-          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
-          font: R === 0 ? hFont : { sz: 10 },
-          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
-          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
-        };
-      }
-    }
+    const ws = buildStyledWorksheetFromAoa(XLSXStyle, aoa, [8, 14, 16, 40, 20, 22, 18, 20, 14]);
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, ws, 'Client Requests');
-    XLSXStyle.writeFile(wb, `Client_Requests_Export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSXStyle.writeFile(wb, `Client_Requests_Export_${getCurrentDateStamp()}.xlsx`);
     message.success('Export downloaded');
   };
 
@@ -526,32 +487,10 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
         aoa.push([bid, r.raId, r.empName, r.emailId, r.piwRole || r.roleOrDomain, r.engagement || '', r.allocationStatus || '', r.skills]);
       });
     });
-    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 26 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 30 }];
-    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
-    ws['!sheetViews'] = [{ showGridLines: false }];
-    const numCols = headers.length, numRows = aoa.length;
-    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
-    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
-    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
-    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
-    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
-    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
-    for (let R = 0; R < numRows; R++) {
-      for (let C = 0; C < numCols; C++) {
-        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
-        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
-        ws[addr].s = {
-          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
-          font: R === 0 ? hFont : { sz: 10 },
-          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
-          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
-        };
-      }
-    }
+    const ws = buildStyledWorksheetFromAoa(XLSXStyle, aoa, [16, 10, 26, 28, 18, 18, 18, 30]);
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, ws, 'Beeline Resource Mapping');
-    XLSXStyle.writeFile(wb, `Beeline_Resource_Mapping_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSXStyle.writeFile(wb, `Beeline_Resource_Mapping_${getCurrentDateStamp()}.xlsx`);
     message.success('Beeline-Resource mapping downloaded');
   };
 
@@ -561,13 +500,36 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     setActiveTab('overview');
   };
 
+  const applyBulkStatusUpdate = (field: 'overallStatus' | 'processingStatus', value: string) => {
+    const updatedOn = new Date().toISOString();
+    const toUpdate = requests.filter(r => selectedRowKeys.includes(r.sno) && r.id);
+    toUpdate.forEach(r => requestApi.updateRequest(
+      r.id!,
+      buildRequestUpdatePayload(
+        r,
+        {
+          overallStatus: field === 'overallStatus' ? value : r.overallStatus,
+          processingStatus: field === 'processingStatus' ? value : r.processingStatus,
+          updatedOn,
+        },
+        changedBy,
+      ) as any,
+    ));
+    setRequests(requests.map(r =>
+      selectedRowKeys.includes(r.sno)
+        ? { ...r, [field]: value, updatedOn }
+        : r
+    ));
+    setSelectedRowKeys([]);
+  };
+
   const columns = [
     {
       title: 'S.No',
       key: 'sno',
       width: 80,
       fixed: 'left' as const,
-      render: (_: unknown, __: ClientRequest, index: number) => index + 1,
+      render: (_: unknown, __: ClientRequest, index: number) => ((tablePage - 1) * tablePageSize) + index + 1,
       hidden: !visibleColumns.sno,
     },
     {
@@ -644,7 +606,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
       ),
     },
     {
-      title: 'Account Anchor',
+      title: 'Owner',
       dataIndex: 'accountAnchor',
       key: 'accountAnchor',
       width: 120,
@@ -753,23 +715,6 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     return map;
   }, [allResources]);
 
-  const mapResource = (r: any): ResourcePayload => ({
-    id: r.id,
-    sno: r.sno,
-    raId: r.ra_id || r.raId || '',
-    empName: r.emp_name || r.empName || '',
-    emailId: r.email_id || r.emailId || '',
-    piwRole: r.piw_role || r.piwRole || '',
-    roleOrDomain: r.role_or_domain || r.roleOrDomain || '',
-    previousWorkex: r.previous_workex || r.previousWorkex || '',
-    doj: r.doj || '',
-    totalWorkex: r.total_workex || r.totalWorkex || '',
-    engagement: r.engagement || '',
-    skills: r.skills || '',
-    allocationStatus: r.allocation_status || r.allocationStatus || '',
-    beelineId: r.beeline_id || r.beelineId || '',
-  });
-
   const openLinkResourcesModal = async (request: ClientRequest) => {
     setLinkResourcesModal({ open: true, request });
     setLoadingLinkResources(true);
@@ -777,7 +722,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     setLinkResourcesSearch('');
     // Refresh resources so beeline IDs are current
     const { resources: rawRes } = await resourceApi.getResources();
-    const mapped = rawRes.map(mapResource);
+    const mapped = rawRes.map(mapResourceApiRow);
     setAllResources(mapped);
     const checked = new Set<number>(
       mapped.filter(r => r.beelineId === request.beelineId && r.id != null).map(r => r.id as number)
@@ -802,7 +747,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     await Promise.all(ops);
     // Refresh resources
     const { resources: rawRes } = await resourceApi.getResources();
-    setAllResources(rawRes.map(mapResource));
+    setAllResources(rawRes.map(mapResourceApiRow));
     setSavingLinks(false);
     message.success('Resource links updated');
     setLinkResourcesModal({ open: false, request: null });
@@ -814,26 +759,13 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     setLoading(true);
     requestApi.getRequests().then(({ requests: apiRows, fromServer: online }) => {
       if (online && apiRows.length > 0) {
-        const mapped: ClientRequest[] = apiRows.map((r: any, i: number) => ({
-          id: r.id,
-          sno: String(r.sno || i + 1),
-          beelineId: String(r.beeline_id || r.beelineId || ''),
-          description: String(r.description || ''),
-          raisedBy: String(r.raised_by || r.raisedBy || ''),
-          processingStatus: String(r.processing_status || r.processingStatus || ''),
-          overallStatus: String(r.overall_status || r.overallStatus || ''),
-          accountAnchor: String(r.account_anchor || r.accountAnchor || ''),
-          dateRaised: String(r.date_raised || r.dateRaised || ''),
-          requestType: String(r.request_type || r.requestType || ''),
-          updatedOn: String(r.updated_on || r.updatedOn || ''),
-          isActive: r.is_active === undefined ? (r.isActive === undefined ? true : r.isActive) : r.is_active !== 0,
-        }));
+        const mapped: ClientRequest[] = apiRows.map((r: any, i: number) => mapApiRequestRow(r, i) as ClientRequest);
         setRequests(mapped);
         setFromServer(true);
       }
     }).finally(() => setLoading(false));
     // Load all resources for beeline linking
-    resourceApi.getResources().then(({ resources }) => setAllResources(resources.map(mapResource)));
+    resourceApi.getResources().then(({ resources }) => setAllResources(resources.map(mapResourceApiRow)));
   }, []);
 
   // Apply initial beeline filter when provided from navigation
@@ -844,6 +776,13 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
       onFilterApplied?.();
     }
   }, [initialBeelineFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (initialFilters && Object.keys(initialFilters).length > 0) {
+      setFilters(f => ({ ...f, ...initialFilters }));
+      setShowFilterPanel(true);
+      onFilterApplied?.();
+    }
+  }, [initialFilters]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!showFilterPanel) return;
     const handleMouseDown = (e: MouseEvent) => {
@@ -858,10 +797,6 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     document.addEventListener('mousedown', handleMouseDown);
     return () => document.removeEventListener('mousedown', handleMouseDown);
   }, [showFilterPanel]);
-
-  const closeFilterOnEnter = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') setShowFilterPanel(false);
-  };
 
   return (
     <div style={{ background: '#f5f5f5', minHeight: '100vh', padding: '12px 24px' }}>
@@ -961,225 +896,67 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
                           <Tooltip title="Export Excel" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportExcel} disabled={!typeFilteredRequests.length} style={{ borderRadius: '6px', color: typeFilteredRequests.length ? '#52c41a' : undefined }} />
                           </Tooltip>
-                          <Dropdown trigger={['click']} menu={{ items: [
-                            ...(canEdit ? [{ key: 'add', label: <span style={{ fontSize: '11px' }}>Add New Request</span>, icon: <PlusOutlined style={{ fontSize: '11px' }} />, onClick: handleAddNew }] : []),
-                            { type: 'divider' as const },
-                            { key: 'dlTemplate', label: <span style={{ fontSize: '11px' }}>Download Template</span>, icon: <DownloadOutlined style={{ fontSize: '11px' }} />, onClick: downloadTemplate },
-                            ...(canEdit ? [{
-                              key: 'ulRequest',
-                              label: <span style={{ fontSize: '11px' }}>Upload Requests</span>,
-                              icon: <UploadOutlined style={{ fontSize: '11px' }} />,
-                              onClick: () => {
-                                const inp = document.createElement('input');
-                                inp.type = 'file'; inp.accept = '.xlsx,.xls';
-                                inp.onchange = (ev) => { const f = (ev.target as HTMLInputElement).files?.[0]; if (f) handleUpload(f); };
-                                inp.click();
-                              },
-                            }] : []),
-                            ...(canDelete && requests.length > 0 ? [
-                              { type: 'divider' as const },
-                              {
-                                key: 'deleteAll',
-                                label: <span style={{ fontSize: '11px' }}>Delete All Requests</span>,
-                                icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
-                                danger: true,
-                                onClick: () => Modal.confirm({
-                                  title: 'Delete all requests?',
-                                  content: 'This will permanently delete all request data from the database.',
-                                  okText: 'Yes, delete all',
-                                  cancelText: 'Cancel',
-                                  okButtonProps: { danger: true, size: 'small' },
-                                  onOk: handleClearAll,
-                                }),
-                              },
-                            ] : []),
-                            ...(canDelete ? [
-                              { type: 'divider' as const },
-                              {
-                                key: 'deleteAllAudit',
-                                label: <span style={{ fontSize: '11px' }}>Delete All Audit History</span>,
-                                icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
-                                danger: true,
-                                onClick: () => Modal.confirm({
-                                  title: 'Delete all request audit history?',
-                                  content: 'This will permanently remove all audit log entries for requests.',
-                                  okText: 'Yes, delete all', cancelText: 'Cancel',
-                                  okButtonProps: { danger: true, size: 'small' },
-                                  onOk: handleClearAllAudit,
-                                }),
-                              },
-                              {
-                                key: 'deleteAllComments',
-                                label: <span style={{ fontSize: '11px' }}>Delete All Comments</span>,
-                                icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
-                                danger: true,
-                                onClick: () => Modal.confirm({
-                                  title: 'Delete all request comments?',
-                                  content: 'This will permanently remove all comments across all request records.',
-                                  okText: 'Yes, delete all', cancelText: 'Cancel',
-                                  okButtonProps: { danger: true, size: 'small' },
-                                  onOk: handleClearAllComments,
-                                }),
-                              },
-                            ] : []),
-                          ]}}>
+                          <Dropdown
+                            trigger={['click']}
+                            menu={{
+                              items: buildClientRequestsToolbarMenuItems({
+                                canEdit,
+                                canDelete,
+                                hasRequests: requests.length > 0,
+                                onAddNew: handleAddNew,
+                                onDownloadTemplate: downloadTemplate,
+                                onUploadRequests: handleUploadRequestsPicker,
+                                onDeleteAllRequests: handleClearAll,
+                                onDeleteAllAudit: handleClearAllAudit,
+                                onDeleteAllComments: handleClearAllComments,
+                              }),
+                            }}
+                          >
                             <Button icon={<MoreOutlined />} size="small" style={{ borderRadius: '6px' }} />
                           </Dropdown>
                         </Space>
                       </Space>
 
                       {selectedRowKeys.length > 0 && (
-                        <div style={{ background: '#f0f2f5', padding: '12px 16px', borderRadius: '8px', marginBottom: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text>{selectedRowKeys.length} record(s) selected</Text>
-                          <Space>
-                            <Popover
-                              content={
-                                <div style={{ minWidth: '180px' }}>
-                                  {OVERALL_STATUS_OPTIONS.map(status => (
-                                    <div
-                                      key={status.value}
-                                      onClick={() => {
-                                       const updatedOn = formatDateToDDMMYYYY(new Date().toISOString());
-                                       const toUpdate = requests.filter(r => selectedRowKeys.includes(r.sno) && r.id);
-                                       toUpdate.forEach(r => requestApi.updateRequest(r.id!, {
-                                        // Send full existing record so PUT doesn't wipe other fields
-                                        beelineId: r.beelineId,
-                                        description: r.description,
-                                        raisedBy: r.raisedBy,
-                                        processingStatus: r.processingStatus,
-                                        accountAnchor: r.accountAnchor,
-                                        dateRaised: r.dateRaised,
-                                        requestType: r.requestType || '',
-                                        // Only this field changes
-                                        overallStatus: status.value,
-                                        updatedOn,
-                                        changedBy: currentUser?.username || 'system',
-                                      } as any));
-                                      setRequests(requests.map(r =>
-                                        selectedRowKeys.includes(r.sno)
-                                          ? { ...r, overallStatus: status.value, updatedOn }
-                                          : r
-                                      ));
-                                      setSelectedRowKeys([]);
-                                    }}
-                                      style={{
-                                        padding: '8px 12px',
-                                        cursor: 'pointer',
-                                        fontSize: '11px',
-                                        borderRadius: '4px',
-                                        transition: 'background 0.2s',
-                                      }}
-                                      onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
-                                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                    >
-                                      {status.label}
-                                    </div>
-                                  ))}
-                                </div>
-                              }
-                              trigger={['click']}
-                              placement="top"
-                            >
-                              <Button size="small" style={{ fontSize: '11px', color: '#262626' }}>Update Status</Button>
-                            </Popover>
-                            <Popover
-                              content={
-                                <div style={{ minWidth: '200px' }}>
-                                  {PROCESSING_STATUS_OPTIONS.map(status => (
-                                    <div
-                                      key={status.value}
-                                      onClick={() => {
-                                       const updatedOn = formatDateToDDMMYYYY(new Date().toISOString());
-                                       const toUpdate = requests.filter(r => selectedRowKeys.includes(r.sno) && r.id);
-                                       toUpdate.forEach(r => requestApi.updateRequest(r.id!, {
-                                        // Send full existing record so PUT doesn't wipe other fields
-                                        beelineId: r.beelineId,
-                                        description: r.description,
-                                        raisedBy: r.raisedBy,
-                                        overallStatus: r.overallStatus,
-                                        accountAnchor: r.accountAnchor,
-                                        dateRaised: r.dateRaised,
-                                        requestType: r.requestType || '',
-                                        // Only this field changes
-                                        processingStatus: status.value,
-                                        updatedOn,
-                                        changedBy: currentUser?.username || 'system',
-                                      } as any));
-                                      setRequests(requests.map(r =>
-                                        selectedRowKeys.includes(r.sno)
-                                          ? { ...r, processingStatus: status.value, updatedOn }
-                                          : r
-                                      ));
-                                      setSelectedRowKeys([]);
-                                    }}
-                                      style={{
-                                        padding: '8px 12px',
-                                        cursor: 'pointer',
-                                        fontSize: '11px',
-                                        borderRadius: '4px',
-                                        transition: 'background 0.2s',
-                                      }}
-                                      onMouseEnter={(e) => e.currentTarget.style.background = '#f5f5f5'}
-                                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                    >
-                                      {status.label}
-                                    </div>
-                                  ))}
-                                </div>
-                              }
-                              trigger={['click']}
-                              placement="top"
-                            >
-                              <Button size="small" style={{ fontSize: '11px', color: '#262626' }}>Update Processing Status</Button>
-                            </Popover>
-                            <Button size="small" style={{ fontSize: '11px', color: '#262626' }} onClick={handleBulkDelete} icon={<DeleteOutlined />}>Delete</Button>
-                            <Button type="text" size="small" icon={<CloseOutlined />} onClick={() => setSelectedRowKeys([])} />
-                          </Space>
-                        </div>
+                        <BulkSelectionActionsBar
+                          selectedCount={selectedRowKeys.length}
+                          overallStatusOptions={OVERALL_STATUS_OPTIONS}
+                          processingStatusOptions={PROCESSING_STATUS_OPTIONS}
+                          onSelectOverallStatus={(value) => applyBulkStatusUpdate('overallStatus', value)}
+                          onSelectProcessingStatus={(value) => applyBulkStatusUpdate('processingStatus', value)}
+                          onDelete={handleBulkDelete}
+                          onClearSelection={() => setSelectedRowKeys([])}
+                        />
                       )}
 
                       {viewMode === 'table' ? (
                         <div style={{ display: 'flex', gap: '12px' }}>
                           {showFilterPanel && (
-                            <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                                <Text strong style={{ fontSize: '12px' }}>Filters</Text>
-                                <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setFilters({})}>Clear all</Button>
-                              </div>
-                              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline ID</div>
-                                  <Input size="small" placeholder="Search..." value={filters.beelineId || ''} onChange={e => setFilters({ ...filters, beelineId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Account Anchor</div>
-                                  <Input size="small" placeholder="Search..." value={filters.accountAnchor || ''} onChange={e => setFilters({ ...filters, accountAnchor: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Overall Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.overallStatus || undefined} onChange={val => setFilters({ ...filters, overallStatus: val })} options={OVERALL_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Processing Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.processingStatus || undefined} onChange={val => setFilters({ ...filters, processingStatus: val })} options={PROCESSING_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                                 <div>
-                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Request Type</div>
-                                   <Select size="small" placeholder="All" allowClear value={filters.requestType || undefined} onChange={val => setFilters({ ...filters, requestType: val })} options={REQUEST_TYPE_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                 </div>
-                                 <div>
-                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline Status</div>
-                                   <Select size="small" placeholder="All" allowClear value={filters.isActive || undefined} onChange={val => setFilters({ ...filters, isActive: val })} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} style={{ width: '100%', fontSize: '11px' }} />
-                                 </div>
-                              </Space>
-                            </div>
+                            <ClientRequestsFilterPanel
+                              ref={filterPanelRef}
+                              filters={filters}
+                              setFilters={setFilters}
+                              overallStatusOptions={OVERALL_STATUS_OPTIONS}
+                              processingStatusOptions={PROCESSING_STATUS_OPTIONS}
+                              requestTypeOptions={REQUEST_TYPE_OPTIONS}
+                              ownerOptions={ownerOptions}
+                              beelineOptions={beelineOptions}
+                            />
                           )}
                           <div style={{ flex: 1, overflow: 'hidden' }}>
                             <div className="compact-table">
                               <Table<ClientRequest>
                                 dataSource={typeFilteredRequests}
                                 columns={displayColumns}
-                                pagination={{ pageSize: 15, showSizeChanger: false }}
+                                pagination={{
+                                  current: tablePage,
+                                  pageSize: tablePageSize,
+                                  showSizeChanger: false,
+                                  onChange: (page, pageSize) => {
+                                    setTablePage(page);
+                                    setTablePageSize(pageSize);
+                                  },
+                                }}
                                 scroll={{ x: 'max-content' }}
                                 size="small"
                                 rowSelection={{
@@ -1203,38 +980,16 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
                       ) : (
                         <div style={{ display: 'flex', gap: '12px' }}>
                           {showFilterPanel && (
-                            <div ref={filterPanelRef} style={{ width: '240px', flexShrink: 0, background: '#fafafa', borderRadius: '8px', padding: '16px', border: '1px solid #f0f0f0', alignSelf: 'flex-start' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                                <Text strong style={{ fontSize: '12px' }}>Filters</Text>
-                                <Button type="link" size="small" style={{ fontSize: '11px', padding: 0 }} onClick={() => setFilters({})}>Clear all</Button>
-                              </div>
-                              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline ID</div>
-                                  <Input size="small" placeholder="Search..." value={filters.beelineId || ''} onChange={e => setFilters({ ...filters, beelineId: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Account Anchor</div>
-                                  <Input size="small" placeholder="Search..." value={filters.accountAnchor || ''} onChange={e => setFilters({ ...filters, accountAnchor: e.target.value })} allowClear onKeyDown={closeFilterOnEnter} style={{ fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Overall Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.overallStatus || undefined} onChange={val => setFilters({ ...filters, overallStatus: val })} options={OVERALL_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Processing Status</div>
-                                  <Select size="small" placeholder="All" allowClear value={filters.processingStatus || undefined} onChange={val => setFilters({ ...filters, processingStatus: val })} options={PROCESSING_STATUS_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                </div>
-                                 <div>
-                                   <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Request Type</div>
-                                   <Select size="small" placeholder="All" allowClear value={filters.requestType || undefined} onChange={val => setFilters({ ...filters, requestType: val })} options={REQUEST_TYPE_OPTIONS} style={{ width: '100%', fontSize: '11px' }} />
-                                 </div>
-                                  <div>
-                                    <div style={{ fontSize: '11px', color: '#8c8c8c', marginBottom: '4px' }}>Beeline Status</div>
-                                    <Select size="small" placeholder="All" allowClear value={filters.isActive || undefined} onChange={val => setFilters({ ...filters, isActive: val })} options={[{ label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} style={{ width: '100%', fontSize: '11px' }} />
-                                  </div>
-                              </Space>
-                            </div>
+                            <ClientRequestsFilterPanel
+                              ref={filterPanelRef}
+                              filters={filters}
+                              setFilters={setFilters}
+                              overallStatusOptions={OVERALL_STATUS_OPTIONS}
+                              processingStatusOptions={PROCESSING_STATUS_OPTIONS}
+                              requestTypeOptions={REQUEST_TYPE_OPTIONS}
+                              ownerOptions={ownerOptions}
+                              beelineOptions={beelineOptions}
+                            />
                           )}
                           <div style={{ flex: 1 }}>
                             <Row gutter={[16, 16]}>
@@ -1276,35 +1031,15 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
                                       <Tooltip title="View"><Button type="text" size="small" icon={<EyeOutlined />} style={{ padding: 0, color: "#1890ff" }} onClick={e => { e.stopPropagation(); setViewDetailRecord(request); }} /></Tooltip>
                                      <Dropdown
                                         menu={{
-                                          items: [
-                                            canEdit ? {
-                                              key: "edit",
-                                              label: <span style={{ fontSize: '11px' }}>Edit</span>,
-                                              icon: <EditOutlined style={{ fontSize: '11px' }} />,
-                                              onClick: () => handleEdit(request),
-                                            } : null,
-                                            {
-                                              key: "linkResources",
-                                              label: <span style={{ fontSize: '11px' }}>Link Resources</span>,
-                                              icon: <LinkOutlined style={{ fontSize: '11px' }} />,
-                                              onClick: () => openLinkResourcesModal(request),
-                                            },
-                                            canEdit ? {
-                                              key: "toggleActive",
-                                              label: <span style={{ fontSize: '11px' }}>{request.isActive === false ? 'Mark Active' : 'Mark Inactive'}</span>,
-                                              icon: request.isActive === false
-                                                ? <CheckCircleOutlined style={{ fontSize: '11px', color: '#52c41a' }} />
-                                                : <StopOutlined style={{ fontSize: '11px', color: '#fa8c16' }} />,
-                                              onClick: () => handleToggleActive(request),
-                                            } : null,
-                                            canDelete ? {
-                                              key: "delete",
-                                              label: <span style={{ fontSize: '11px' }}>Delete</span>,
-                                              icon: <DeleteOutlined style={{ fontSize: '11px' }} />,
-                                              danger: true,
-                                              onClick: () => handleDelete(request),
-                                            } : null,
-                                          ].filter(Boolean) as any[],
+                                          items: buildClientRequestCardMenuItems({
+                                            request,
+                                            canEdit,
+                                            canDelete,
+                                            onEdit: handleEdit,
+                                            onLinkResources: openLinkResourcesModal,
+                                            onToggleActive: handleToggleActive,
+                                            onDelete: handleDelete,
+                                          }),
                                         }}
                                        trigger={["click"]}
                                      >
@@ -1338,7 +1073,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
                                 </Text>
                                 <div style={{ textAlign: 'right' }}>
                                   <Text style={{ fontSize: '10px', color: '#bfbfbf' }}>
-                                    Updated: {formatDateReadable(request.updatedOn) || '-'}
+                                    Updated: {formatDateTimeUtc(request.updatedOn) || '-'}
                                   </Text>
                                 </div>
                               </Card>
@@ -1455,6 +1190,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
           {viewDetailRecord && (
             <RequestDetailPanel
               request={viewDetailRecord}
+              expanded={panelExpanded}
               currentUser={currentUser?.username || currentUser?.name || 'Unknown'}
               processingStatusLabel={v => PROCESSING_STATUS_DISPLAY_MAP[v] || v}
               overallStatusLabel={v => OVERALL_STATUS_DISPLAY_MAP[v] || v}
@@ -1488,7 +1224,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
               { key: 'raisedBy', label: 'Raised By' },
               { key: 'processingStatus', label: 'Processing Status' },
               { key: 'overallStatus', label: 'Overall Status' },
-              { key: 'accountAnchor', label: 'Account Anchor' },
+              { key: 'accountAnchor', label: 'Owner' },
               { key: 'dateRaised', label: 'Date Raised' },
             ].map(({ key, label }) => (
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1515,7 +1251,7 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
             onFinish={handleSaveEdit}
           >
             <Form.Item name="beelineId" label="Beeline ID" rules={[{ required: true }]}>
-              <Input disabled={!!editingRequest} style={editingRequest ? { color: '#595959', background: '#f5f5f5' } : {}} />
+              <Input />
             </Form.Item>
             <Form.Item name="requestType" label="Request Type">
               <Select options={REQUEST_TYPE_OPTIONS} placeholder="Select request type" allowClear />
@@ -1526,8 +1262,8 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
             <Form.Item name="raisedBy" label="Raised By" rules={[{ required: true }]}>
               <Input />
             </Form.Item>
-            <Form.Item name="accountAnchor" label="Account Anchor">
-              <Input />
+            <Form.Item name="accountAnchor" label="Owner">
+              <Select options={ownerOptions} placeholder="Select owner" showSearch optionFilterProp="label" allowClear />
             </Form.Item>
             <Form.Item name="processingStatus" label="Processing Status">
               <Select options={PROCESSING_STATUS_OPTIONS} />
@@ -1635,13 +1371,3 @@ export default function RequestManagement({ initialBeelineFilter, onFilterApplie
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-

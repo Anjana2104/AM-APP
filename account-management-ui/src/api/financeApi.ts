@@ -196,26 +196,52 @@ export async function addBookingsBatch(
   return { ok: true, count: data.count };
 }
 
-export async function deleteBooking(projectId: number, bookingId: number): Promise<boolean> {
+export async function deleteBooking(projectId: number, bookingId: number, changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(`${BASE}/projects/${projectId}/bookings/${bookingId}`, { method: 'DELETE' });
+  const url = changedBy
+    ? `${BASE}/projects/${projectId}/bookings/${bookingId}?changedBy=${encodeURIComponent(changedBy)}`
+    : `${BASE}/projects/${projectId}/bookings/${bookingId}`;
+  const res = await fetch(url, { method: 'DELETE' });
   const data = await res.json();
   return data.ok === true;
 }
 
-export async function deleteAllProjectBookings(projectId: number): Promise<boolean> {
+export async function updateBooking(
+  projectId: number,
+  bookingId: number,
+  booking: { milestone_month: string; booking_month: string; amount: number; notes?: string; created_by?: string; booking_type?: 'fixed' | 'anticipated' },
+): Promise<{ ok: boolean; error?: string }> {
+  const online = await isServerAvailable();
+  if (!online) return { ok: false, error: 'Server unavailable' };
+  const res = await fetch(`${BASE}/projects/${projectId}/bookings/${bookingId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(booking),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data.error || 'Failed' };
+  return { ok: true };
+}
+
+export async function deleteAllProjectBookings(projectId: number, changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(`${BASE}/projects/${projectId}/bookings`, { method: 'DELETE' });
+  const url = changedBy
+    ? `${BASE}/projects/${projectId}/bookings?changedBy=${encodeURIComponent(changedBy)}`
+    : `${BASE}/projects/${projectId}/bookings`;
+  const res = await fetch(url, { method: 'DELETE' });
   const data = await res.json();
   return data.ok === true;
 }
 
-export async function deleteAllBookings(): Promise<boolean> {
+export async function deleteAllBookings(changedBy?: string): Promise<boolean> {
   const online = await isServerAvailable();
   if (!online) return false;
-  const res = await fetch(`${BASE}/bookings/all`, { method: 'DELETE' });
+  const url = changedBy
+    ? `${BASE}/bookings/all?changedBy=${encodeURIComponent(changedBy)}`
+    : `${BASE}/bookings/all`;
+  const res = await fetch(url, { method: 'DELETE' });
   const data = await res.json();
   return data.ok === true;
 }

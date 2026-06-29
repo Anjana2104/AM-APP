@@ -78,6 +78,28 @@ Text-based entity-relationship diagram for the Account Management (EAM) applicat
 
 ---
 
+## Stakeholders Domain
+
+```
+┌─────────────────────────────┐
+│   team_hierarchy_entries    │
+│─────────────────────────────│
+│ PK  id (TEXT)               │
+│     team_type               │  client | ra
+│     name                    │
+│     title                   │
+│     department              │
+│ FK? reporting_to (TEXT)     │  self-reference (logical)
+│     email                   │
+│     phone                   │
+│     responsibility          │
+│     sort_order              │
+│     created_at / updated_at │
+└─────────────────────────────┘
+```
+
+---
+
 ## User & Access Control Domain
 
 ```

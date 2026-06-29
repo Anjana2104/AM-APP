@@ -368,6 +368,9 @@ function CommentMiniCard({ comment, currentUser, onDelete }: {
   const tagLabel = comment.tag || 'General';
   const tagColor = COMMENT_TAG_COLORS[tagLabel] ?? 'default';
   const isOwn = currentUser && comment.author === currentUser;
+  const showStakeholderEscalationMeta =
+    comment.source_module === 'stakeholder_escalation' ||
+    (tagLabel === 'Escalations' && Boolean(comment.reported_by));
 
   return (
     <div style={{
@@ -384,7 +387,11 @@ function CommentMiniCard({ comment, currentUser, onDelete }: {
             {tagLabel && (
               <Tag bordered={false} color={tagColor} style={{ fontSize: 10, padding: '0 5px' }}>{tagLabel}</Tag>
             )}
-            <Text strong style={{ fontSize: 11 }}>{comment.author || '—'}</Text>
+            <Text strong style={{ fontSize: 11 }}>
+              {showStakeholderEscalationMeta
+                ? `By: ${comment.author || 'Admin'}${comment.reported_by ? ` | Reported by: ${comment.reported_by}` : ''}`
+                : (comment.author || '—')}
+            </Text>
             <Text type="secondary" style={{ fontSize: 10 }}>{fmtRelative(comment.created_at)}</Text>
           </div>
           {isOwn && onDelete && (
@@ -601,7 +608,7 @@ function SectionTab({ section, entries, linkedComments, loading, currentUser, re
 
 // ── Main Page ──────────────────────────────────────────────────────────────
 
-interface ResourceInsightsProps {
+interface ResourceIntelligenceProps {
   resources?: ResourceRow[];
   onNavigate?: (page: string, raId?: string) => void;
   onNavigateWithFilter?: (type: string, value: string) => void;
@@ -609,7 +616,7 @@ interface ResourceInsightsProps {
   onNavigateToProcess?: (sowName: string) => void;
 }
 
-export default function ResourceInsights({ resources: propResources = [], onNavigate, onNavigateWithFilter, onNavigateToRequest, onNavigateToProcess }: ResourceInsightsProps) {
+export default function ResourceIntelligence({ resources: propResources = [], onNavigate, onNavigateWithFilter, onNavigateToRequest, onNavigateToProcess }: ResourceIntelligenceProps) {
   const { currentUser } = useAuth();
   const defaultAuthor = currentUser?.username || '';
 
@@ -779,6 +786,7 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
       const name = (selectedResource.empName || selectedResource.raId || 'resource').replace(/[^a-zA-Z0-9]/g, '_');
       pdf.save(`${name}_Details.pdf`);
     } catch (e) {
+      console.error('[ResourceIntelligence] PDF export failed', e);
       message.error('PDF export failed');
     } finally {
       setExportingPdf(false);
@@ -797,7 +805,10 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
     try {
       const activeReqs = await requestApi.getActiveRequests();
       setBeelineRequestOptions(activeReqs.filter(r => r.beelineId).map(r => ({ value: r.beelineId, label: r.beelineId })));
-    } catch { /* ignore */ }
+    } catch (error) {
+      console.error('[ResourceIntelligence] Failed to fetch active requests for Beeline linking', error);
+      message.warning('Could not load active request list. You can still enter Beeline ID manually.');
+    }
   };
 
   const saveBeelineLink = async () => {
@@ -1405,7 +1416,11 @@ export default function ResourceInsights({ resources: propResources = [], onNavi
                         <Tag color="blue" style={{ fontSize: 10, margin: '2px 0 0', padding: '0 4px', lineHeight: '16px', flexShrink: 0 }}>{c.tag}</Tag>
                         <div>
                           <Text style={{ fontSize: 11 }}>{c.body.slice(0, 100)}{c.body.length > 100 ? '…' : ''}</Text>
-                          <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>by {c.author}</Text>
+                          <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
+                            {(c.source_module === 'stakeholder_escalation' || (c.tag === 'Escalations' && Boolean(c.reported_by)))
+                              ? `By: ${c.author || 'Admin'}${c.reported_by ? ` | Reported by: ${c.reported_by}` : ''}`
+                              : `by ${c.author}`}
+                          </Text>
                         </div>
                       </div>
                     ))}

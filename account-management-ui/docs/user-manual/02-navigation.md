@@ -22,12 +22,12 @@ The EAM application has a consistent layout across all modules. Understanding th
 │          │                                                        │
 │  📊 Finance          Active module renders here.                 │
 │  🔄 Process          Tabs, tables, panels, charts.               │
+│  👥 Stakeholders                                                  │
 │  📋 Requests                                                      │
 │  👥 Resource Hub                                                  │
 │  💡 Intelligence                                                  │
 │  ⚙️  Config                                                       │
 │  👤 Users                                                         │
-│  📖 Code Guide                                                    │
 │          │                                                        │
 └──────────┴───────────────────────────────────────────────────────┘
 ```
@@ -47,7 +47,8 @@ The left sidebar lists all available modules. Click any icon or label to switch 
 | 🏠 | Account Summary | High-level account dashboard |
 | 📊 | Finance Management | Revenue and invoice tracking |
 | 🔄 | Internal Process | SOW and resource management |
-| 📋 | Client Requests | Beeline staffing requests |
+| 👥 | Stakeholders | Stakeholder relationship network and profile views |
+| 📋 | Requests | Beeline staffing requests |
 | 👥 | Resource Hub | Master resource list |
 | 💡 | Resource Intelligence | Per-resource analytics |
 | 🗺️ | Engagement Mapping | Resource engagement timeline, Forecasting |
@@ -61,7 +62,7 @@ Clicking the ⚙️ gear icon in the sidebar opens a popover with:
 | **User Access Control** | Users, roles, permissions, user groups |
 | **App Settings** | Dropdown values, notification triggers, templates, app values |
 | **User Settings** | Column visibility preferences, notification snooze rules |
-| **Knowledge Base** | Project code reference and guides |
+| **Information** | Client rate card and client process |
 
 > **Note:** Items you do not have permission to access are hidden from the sidebar automatically.
 
@@ -80,7 +81,7 @@ The top header contains:
 ## Main Content Area
 
 - Each module renders its own tabs, tables, and controls in this area.
-- Tabs within a module (e.g., Overview, Process, Insights) are shown at the top of the content area.
+- Tabs within a module (e.g., Overview, Process, Insights with date-range analytics filters) are shown at the top of the content area.
 - A **right-side drawer/panel** opens when you click on a record row — it shows details without leaving the list view.
 
 ---

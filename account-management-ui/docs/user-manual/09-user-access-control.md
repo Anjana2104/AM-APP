@@ -159,10 +159,14 @@ Permissions are page-level, each with `view`, `edit`, and `delete` granularity.
 | `executive_summary` | Finance Summary | Finance |
 | `executive_revenue` | SOW Details | Finance |
 | `executive_invoicing` | Invoicing Details | Finance |
+| `information_teamhierarchy` | Stakeholders | Clients |
 | `clientmgmt_requests` | Client Requests | Clients |
-| `resources_info` | Resource Hub | Resources |
-| `engagement_mapping` | Engagement Mapping | Resources |
 | `clientmgmt_connects` | Internal Process | Process |
+| `resources_info` | Resource Hub | Resources |
+| `resources_insights` | Resource Intelligence | Resources |
+| `resources_utilization` | Engagement Mapping | Resources |
+| `information_ratecard` | Client Rate Card | Information |
+| `information_process` | Client Process | Information |
 | `configuration` | App Settings | Settings |
 | `user_access_control` | User Access Control | Settings |
 | `user_settings` | User Settings | Settings |

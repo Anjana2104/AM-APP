@@ -51,6 +51,7 @@ interface LinkedResource {
 
 interface Props {
   request: ClientRequest;
+  expanded?: boolean;
   currentUser?: string;
   processingStatusLabel?: (v: string) => string;
   overallStatusLabel?: (v: string) => string;
@@ -95,22 +96,29 @@ function formatLastUpdated(value: string | undefined): string {
   // Handle DD/MM/YYYY stored format (no time component)
   const ddmmyyyy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(value);
   if (ddmmyyyy) {
-    try {
-      const d = new Date(`${ddmmyyyy[3]}-${ddmmyyyy[2].padStart(2,'0')}-${ddmmyyyy[1].padStart(2,'0')}`);
-      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    } catch { return value; }
-  }
-  try {
-    const d = new Date(value);
+    const d = new Date(Date.UTC(
+      Number(ddmmyyyy[3]),
+      Number(ddmmyyyy[2]) - 1,
+      Number(ddmmyyyy[1]),
+      0,
+      0,
+      0
+    ));
     if (isNaN(d.getTime())) return value;
-    const datePart = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-    const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    return `${datePart} : ${timePart}`;
-  } catch { return value; }
+    const datePart = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+    const timePart = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+    return `${datePart}, ${timePart} UTC`;
+  }
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return value;
+  const datePart = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  const timePart = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
+  return `${datePart}, ${timePart} UTC`;
 }
 
 export default function RequestDetailPanel({
   request, currentUser,
+  expanded,
   processingStatusLabel, overallStatusLabel, overallStatusColor, overallStatusBg,
   requestTypeLabel, requestTypeColor,
   canEdit, canDelete, onEdit, onDelete, onToggleActive, onLinkResources,
@@ -245,7 +253,7 @@ export default function RequestDetailPanel({
 
   const infoFields: Array<[string, string]> = [
     ['Raised By',        request.raisedBy],
-    ['Account Anchor',   request.accountAnchor],
+    ['Owner',            request.accountAnchor],
     ['Processing Status', procLabel],
     ['Overall Status',   ovLabel],
     ['Date Raised',      formatLastUpdated(request.dateRaised)],
@@ -474,6 +482,43 @@ export default function RequestDetailPanel({
   );
 
   // ── Main layout ───────────────────────────────────────────────────────────
+  if (expanded) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+        {headerCard}
+        {infoGrid}
+        <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
+            <div style={{ background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '4px 12px 12px', minHeight: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <MessageOutlined style={{ fontSize: 12 }} />
+                <span style={{ fontSize: 12, fontWeight: 600 }}>Comments</span>
+                {comments.length > 0 && <Badge count={comments.length} style={{ background: '#1890ff', fontSize: 9 }} />}
+              </div>
+              {commentsPanel}
+            </div>
+            <div style={{ background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '4px 12px 12px', minHeight: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                <TeamOutlined style={{ fontSize: 12 }} />
+                <span style={{ fontSize: 12, fontWeight: 600 }}>Linked Resources</span>
+                {linkedResources.length > 0 && <Badge count={linkedResources.length} style={{ background: '#52c41a', fontSize: 9 }} />}
+              </div>
+              {linkedPanel}
+            </div>
+          </div>
+          <div style={{ width: 430, maxWidth: '42%', minWidth: 350, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '4px 12px 12px', minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <ClockCircleOutlined style={{ fontSize: 12 }} />
+              <span style={{ fontSize: 12, fontWeight: 600 }}>Audit Trail</span>
+              {auditLog.length > 0 && <Badge count={auditLog.length} style={{ background: '#722ed1', fontSize: 9 }} />}
+            </div>
+            {auditPanel}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {/* Header */}
@@ -528,4 +573,3 @@ export default function RequestDetailPanel({
     </div>
   );
 }
-

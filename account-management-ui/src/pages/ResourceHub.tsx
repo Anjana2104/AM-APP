@@ -8,7 +8,6 @@
  */
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
-  Upload,
   Table,
   Typography,
   Space,
@@ -50,7 +49,6 @@ import {
   BarChartOutlined,
   CloudServerOutlined,
   SaveOutlined,
-  InboxOutlined,
   FileTextOutlined,
   FileExcelOutlined,
   ExpandAltOutlined,
@@ -69,14 +67,18 @@ import { useUserPreferences } from '../context/UserPreferencesContext';
 import ResourceDetailPanel from '../components/ResourceDetailPanel';
 import ResourceOverviewCharts from '../components/ResourceOverviewCharts';
 import SharedResourceFilterPanel from '../components/SharedResourceFilterPanel';
+import ResourceResumesTab from './resource/ResourceResumesTab';
+import { getMissingRequiredHeaders, processResourceUploadWorksheet, toBulkSavePayload } from './resource/resourceUploadUtils';
+import { mapResourceApiRowToResourceRow } from './resource/resourceRowMappers';
 import { AllocPctTag } from '../utils/allocUtils';
+import { clearModuleArtifact } from '../utils/moduleCleanupApi';
+import { buildStyledWorksheetFromAoa, getCurrentDateStamp } from '../utils/styledExcelExport';
+import { writeJsonSheetFile } from '../utils/xlsxExport';
 
 const { Title, Text } = Typography;
 
 export type { ResourceRow } from '../types/resource';
 import type { ResourceRow } from '../types/resource';
-
-type ExcelRow = Record<string, string | undefined>;
 
 type FilterState = {
   sno: string;
@@ -131,180 +133,7 @@ const COLUMN_LABELS: Record<string, string> = {
   skills: 'Skills',
 };
 
-// ─── Helper ──────────────────────────────────────────────────────────────────
-function downloadFileFromBlob(file: File) {
-  const url = URL.createObjectURL(file);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = file.name;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-/**
- * Normalise any date value coming from an Excel cell to "YYYY-MM-DD".
- * Excel stores dates as serial numbers (days since 1899-12-30).
- * With cellDates:true the library gives us JS Date objects, but
- * some cells (especially text-formatted ones) still arrive as strings.
- */
-// normalizeExcelDate: converts any Excel cell value to YYYY-MM-DD string.
-// We read with { type: 'binary' } (no cellDates) so date cells arrive as
-// integer serials (e.g. 46174 = June 1 2026). Using Math.round + UTC epoch
-// 1899-12-30 is the XLSX standard and correctly maps serials to calendar dates
-// without any timezone distortion.
-function normalizeExcelDate(raw: unknown): string {
-  if (!raw && raw !== 0) return '';
-  // JS Date object (future-proof) — use UTC methods since we control creation
-  if (raw instanceof Date) {
-    if (isNaN(raw.getTime())) return '';
-    const y = raw.getUTCFullYear();
-    const m = String(raw.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(raw.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }
-  const s = String(raw).trim();
-  if (!s) return '';
-  // Numeric serial (primary path with no cellDates) — Excel epoch 1899-12-30 UTC
-  // Math.round handles any fractional part from time-of-day in the serial.
-  const serial = Number(s);
-  if (!isNaN(serial) && serial > 1000 && !/[-/]/.test(s)) {
-    const d = new Date(Date.UTC(1899, 11, 30) + Math.round(serial) * 86400000);
-    const y = d.getUTCFullYear();
-    const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const dy = String(d.getUTCDate()).padStart(2, '0');
-    return `${y}-${mo}-${dy}`;
-  }
-  // Already a date string — parse as UTC to avoid local offset surprises
-  const asUtc = new Date(`${s.replace(/\//g, '-')}T00:00:00Z`);
-  if (!isNaN(asUtc.getTime())) {
-    const y = asUtc.getUTCFullYear();
-    const mo = String(asUtc.getUTCMonth() + 1).padStart(2, '0');
-    const dy = String(asUtc.getUTCDate()).padStart(2, '0');
-    return `${y}-${mo}-${dy}`;
-  }
-  return s;
-}
-
-function todayStr() {
-  return new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-}
-
-// ─── Resumes Tab ─────────────────────────────────────────────────────────────
-function ResumesTab() {
-  const { getAppValue } = useConfig();
-  const { hasPermission, currentUser } = useAuth();
-  const spUrl = getAppValue('RESUME_STORAGE_URL') || '';
-  const [resumeList, setResumeList] = useState<{ key: string; file: File; uploadDate: string }[]>([]);
-
-  const downloadTemplate = () => {
-    // Empty template with just headers
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['Name', 'Employee ID', 'Role', 'Skills', 'Total Experience', 'Email'],
-    ]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Resume Template');
-    XLSX.writeFile(wb, 'Resume_Template.xlsx');
-  };
-
-  const handleFile = (file: File) => {
-    setResumeList(prev => [...prev, { key: `res_${Date.now()}`, file, uploadDate: todayStr() }]);
-    if (spUrl) {
-      message.success(
-        <span><strong>{file.name}</strong> added. Use <em>Save to SP ↗</em> to store in SharePoint.</span>,
-        5,
-      );
-    } else {
-      message.success(`${file.name} uploaded`);
-    }
-    return false;
-  };
-
-  const handleDelete = (key: string) => {
-    // Permission guard at function level
-    if (!canDeleteResume) {
-      message.error('You do not have permission to remove resumes.');
-      return;
-    }
-    setResumeList(prev => prev.filter(r => r.key !== key));
-    message.success('Resume removed');
-  };
-
-  return (
-    <div style={{ padding: '16px 0' }}>
-      {/* SP banner */}
-      {spUrl && (
-        <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '10px 14px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, fontSize: '12px', color: '#1d3461' }}>
-          <span style={{ flex: 1 }}>📁 Resumes should also be saved to the configured SharePoint folder.</span>
-          <a href={spUrl} target="_blank" rel="noopener noreferrer" style={{ fontWeight: 600, color: '#1890ff', whiteSpace: 'nowrap' }}>Open SharePoint Folder ↗</a>
-        </div>
-      )}
-      {!spUrl && (
-        <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 14px', marginBottom: 16, fontSize: '12px', color: '#874d00' }}>
-          💡 Configure the <strong>RESUME_STORAGE_URL</strong> in App Configuration to link to your SharePoint folder for centralized resume storage.
-        </div>
-      )}
-
-      {/* Template download */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-        <Button icon={<DownloadOutlined />} size="small" onClick={downloadTemplate} style={{ fontSize: '11px', borderRadius: 6 }}>
-          Download Template
-        </Button>
-      </div>
-
-      {/* Upload dragger */}
-      <Upload.Dragger multiple beforeUpload={handleFile} showUploadList={false} style={{ borderRadius: 8, marginBottom: 20 }}>
-        <p className="ant-upload-drag-icon">
-          <InboxOutlined style={{ fontSize: 36, color: '#722ED1' }} />
-        </p>
-        <p style={{ fontSize: '13px', fontWeight: 600, margin: '8px 0 4px' }}>Click or drag resume files to upload</p>
-        <p style={{ fontSize: '11px', color: '#8c8c8c', margin: 0 }}>
-          Supports PDF, Word, and all file types. Store centrally in the configured SharePoint folder.
-        </p>
-      </Upload.Dragger>
-
-      {/* List */}
-      {resumeList.length === 0 ? (
-        <div style={{ background: '#fafafa', border: '1px dashed #d9d9d9', borderRadius: 8, padding: '40px 0', textAlign: 'center' }}>
-          <FileTextOutlined style={{ fontSize: 28, color: '#d9d9d9', marginBottom: 10, display: 'block' }} />
-          <Text type="secondary" style={{ fontSize: '12px' }}>No resumes uploaded yet in this session.</Text>
-        </div>
-      ) : (
-        <div>
-          <Text strong style={{ fontSize: '12px', display: 'block', marginBottom: 10 }}>
-            Uploaded Resumes ({resumeList.length})
-          </Text>
-          {resumeList.map(({ key, file, uploadDate }) => (
-            <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 12, background: '#fff', borderRadius: 8, border: '1px solid #f0f0f0', borderLeft: '3px solid #722ED1', padding: '10px 14px', marginBottom: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-              <FileTextOutlined style={{ color: '#722ED1', fontSize: 20, flexShrink: 0 }} />
-              <div style={{ flex: 1, overflow: 'hidden' }}>
-                <div style={{ fontSize: '12px', fontWeight: 600, color: '#262626', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.name}</div>
-                <div style={{ fontSize: '11px', color: '#8c8c8c', marginTop: 2 }}>Uploaded: {uploadDate} &nbsp;·&nbsp; {(file.size / 1024).toFixed(1)} KB</div>
-              </div>
-              {spUrl && (
-                <Tooltip title="Downloads locally and opens SharePoint — drag the file into the SP folder" overlayInnerStyle={{ fontSize: '11px', maxWidth: 260 }}>
-                  <Button size="small" style={{ borderRadius: 6, fontSize: '10px', borderColor: '#722ED1', color: '#722ED1' }}
-                    onClick={() => { downloadFileFromBlob(file); window.open(spUrl, '_blank', 'noopener,noreferrer'); }}>
-                    Save to SP ↗
-                  </Button>
-                </Tooltip>
-              )}
-              <Tooltip title="Download" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button icon={<DownloadOutlined />} size="small" onClick={() => downloadFileFromBlob(file)} style={{ borderRadius: 6 }} />
-              </Tooltip>
-              {canDeleteResume && (
-              <Tooltip title="Remove" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button icon={<DeleteOutlined />} size="small" danger onClick={() => handleDelete(key)} style={{ borderRadius: 6 }} />
-              </Tooltip>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void; initialRoleFilter?: string; initialRaIdFilter?: string; initialFilterType?: string; initialFilterValue?: string; onFilterApplied?: () => void; onNavigateToRequest?: (beelineId: string) => void; onNavigateToInsights?: () => void; onNavigateToProcess?: (sowName: string) => void }> = ({ onResourcesChange, initialRoleFilter, initialRaIdFilter, initialFilterType, initialFilterValue, onFilterApplied, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }) => {
+const ResourceHub: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) => void; initialRoleFilter?: string; initialRaIdFilter?: string; initialFilterType?: string; initialFilterValue?: string; onFilterApplied?: () => void; onNavigateToRequest?: (beelineId: string) => void; onNavigateToInsights?: () => void; onNavigateToProcess?: (sowName: string) => void }> = ({ onResourcesChange, initialRoleFilter, initialRaIdFilter, initialFilterType, initialFilterValue, onFilterApplied, onNavigateToRequest, onNavigateToInsights, onNavigateToProcess }) => {
   const { hasPermission, currentUser } = useAuth();
   const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
   const canEdit = hasPermission('resources_info', 'edit');
@@ -321,28 +150,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     setLoading(true);
     resourceApi.getResources().then(({ resources: apiRows, fromServer: online }) => {
       if (online) {
-        const mapped: ResourceRow[] = apiRows.map((r, i) => ({
-          key: String((r as any).ra_id || r.raId || i),
-          id: (r as any).id,
-          isActive: Number((r as any).is_active ?? (r as any).isActive ?? 1) !== 0,
-          sno: String(r.sno || i + 1),
-          raId: String((r as any).ra_id || r.raId || ''),
-          empName: String((r as any).emp_name || r.empName || ''),
-          emailId: String((r as any).email_id || r.emailId || ''),
-          piwRole: String((r as any).piw_role || r.piwRole || ''),
-          roleOrDomain: String((r as any).role_or_domain || r.roleOrDomain || ''),
-          previousWorkex: String((r as any).previous_workex || r.previousWorkex || ''),
-          doj: String((r as any).doj || r.doj || ''),
-          totalWorkex: String((r as any).total_workex || r.totalWorkex || ''),
-          skills: String((r as any).skills || r.skills || ''),
-          engagement: String((r as any).engagement || r.engagement || ''),
-          allocationStatus: String((r as any).allocation_status ?? r.allocationStatus ?? ''),
-          allocationPercentage: (r as any).allocation_percentage != null ? Number((r as any).allocation_percentage) : (r.allocationPercentage != null ? Number(r.allocationPercentage) : null),
-          beelineId: String((r as any).beeline_id || (r as any).beelineId || ''),
-          engagementStartDate: String((r as any).engagement_start_date || r.engagementStartDate || ''),
-          engagementEndDate: String((r as any).engagement_end_date || r.engagementEndDate || ''),
-          sowName: String((r as any).sow_name || r.sowName || ''),
-        }));
+        const mapped: ResourceRow[] = apiRows.map((r, i) => mapResourceApiRowToResourceRow(r, i));
         setResources(mapped);
         onResourcesChange?.(mapped);
         setFromServer(true);
@@ -520,10 +328,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
 
         // ── Template validation ──────────────────────────────────────────
-        // Read raw header row (first row of the sheet)
-        const headerRow: string[] = XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[] || [];
-        const uploadedHeaders = headerRow.map((h: string) => String(h || '').trim());
-        const missingHeaders = REQUIRED_UPLOAD_HEADERS.filter(h => !uploadedHeaders.includes(h));
+        const missingHeaders = getMissingRequiredHeaders(worksheet, REQUIRED_UPLOAD_HEADERS);
         if (missingHeaders.length > 0) {
           Modal.error({
             title: 'Invalid Template',
@@ -544,136 +349,12 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         }
         // ────────────────────────────────────────────────────────────────
 
-        const jsonData: ExcelRow[] = XLSX.utils.sheet_to_json(worksheet);
-        if (!jsonData.length) { message.error('No data found in file'); return; }
-
-        const totalRows = jsonData.length;
-        const skippedRows: { rowNum: number; reason: string; detail?: string }[] = [];
-
-        // First pass: detect duplicates within the file itself
-        const raIdCountInFile = new Map<string, number[]>();
-        jsonData.forEach((row, idx) => {
-          const raId = String(row['RA ID'] || row['Ra ID'] || '').trim().toLowerCase();
-          if (raId) {
-            const arr = raIdCountInFile.get(raId) || [];
-            arr.push(idx + 2);
-            raIdCountInFile.set(raId, arr);
-          }
-        });
-
-        const uploaded: ResourceRow[] = [];
-        const seenRaIds = new Set<string>();
-        jsonData.forEach((row, idx) => {
-          const rowNum = idx + 2; // +2: 1-based + header row
-          const raId = String(row['RA ID'] || row['Ra ID'] || '').trim();
-          const empName = String(row['Employee Name'] || row['Emp Name'] || '').trim();
-          const totalWorkexRaw = String(row['Total Workex'] || row['Total Experience'] || '').trim();
-
-          if (!raId) {
-            skippedRows.push({ rowNum, reason: 'Missing RA ID', detail: empName ? `Employee: ${empName}` : undefined });
-            return;
-          }
-          // Duplicate RA ID within the file
-          if (seenRaIds.has(raId.toLowerCase())) {
-            const dupeRows = raIdCountInFile.get(raId.toLowerCase()) || [];
-            skippedRows.push({ rowNum, reason: 'Duplicate RA ID in file', detail: `RA ID: ${raId} — also appears at row(s): ${dupeRows.filter(r => r !== rowNum).join(', ')}` });
-            return;
-          }
-          seenRaIds.add(raId.toLowerCase());
-          // Validate Total Workex
-          if (totalWorkexRaw) {
-            const parsed = parseFloat(totalWorkexRaw.replace(/[^\d.-]/g, ''));
-            if (!isNaN(parsed) && parsed > 70) {
-              skippedRows.push({ rowNum, reason: `Invalid Total Workex (${parsed} years > 70 years max)`, detail: `RA ID: ${raId}, Employee: ${empName}` });
-              return;
-            }
-          }
-
-          uploaded.push({
-            key: String(raId),
-            sno: String(row['S.NO'] || idx + 1),
-            raId,
-            empName,
-            emailId: String(row['Email'] || row['Email Id'] || row['Email ID'] || '').trim(),
-            piwRole: String(row['PIW Role'] || row['Role'] || '').trim(),
-            roleOrDomain: String(row['Role/Domain'] || row['Domain'] || '').trim(),
-            previousWorkex: String(row['Previous Workex'] || row['Prev Workex'] || '').trim(),
-            doj: normalizeExcelDate(row['DOJ'] ?? row['Date of Joining']),
-            totalWorkex: totalWorkexRaw,
-            skills: String(row['Skills'] || '').trim(),
-            engagement: String(row['Current Engagement'] || row['Engagement'] || '').trim(),
-            engagementStartDate: normalizeExcelDate(row['Engagement Start Date'] ?? row['Eng Start Date']),
-            engagementEndDate: normalizeExcelDate(row['Engagement End Date'] ?? row['Eng End Date']),
-            allocationPercentage: (() => {
-              const raw = String(row['Allocation %'] || row['Allocation Percentage'] || '').trim().replace('%', '');
-              if (!raw) return null;
-              const n = parseFloat(raw);
-              return isNaN(n) ? null : Math.min(200, Math.max(0, n));
-            })(),
-            allocationStatus: (() => {
-              const eng = String(row['Current Engagement'] || row['Engagement'] || '').trim();
-              if (eng.toLowerCase() === 'bench') return 'Available';
-              const explicitStatus = String(row['Allocation Status'] || '').trim();
-              if (explicitStatus) return explicitStatus;
-              if (eng) return 'Joined';
-              return 'Available';
-            })(),
-          });
-        });
-
         // Build merged list using current resources snapshot (read from state via functional update)
         const currentResources = await new Promise<ResourceRow[]>(resolve => {
           setResources(prev => { resolve(prev); return prev; });
         });
-
-        const existingMap = new Map(currentResources.map(r => [r.raId.toLowerCase(), r]));
-        let newCount = 0, updCount = 0;
-        uploaded.forEach(u => {
-          const key = u.raId.toLowerCase();
-          if (existingMap.has(key)) {
-            // Existing RA ID → overwrite with all non-empty upload values; skills = merge unique
-            const existing = existingMap.get(key)!;
-            const patch: Partial<ResourceRow> = {};
-            if (u.empName) patch.empName = u.empName;
-            if (u.emailId) patch.emailId = u.emailId;
-            if (u.piwRole) patch.piwRole = u.piwRole;
-            if (u.roleOrDomain) patch.roleOrDomain = u.roleOrDomain;
-            if (u.previousWorkex) patch.previousWorkex = u.previousWorkex;
-            if (u.doj) patch.doj = u.doj;
-            if (u.totalWorkex) patch.totalWorkex = u.totalWorkex;
-            if (u.engagement !== undefined && u.engagement !== '') patch.engagement = u.engagement;
-            // Engagement dates — overwrite if provided
-            if (u.engagementStartDate) patch.engagementStartDate = u.engagementStartDate;
-            if (u.engagementEndDate) patch.engagementEndDate = u.engagementEndDate;
-            // Allocation % — overwrite if provided
-            if (u.allocationPercentage != null) patch.allocationPercentage = u.allocationPercentage;
-            // Allocation Status priority:
-            // 1. Bench engagement → Available
-            // 2. Explicit status in upload → overwrite
-            // 3. Nothing → preserve existing
-            if (u.engagement.toLowerCase() === 'bench') {
-              patch.allocationStatus = 'Available';
-            } else if (u.allocationStatus && u.allocationStatus !== 'Available') {
-              patch.allocationStatus = u.allocationStatus;
-            } else if (u.allocationStatus === 'Available' && u.engagement.toLowerCase() === 'bench') {
-              patch.allocationStatus = 'Available';
-            }
-            if (u.skills) {
-              const existingSkills = existing.skills
-                ? existing.skills.split(',').map((s: string) => s.trim()).filter(Boolean)
-                : [];
-              const toAdd = u.skills.split(',').map((s: string) => s.trim()).filter(Boolean);
-              patch.skills = Array.from(new Set([...existingSkills, ...toAdd])).join(', ');
-            }
-            existingMap.set(key, { ...existing, ...patch });
-            updCount++;
-          } else {
-            // New RA ID → add with all available fields
-            existingMap.set(key, u);
-            newCount++;
-          }
-        });
-        const mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: String(i + 1) }));
+        const uploadResult = processResourceUploadWorksheet(worksheet, currentResources);
+        const { totalRows, uploadedCount, newCount, updCount, skippedRows, mergedRows } = uploadResult;
 
         // 1. Update UI state
         setResources(mergedRows);
@@ -683,29 +364,22 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         const loadingKey = message.loading('Saving to database...', 0);
         let serverOk = false;
         try {
-          const result = await resourceApi.bulkSave(mergedRows.map(r => ({
-            raId: r.raId, sno: Number(r.sno), empName: r.empName, emailId: r.emailId,
-            piwRole: r.piwRole, roleOrDomain: r.roleOrDomain, previousWorkex: r.previousWorkex,
-            doj: r.doj, totalWorkex: r.totalWorkex, engagement: r.engagement || '', skills: r.skills,
-            allocationStatus: r.allocationStatus || '',
-            engagementStartDate: r.engagementStartDate || '',
-            engagementEndDate: r.engagementEndDate || '',
-            allocationPercentage: r.allocationPercentage != null ? r.allocationPercentage : null,
-          })), currentUser?.username || 'system');
+          const result = await resourceApi.bulkSave(toBulkSavePayload(mergedRows), currentUser?.username || 'system');
           (loadingKey as any)();
           serverOk = !!result.ok;
           if (!result.ok) {
             message.warning(`Loaded locally — server offline, changes not persisted`);
           }
-        } catch {
+        } catch (error) {
           (loadingKey as any)();
+          console.error('[ResourceHub] Failed to save uploaded resources to server', error);
           message.warning(`Loaded locally (server unreachable). Re-upload when server is available.`);
         }
 
         // 3. Show result summary (with skipped rows if any)
         if (skippedRows.length > 0) {
           Modal.warning({
-            title: `Upload Result: ${uploaded.length} of ${totalRows} rows processed`,
+            title: `Upload Result: ${uploadedCount} of ${totalRows} rows processed`,
             width: 560,
             content: (
               <div>
@@ -794,17 +468,13 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
         },
       ];
 
-      const worksheet = XLSX.utils.json_to_sheet(template);
-      worksheet['!cols'] = [
-        { wch: 8 }, { wch: 12 }, { wch: 20 }, { wch: 28 },
-        { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 14 },
-        { wch: 14 }, { wch: 28 }, { wch: 18 }, { wch: 18 },
-        { wch: 18 }, { wch: 12 }, { wch: 36 }, { wch: 14 },
-      ];
-
-      const workbook = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Resources');
-      XLSX.writeFile(workbook, 'Resource_Template.xlsx');
+      writeJsonSheetFile(
+        XLSX,
+        template,
+        'Resources',
+        'Resource_Template.xlsx',
+        { columnWidths: [8, 12, 20, 28, 18, 18, 16, 14, 14, 28, 18, 18, 18, 12, 36, 14] },
+      );
       message.success('Template downloaded successfully');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Download error';
@@ -1127,19 +797,21 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   };
 
   const handleClearAllAudit = async () => {
-    try {
-      const res = await fetch('http://localhost:3001/api/resources/all-audit', { method: 'DELETE' });
-      if (!res.ok) throw new Error();
+    const ok = await clearModuleArtifact('resources', 'audit', 'ResourceHub');
+    if (ok) {
       message.success('All resource audit history deleted');
-    } catch { message.error('Failed to delete audit history'); }
+    } else {
+      message.error('Failed to delete audit history');
+    }
   };
 
   const handleClearAllComments = async () => {
-    try {
-      const res = await fetch('http://localhost:3001/api/resources/all-comments', { method: 'DELETE' });
-      if (!res.ok) throw new Error();
+    const ok = await clearModuleArtifact('resources', 'comments', 'ResourceHub');
+    if (ok) {
       message.success('All resource comments deleted');
-    } catch { message.error('Failed to delete comments'); }
+    } else {
+      message.error('Failed to delete comments');
+    }
   };
 
   const handleExportExcel = () => {
@@ -1150,32 +822,10 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     data.forEach(r => {
       aoa.push([r.sno, r.raId, r.empName, r.emailId, r.piwRole, r.roleOrDomain, r.previousWorkex, r.doj, r.totalWorkex, r.engagement || '', r.engagementStartDate || '', r.engagementEndDate || '', r.allocationStatus || '', r.allocationPercentage != null ? `${r.allocationPercentage}%` : '', r.skills, r.beelineId || '', r.sowName || '']);
     });
-    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 6 }, { wch: 10 }, { wch: 28 }, { wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 36 }, { wch: 18 }, { wch: 30 }];
-    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
-    ws['!sheetViews'] = [{ showGridLines: false }];
-    const numCols = headers.length, numRows = aoa.length;
-    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
-    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
-    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
-    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
-    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
-    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
-    for (let R = 0; R < numRows; R++) {
-      for (let C = 0; C < numCols; C++) {
-        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
-        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
-        ws[addr].s = {
-          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
-          font: R === 0 ? hFont : { sz: 10 },
-          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
-          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
-        };
-      }
-    }
+    const ws = buildStyledWorksheetFromAoa(XLSXStyle, aoa, [6, 10, 28, 30, 18, 18, 14, 14, 14, 18, 14, 14, 18, 36, 18, 30]);
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, ws, 'Resources');
-    XLSXStyle.writeFile(wb, `Resources_Export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSXStyle.writeFile(wb, `Resources_Export_${getCurrentDateStamp()}.xlsx`);
     message.success('Export downloaded');
   };
 
@@ -1187,32 +837,10 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
     [...linked].sort((a, b) => (a.beelineId || '').localeCompare(b.beelineId || '')).forEach(r => {
       aoa.push([r.beelineId, r.raId, r.empName, r.emailId, r.piwRole, r.roleOrDomain, r.engagement || '', r.allocationStatus || '', r.skills]);
     });
-    const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-    ws['!cols'] = [{ wch: 16 }, { wch: 10 }, { wch: 26 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 30 }];
-    ws['!freeze'] = { xSplit: 0, ySplit: 1, topLeftCell: 'A2', activeCell: 'A2', state: 'frozen' };
-    ws['!sheetViews'] = [{ showGridLines: false }];
-    const numCols = headers.length, numRows = aoa.length;
-    const hFill = { patternType: 'solid' as const, fgColor: { rgb: '001529' } };
-    const hFont = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
-    const eFill = { patternType: 'solid' as const, fgColor: { rgb: 'EBF3FF' } };
-    const wFill = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFFF' } };
-    const tG = { style: 'thin' as const, color: { rgb: 'D9D9D9' } };
-    const mN = { style: 'medium' as const, color: { rgb: '001529' } };
-    for (let R = 0; R < numRows; R++) {
-      for (let C = 0; C < numCols; C++) {
-        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C });
-        if (!ws[addr]) ws[addr] = { t: 'z', v: '' };
-        ws[addr].s = {
-          fill: R === 0 ? hFill : R % 2 === 0 ? eFill : wFill,
-          font: R === 0 ? hFont : { sz: 10 },
-          alignment: { vertical: 'center' as const, horizontal: 'left' as 'left', wrapText: false },
-          border: { top: R === 0 ? mN : tG, bottom: R === numRows - 1 ? mN : tG, left: C === 0 ? mN : tG, right: C === numCols - 1 ? mN : tG },
-        };
-      }
-    }
+    const ws = buildStyledWorksheetFromAoa(XLSXStyle, aoa, [16, 10, 26, 28, 18, 18, 18, 18, 30]);
     const wb = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(wb, ws, 'Beeline Resource Mapping');
-    XLSXStyle.writeFile(wb, `Beeline_Resource_Mapping_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSXStyle.writeFile(wb, `Beeline_Resource_Mapping_${getCurrentDateStamp()}.xlsx`);
     message.success('Beeline-Resource mapping downloaded');
   };
 
@@ -1810,7 +1438,7 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
                 {
                   key: 'resumes',
                   label: <span style={{ fontSize: '12px' }}><FileTextOutlined /> Resumes</span>,
-                  children: <ResumesTab />,
+                  children: <ResourceResumesTab />,
                 },
 
               ]}
@@ -2168,4 +1796,4 @@ const ResourceMgmt: React.FC<{ onResourcesChange?: (resources: ResourceRow[]) =>
   );
 };
 
-export default ResourceMgmt;
+export default ResourceHub;

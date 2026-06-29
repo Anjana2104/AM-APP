@@ -57,6 +57,12 @@ const validateFile = (file: File, type: string): boolean => {
       message.error('Please upload an Excel file (.xlsx or .xls)');
       return false;
     }
+  } else if (type === 'rate_card_template') {
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    if (!['.xlsx', '.xls'].includes(ext)) {
+      message.error('Please upload a valid Rate Card Excel file (.xlsx or .xls)');
+      return false;
+    }
   }
   
   return true;
@@ -66,6 +72,7 @@ const TEMPLATE_TYPES = [
   { value: 'piw_template', label: '📋 PIW Template (.xlsm)', icon: <FileExcelOutlined /> },
   { value: 'sow_template', label: '📄 SOW Template (.docx)', icon: <FileOutlined /> },
   { value: 'holiday_calendar', label: '📅 Holiday Calendar (.xlsx)', icon: <CalendarOutlined /> },
+  { value: 'rate_card_template', label: '💱 Rate Card Template (.xlsx)', icon: <FileExcelOutlined /> },
 ];
 
 interface TemplateItem {
@@ -190,6 +197,7 @@ export function TemplatesTab() {
     switch (type) {
       case 'piw_template': return <FileExcelOutlined style={{ fontSize: 16, color: '#52c41a' }} />;
       case 'holiday_calendar': return <CalendarOutlined style={{ fontSize: 16, color: '#1890ff' }} />;
+      case 'rate_card_template': return <FileExcelOutlined style={{ fontSize: 16, color: '#722ed1' }} />;
       case 'sow_template': return <FileOutlined style={{ fontSize: 16, color: '#fa8c16' }} />;
       default: return <FileOutlined style={{ fontSize: 16, color: '#8c8c8c' }} />;
     }
@@ -299,7 +307,7 @@ export function TemplatesTab() {
             beforeUpload={handleUpload}
             showUploadList={false}
             disabled={loading}
-            accept={selectedType === 'piw_template' ? '.xlsx,.xls,.xlsm' : selectedType === 'sow_template' ? '.doc,.docx' : selectedType === 'holiday_calendar' ? '.xlsx,.xls' : '*'}
+            accept={selectedType === 'piw_template' ? '.xlsx,.xls,.xlsm' : selectedType === 'sow_template' ? '.doc,.docx' : selectedType === 'holiday_calendar' ? '.xlsx,.xls' : selectedType === 'rate_card_template' ? '.xlsx,.xls' : '*'}
             style={{ borderRadius: 6, marginBottom: 12 }}
           >
             <p className="ant-upload-drag-icon">
@@ -312,6 +320,8 @@ export function TemplatesTab() {
                 ? 'Click or drag SOW template (.docx) to upload'
                 : selectedType === 'holiday_calendar'
                 ? 'Click or drag Holiday Calendar (.xlsx) to upload'
+                : selectedType === 'rate_card_template'
+                ? 'Click or drag Rate Card Template (.xlsx) to upload'
                 : 'Click or drag file to upload'
               }
             </p>
@@ -322,6 +332,8 @@ export function TemplatesTab() {
                 ? 'Word document format'
                 : selectedType === 'holiday_calendar'
                 ? 'Excel format (.xlsx)'
+                : selectedType === 'rate_card_template'
+                ? 'Excel format for rate bands'
                 : 'Supported format'
               }
             </p>
@@ -357,4 +369,3 @@ export function TemplatesTab() {
     </div>
   );
 }
-

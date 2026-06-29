@@ -9,7 +9,7 @@
 
 export interface Template {
   id: string;
-  type: 'piw_template' | 'holiday_calendar' | 'sow_template' | 'other';
+  type: 'piw_template' | 'holiday_calendar' | 'sow_template' | 'rate_card_template' | 'other';
   file_name: string;
   file_size: number;
   uploaded_by: string;
@@ -245,5 +245,4 @@ const fallbackGetTemplate = async (templateId: string): Promise<{ ok: boolean; b
     return { ok: false, error: e.message || 'Get failed' };
   }
 };
-
 

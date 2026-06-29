@@ -438,7 +438,13 @@ function ResourceDetailPanel({ resource, currentUser, expanded, panelOpen, onNav
                             style={{ width: 110, fontSize: 10 }} popupMatchSelectWidth={false} />
                         : <Tag color={getTagColor(c.tag)} style={{ fontSize: 10, margin: 0, padding: '0 5px' }}>{c.tag || 'General'}</Tag>
                       }
-                      <Text type="secondary" style={{ fontSize: 10 }}>{c.author || 'System'}</Text>
+                      {(c.source_module === 'stakeholder_escalation' || ((c.tag || '').toLowerCase() === 'escalations' && Boolean(c.reported_by))) ? (
+                        <Text type="secondary" style={{ fontSize: 10 }}>
+                          By: {c.author || 'Admin'}{c.reported_by ? ` | Reported by: ${c.reported_by}` : ''}
+                        </Text>
+                      ) : (
+                        <Text type="secondary" style={{ fontSize: 10 }}>{c.author || 'System'}</Text>
+                      )}
                     </Space>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap', fontStyle: c.updated_at ? 'italic' : 'normal' }}>
@@ -548,7 +554,7 @@ function ResourceDetailPanel({ resource, currentUser, expanded, panelOpen, onNav
     </div>
   );
 
-  // ── EXPANDED layout: Info top + Tabs(Comments | Audit) below ─────────────
+  // ── EXPANDED layout: Info top + Comments bottom-left + Audit right ────────
   if (expanded) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
@@ -610,37 +616,23 @@ function ResourceDetailPanel({ resource, currentUser, expanded, panelOpen, onNav
           )}
         </div>
 
-        {/* Bottom: full-width Tabs for Comments + Audit Trail */}
-        <div style={{ flex: 1, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '4px 12px 12px', minHeight: 0 }}>
-          <Tabs
-            size="small"
-            defaultActiveKey="comments"
-            style={{ fontSize: 12 }}
-            items={[
-              {
-                key: 'comments',
-                label: (
-                  <Space size={4}>
-                    <MessageOutlined style={{ fontSize: 12 }} />
-                    <span style={{ fontSize: 12 }}>Comments</span>
-                    {comments.length > 0 && <Badge count={comments.length} style={{ background: '#1890ff', fontSize: 9 }} />}
-                  </Space>
-                ),
-                children: commentsPanel,
-              },
-              {
-                key: 'audit',
-                label: (
-                  <Space size={4}>
-                    <ClockCircleOutlined style={{ fontSize: 12 }} />
-                    <span style={{ fontSize: 12 }}>Audit Trail</span>
-                    {auditLog.length > 0 && <Badge count={auditLog.length} style={{ background: '#722ed1', fontSize: 9 }} />}
-                  </Space>
-                ),
-                children: auditPanel,
-              },
-            ]}
-          />
+        <div style={{ display: 'flex', gap: 12, flex: 1, minHeight: 0 }}>
+          <div style={{ flex: 1, minWidth: 0, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '4px 12px 12px', minHeight: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <MessageOutlined style={{ fontSize: 12 }} />
+              <span style={{ fontSize: 12, fontWeight: 600 }}>Comments</span>
+              {comments.length > 0 && <Badge count={comments.length} style={{ background: '#1890ff', fontSize: 9 }} />}
+            </div>
+            {commentsPanel}
+          </div>
+          <div style={{ width: 430, maxWidth: '42%', minWidth: 350, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '4px 12px 12px', minHeight: 0, overflow: 'hidden' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <ClockCircleOutlined style={{ fontSize: 12 }} />
+              <span style={{ fontSize: 12, fontWeight: 600 }}>Audit Trail</span>
+              {auditLog.length > 0 && <Badge count={auditLog.length} style={{ background: '#722ed1', fontSize: 9 }} />}
+            </div>
+            {auditPanel}
+          </div>
         </div>
       </div>
     );

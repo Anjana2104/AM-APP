@@ -34,6 +34,7 @@ const aiRoutes = require('./routes/ai');
 const templatesRoutes = require('./routes/templates');
 const piwGenerationRoutes = require('./routes/piwGeneration');
 const sowGenerationRoutes = require('./routes/sowGeneration');
+const teamHierarchyRoutes = require('./routes/team-hierarchy');
 
 const PORT = process.env.PORT || 3001;
 
@@ -95,6 +96,11 @@ async function runMigrations() {
     is_active INTEGER DEFAULT 1
   )`);
   try { db.run(`ALTER TABLE client_requests ADD COLUMN is_active INTEGER DEFAULT 1`); } catch (_) {}
+  try {
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_client_requests_beeline_id_ci_unique
+      ON client_requests (LOWER(TRIM(beeline_id)))
+      WHERE beeline_id IS NOT NULL AND TRIM(beeline_id) != ''`);
+  } catch (_) {}
   db.run(`CREATE TABLE IF NOT EXISTS resources (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
     ra_id TEXT NOT NULL UNIQUE, emp_name TEXT DEFAULT "",
@@ -150,6 +156,22 @@ async function runMigrations() {
     value TEXT DEFAULT "", description TEXT DEFAULT "",
     created_at TEXT, updated_at TEXT
   )`);
+  db.run(`CREATE TABLE IF NOT EXISTS team_hierarchy_entries (
+    id TEXT PRIMARY KEY,
+    team_type TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT "",
+    title TEXT DEFAULT "",
+    department TEXT DEFAULT "",
+    reporting_to TEXT DEFAULT NULL,
+    email TEXT DEFAULT "",
+    phone TEXT DEFAULT "",
+    responsibility TEXT DEFAULT "",
+    sort_order INTEGER DEFAULT 0,
+    created_at TEXT,
+    updated_at TEXT
+  )`);
+  try { db.run(`ALTER TABLE team_hierarchy_entries ADD COLUMN phone TEXT DEFAULT ""`); } catch (_) {}
+  db.run(`CREATE INDEX IF NOT EXISTS idx_team_hierarchy_team_type_sort ON team_hierarchy_entries(team_type, sort_order)`);
 
   // ── User Access Control tables ────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS roles (
@@ -307,10 +329,123 @@ async function runMigrations() {
     author TEXT NOT NULL DEFAULT "",
     tag TEXT NOT NULL DEFAULT "General",
     body TEXT NOT NULL DEFAULT "",
+    reported_by TEXT DEFAULT "",
+    source_module TEXT DEFAULT "",
+    source_ref_id INTEGER DEFAULT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT
   )`);
   try { db.run(`ALTER TABLE resource_comments ADD COLUMN updated_at TEXT`); } catch (_) {}
+  try { db.run(`ALTER TABLE resource_comments ADD COLUMN reported_by TEXT DEFAULT ""`); } catch (_) {}
+  try { db.run(`ALTER TABLE resource_comments ADD COLUMN source_module TEXT DEFAULT ""`); } catch (_) {}
+  try { db.run(`ALTER TABLE resource_comments ADD COLUMN source_ref_id INTEGER DEFAULT NULL`); } catch (_) {}
+
+  // ── Stakeholder Comments table ─────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS stakeholder_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stakeholder_id TEXT NOT NULL,
+    stakeholder_team_type TEXT NOT NULL DEFAULT "",
+    author TEXT NOT NULL DEFAULT "",
+    tag TEXT NOT NULL DEFAULT "Interactions",
+    body TEXT NOT NULL DEFAULT "",
+    requirement_status TEXT DEFAULT "",
+    account_anchor TEXT DEFAULT "",
+    requirement_request_id INTEGER DEFAULT NULL,
+    requirement_request_beeline TEXT DEFAULT "",
+    created_at TEXT NOT NULL,
+    updated_at TEXT
+  )`);
+  try { db.run(`ALTER TABLE stakeholder_comments ADD COLUMN requirement_status TEXT DEFAULT ""`); } catch (_) {}
+  try { db.run(`ALTER TABLE stakeholder_comments ADD COLUMN account_anchor TEXT DEFAULT ""`); } catch (_) {}
+  try { db.run(`ALTER TABLE stakeholder_comments ADD COLUMN requirement_request_id INTEGER DEFAULT NULL`); } catch (_) {}
+  try { db.run(`ALTER TABLE stakeholder_comments ADD COLUMN requirement_request_beeline TEXT DEFAULT ""`); } catch (_) {}
+  try { db.run(`ALTER TABLE stakeholder_comments ADD COLUMN updated_at TEXT`); } catch (_) {}
+
+  // ── Stakeholder escalation linked resources ────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS stakeholder_comment_resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stakeholder_comment_id INTEGER NOT NULL,
+    resource_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(stakeholder_comment_id, resource_id)
+  )`);
+  // Backfill legacy escalation-mirrored resource comments so author reflects comment creator, not stakeholder name
+  db.run(
+    `UPDATE resource_comments
+     SET author = COALESCE(
+       (SELECT sc.author FROM stakeholder_comments sc WHERE sc.id = resource_comments.source_ref_id),
+       author
+     )
+     WHERE source_module = 'stakeholder_escalation'`
+  );
+  db.run(
+    `UPDATE resource_comments
+     SET reported_by = COALESCE(
+       (
+         SELECT te.name
+         FROM stakeholder_comments sc
+         LEFT JOIN team_hierarchy_entries te ON te.id = sc.stakeholder_id
+         WHERE sc.id = resource_comments.source_ref_id
+       ),
+       reported_by,
+       ''
+     )
+     WHERE source_module = 'stakeholder_escalation'`
+  );
+  // Backfill legacy escalation mirrors created before source metadata/reporter fields were added
+  db.run(
+    `UPDATE resource_comments
+     SET source_module = 'stakeholder_escalation',
+         source_ref_id = COALESCE(
+           source_ref_id,
+           (
+             SELECT sc.id
+             FROM stakeholder_comment_resources scr
+             JOIN stakeholder_comments sc ON sc.id = scr.stakeholder_comment_id
+             WHERE scr.resource_id = resource_comments.resource_id
+               AND sc.tag = 'Escalations'
+               AND LOWER(TRIM(sc.body)) = LOWER(TRIM(resource_comments.body))
+             ORDER BY sc.updated_at DESC, sc.created_at DESC, sc.id DESC
+             LIMIT 1
+           )
+         ),
+         reported_by = COALESCE(
+           NULLIF(reported_by, ''),
+           (
+             SELECT te.name
+             FROM stakeholder_comment_resources scr
+             JOIN stakeholder_comments sc ON sc.id = scr.stakeholder_comment_id
+             LEFT JOIN team_hierarchy_entries te ON te.id = sc.stakeholder_id
+             WHERE scr.resource_id = resource_comments.resource_id
+               AND sc.tag = 'Escalations'
+               AND LOWER(TRIM(sc.body)) = LOWER(TRIM(resource_comments.body))
+             ORDER BY sc.updated_at DESC, sc.created_at DESC, sc.id DESC
+             LIMIT 1
+           ),
+           ''
+         ),
+         author = COALESCE(
+           NULLIF(author, ''),
+           (
+             SELECT sc.author
+             FROM stakeholder_comment_resources scr
+             JOIN stakeholder_comments sc ON sc.id = scr.stakeholder_comment_id
+             WHERE scr.resource_id = resource_comments.resource_id
+               AND sc.tag = 'Escalations'
+               AND LOWER(TRIM(sc.body)) = LOWER(TRIM(resource_comments.body))
+             ORDER BY sc.updated_at DESC, sc.created_at DESC, sc.id DESC
+             LIMIT 1
+           ),
+           author
+         )
+     WHERE tag = 'Escalations'
+       AND (
+         source_module IS NULL
+         OR source_module = ''
+         OR reported_by IS NULL
+         OR reported_by = ''
+       )`
+  );
 
   // ── Request Comments table ─────────────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS request_comments (
@@ -528,6 +663,7 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/templates', templatesRoutes);
 app.use('/api/piwGeneration', piwGenerationRoutes);
 app.use('/api/sowGeneration', sowGenerationRoutes);
+app.use('/api/team-hierarchy', teamHierarchyRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────────────
 app.use((req, res) => {

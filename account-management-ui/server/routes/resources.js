@@ -39,8 +39,35 @@ router.get("/comments-search", async (req, res) => {
   try {
     const db = await getDb();
     const rows = db.all(
-      `SELECT rc.*, r.emp_name, r.ra_id, r.allocation_status, r.engagement
+      `SELECT
+         rc.*,
+         CASE
+           WHEN rc.source_module = 'stakeholder_escalation'
+             THEN COALESCE(NULLIF(rc.reported_by, ''), te.name, '')
+           WHEN rc.tag = 'Escalations'
+             THEN COALESCE(
+               NULLIF(rc.reported_by, ''),
+               (
+                 SELECT te2.name
+                 FROM stakeholder_comment_resources scr2
+                 JOIN stakeholder_comments sc2 ON sc2.id = scr2.stakeholder_comment_id
+                 LEFT JOIN team_hierarchy_entries te2 ON te2.id = sc2.stakeholder_id
+                 WHERE scr2.resource_id = rc.resource_id
+                   AND sc2.tag = 'Escalations'
+                   AND LOWER(TRIM(sc2.body)) = LOWER(TRIM(rc.body))
+                 ORDER BY sc2.updated_at DESC, sc2.created_at DESC, sc2.id DESC
+                 LIMIT 1
+               ),
+               ''
+             )
+           ELSE COALESCE(rc.reported_by, '')
+         END AS reported_by,
+         r.emp_name, r.ra_id, r.allocation_status, r.engagement
        FROM resource_comments rc
+       LEFT JOIN stakeholder_comments sc
+         ON rc.source_module = 'stakeholder_escalation' AND sc.id = rc.source_ref_id
+       LEFT JOIN team_hierarchy_entries te
+         ON te.id = sc.stakeholder_id
        JOIN resources r ON rc.resource_id = r.id
        WHERE rc.body LIKE ? OR rc.tag LIKE ? OR rc.author LIKE ? OR r.emp_name LIKE ? OR r.ra_id LIKE ?
        ORDER BY rc.created_at DESC LIMIT 100`,
@@ -463,7 +490,36 @@ router.get("/:id/comments", async (req, res) => {
   try {
     const db = await getDb();
     const rows = db.all(
-      'SELECT * FROM resource_comments WHERE resource_id=? ORDER BY id DESC',
+      `SELECT
+         rc.*,
+         CASE
+           WHEN rc.source_module = 'stakeholder_escalation'
+             THEN COALESCE(NULLIF(rc.reported_by, ''), te.name, '')
+           WHEN rc.tag = 'Escalations'
+             THEN COALESCE(
+               NULLIF(rc.reported_by, ''),
+               (
+                 SELECT te2.name
+                 FROM stakeholder_comment_resources scr2
+                 JOIN stakeholder_comments sc2 ON sc2.id = scr2.stakeholder_comment_id
+                 LEFT JOIN team_hierarchy_entries te2 ON te2.id = sc2.stakeholder_id
+                 WHERE scr2.resource_id = rc.resource_id
+                   AND sc2.tag = 'Escalations'
+                   AND LOWER(TRIM(sc2.body)) = LOWER(TRIM(rc.body))
+                 ORDER BY sc2.updated_at DESC, sc2.created_at DESC, sc2.id DESC
+                 LIMIT 1
+               ),
+               ''
+             )
+           ELSE COALESCE(rc.reported_by, '')
+         END AS reported_by
+       FROM resource_comments rc
+       LEFT JOIN stakeholder_comments sc
+         ON rc.source_module = 'stakeholder_escalation' AND sc.id = rc.source_ref_id
+       LEFT JOIN team_hierarchy_entries te
+         ON te.id = sc.stakeholder_id
+       WHERE rc.resource_id = ?
+       ORDER BY rc.id DESC`,
       [parseInt(req.params.id, 10)]
     );
     res.json({ comments: rows });

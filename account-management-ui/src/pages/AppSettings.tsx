@@ -144,6 +144,8 @@ function AppNotificationsTab() {
 function NotificationHistoryTab() {
   const [rows,        setRows]        = useState<NotificationHistoryRow[]>([]);
   const [loading,     setLoading]     = useState(false);
+  const [tablePage,   setTablePage]   = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(50);
   const [filterOpen,  setFilterOpen]  = useState(false);
   const [deleteOpen,  setDeleteOpen]  = useState(false);
   const [deleting,    setDeleting]    = useState(false);
@@ -247,7 +249,7 @@ function NotificationHistoryTab() {
   const columns = [
     { title: <Text style={{ fontSize: 10 }}>S.No</Text>, key: 'sno', width: 50,
       render: (_: unknown, __: NotificationHistoryRow, idx: number) =>
-        <Text style={{ fontSize: 10, color: '#8c8c8c' }}>{idx + 1}</Text> },
+        <Text style={{ fontSize: 10, color: '#8c8c8c' }}>{((tablePage - 1) * tablePageSize) + idx + 1}</Text> },
     { title: '', key: 'type', width: 22,
       render: (_: unknown, r: NotificationHistoryRow) => typeIcon(r.type) },
     { title: <Text style={{ fontSize: 10 }}>Title</Text>, dataIndex: 'title', key: 'title', width: 160,
@@ -377,7 +379,16 @@ function NotificationHistoryTab() {
         rowKey="id"
         size="small"
         loading={loading}
-        pagination={{ pageSize: 50, size: 'small', showSizeChanger: false }}
+        pagination={{
+          current: tablePage,
+          pageSize: tablePageSize,
+          size: 'small',
+          showSizeChanger: false,
+          onChange: (page, pageSize) => {
+            setTablePage(page);
+            setTablePageSize(pageSize);
+          },
+        }}
         style={{ fontSize: 11 }}
         rowClassName={(r: NotificationHistoryRow) =>
           r.type === 'error' || r.source_user === 'System Error' ? 'ant-table-row-danger' : ''
@@ -511,12 +522,12 @@ const SOURCE_FIELDS: Record<string, { value: string; label: string; type: string
     { value: 'date_raised',       label: 'Date Raised',       type: 'date' },
     { value: 'processing_status', label: 'Processing Status', type: 'text' },
     { value: 'overall_status',    label: 'Overall Status',    type: 'text' },
-    { value: 'account_anchor',    label: 'Account Anchor',    type: 'text' },
+    { value: 'account_anchor',    label: 'Owner',             type: 'text' },
   ],
   ra_process: [
     { value: 'start_date',     label: 'Start Date',     type: 'date' },
     { value: 'active',         label: 'Active Status',  type: 'text' },
-    { value: 'account_anchor', label: 'Account Anchor', type: 'text' },
+    { value: 'account_anchor', label: 'Owner',          type: 'text' },
   ],
   finance_projects: [
     { value: 'status', label: 'Status', type: 'text' },
@@ -1563,7 +1574,7 @@ function DropdownsTab() {
                             onClick={() => setLinksModal(true)}
                             style={{ fontSize: '11px', padding: '0 4px', height: 'auto' }}
                           >
-                            Manage links
+                            Manage link
                           </Button>
                           )}
                         </Space>
@@ -1790,7 +1801,7 @@ function LinksModal({ open, configName, currentLinks, onSave, onCancel }: LinksM
 
   return (
     <Modal
-      title={<Space><LinkOutlined style={{ color: '#1890ff' }} /> Manage Links — {configName}</Space>}
+      title={<Space><LinkOutlined style={{ color: '#1890ff' }} /> Manage Link — {configName}</Space>}
       open={open}
       onCancel={onCancel}
       onOk={() => onSave(checked)}

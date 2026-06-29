@@ -43,9 +43,16 @@ export function resetServerCache() {
 export async function getProcessRows(): Promise<{ rows: any[]; fromServer: boolean }> {
   const online = await isServerAvailable();
   if (online) {
-    const res = await fetch(BASE);
-    const data = await res.json();
-    return { rows: data.rows || [], fromServer: true };
+    try {
+      const res = await fetch(BASE);
+      if (!res.ok) {
+        return { rows: [], fromServer: true };
+      }
+      const data = await res.json();
+      return { rows: data.rows || [], fromServer: true };
+    } catch {
+      return { rows: [], fromServer: true };
+    }
   }
   return { rows: [], fromServer: false };
 }
@@ -155,4 +162,3 @@ export async function deleteComment(processId: number, commentId: number): Promi
     return res.ok;
   } catch { return false; }
 }
-

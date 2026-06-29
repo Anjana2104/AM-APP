@@ -32,9 +32,46 @@ function ensureProcessColumns(db) {
   if (!cols.includes('process_id')) {
     try { db.run(`ALTER TABLE ra_process ADD COLUMN process_id TEXT DEFAULT NULL`); } catch (e) { logger.warn('Failed to ensure process_id column', { err: e.message }); }
   }
+  if (!cols.includes('step_completed_at')) {
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN step_completed_at TEXT DEFAULT '{}'`); } catch (e) { logger.warn('Failed to ensure step_completed_at column', { err: e.message }); }
+  }
+  if (!cols.includes('created_at')) {
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN created_at TEXT`); } catch (e) { logger.warn('Failed to ensure created_at column', { err: e.message }); }
+  }
+  if (!cols.includes('updated_at')) {
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN updated_at TEXT`); } catch (e) { logger.warn('Failed to ensure updated_at column', { err: e.message }); }
+  }
   try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (e) { logger.warn('Failed to backfill process identifiers', { err: e.message }); }
   // Unique partial index for PIW (non-empty)
   try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (e) { logger.warn('Failed to ensure PIW unique index', { err: e.message }); }
+}
+
+function parseStepCompletedAt(raw) {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch (_) {}
+  return {};
+}
+
+function withStepCompletedAt(existingRecord, incomingFields, nowIso, touchedKeys) {
+  const current = parseStepCompletedAt(existingRecord?.step_completed_at);
+  const shouldTrack = (key) => !touchedKeys || touchedKeys.has(key);
+  const ensureTimestamp = (key, done) => {
+    if (!shouldTrack(key)) return;
+    if (!done || current[key]) return;
+    current[key] = nowIso;
+  };
+  ensureTimestamp('sow', String(incomingFields.sow || '').trim() !== '');
+  ensureTimestamp('signed_sow', String(incomingFields.signed_sow || '').trim().toLowerCase() === 'yes');
+  ensureTimestamp('piw', String(incomingFields.piw || '').trim() !== '');
+  ensureTimestamp('salesforce_id', String(incomingFields.salesforce_id || '').trim() !== '');
+  ensureTimestamp('proms_id', String(incomingFields.proms_id || '').trim() !== '');
+  ensureTimestamp('budget', String(incomingFields.budget || '').trim() !== '');
+  ensureTimestamp('open_air_code', String(incomingFields.open_air_code || '').trim() !== '');
+  ensureTimestamp('eprev', String(incomingFields.eprev || '').trim().toLowerCase() === 'yes');
+  return JSON.stringify(current);
 }
 
 
@@ -200,7 +237,10 @@ router.get('/', async (req, res) => {
   try {
     const db = await getDb();
     ensureProcessColumns(db);
-    const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
+    const rows = db.all(
+      `SELECT * FROM ra_process
+       ORDER BY COALESCE(NULLIF(updated_at, ''), NULLIF(created_at, '')) DESC, id DESC`
+    );
     res.json({ rows });
   } catch (err) {
     logger.error('Failed to list processes', { err: err.message });
@@ -227,25 +267,53 @@ router.post('/bulk', async (req, res) => {
       const existing = db.get('SELECT id, sno FROM ra_process WHERE LOWER(sow) = LOWER(?)', [sow]);
 
       if (existing) {
+        const existingFull = db.get('SELECT * FROM ra_process WHERE id=?', [existing.id]) || {};
+        const incomingFields = {
+          sow,
+          start_date: r.startDate || '',
+          signed_sow: r.signedSow || '',
+          piw: r.piw || '',
+          active: r.active || '',
+          salesforce_id: r.salesforceId || '',
+          proms_id: r.promsId || '',
+          budget: r.budget || '',
+          open_air_code: r.openAirCode || '',
+          eprev: r.eprev || '',
+          comments: r.comments || '',
+          account_anchor: r.accountAnchor || '',
+        };
+        const stepCompletedAt = withStepCompletedAt(existingFull, incomingFields, now);
         db.run(
           `UPDATE ra_process SET sno=?, start_date=?, signed_sow=?, piw=?, active=?,
-           salesforce_id=?, proms_id=?, budget=?, open_air_code=?, comments=?,
-           account_anchor=?, updated_at=? WHERE id=?`,
-          [r.sno || existing.sno, r.startDate || '', r.signedSow || '', r.piw || '',
-           r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-           r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, existing.id]
+           salesforce_id=?, proms_id=?, budget=?, open_air_code=?, eprev=?, comments=?,
+           account_anchor=?, step_completed_at=?, updated_at=? WHERE id=?`,
+          [r.sno || existing.sno, incomingFields.start_date, incomingFields.signed_sow, incomingFields.piw,
+           incomingFields.active, incomingFields.salesforce_id, incomingFields.proms_id, incomingFields.budget,
+           incomingFields.open_air_code, incomingFields.eprev, incomingFields.comments, incomingFields.account_anchor,
+           stepCompletedAt, now, existing.id]
         );
         updated++;
       } else {
         const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
+        const incomingFields = {
+          sow,
+          signed_sow: r.signedSow || '',
+          piw: r.piw || '',
+          salesforce_id: r.salesforceId || '',
+          proms_id: r.promsId || '',
+          budget: r.budget || '',
+          open_air_code: r.openAirCode || '',
+          eprev: r.eprev || '',
+        };
+        const stepCompletedAt = withStepCompletedAt({}, incomingFields, now);
         db.run(
           `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-           salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, step_completed_at, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [r.sno || sno, sow, r.startDate || '', r.signedSow || '', r.piw || '',
            r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-           r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
+           r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', stepCompletedAt, now, now]
         );
         const _bid = db.lastId ? db.lastId() : null;
         if (_bid) { try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${_bid}`, _bid]); } catch(_) {} }
@@ -287,13 +355,24 @@ router.post('/', async (req, res) => {
     }
     const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
     const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
+    const createFields = {
+      sow: r.sow || '',
+      signed_sow: r.signedSow || '',
+      piw: r.piw || '',
+      salesforce_id: r.salesforceId || '',
+      proms_id: r.promsId || '',
+      budget: r.budget || '',
+      open_air_code: r.openAirCode || '',
+      eprev: r.eprev || '',
+    };
+    const stepCompletedAt = withStepCompletedAt({}, createFields, now);
     db.run(
       `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-       salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, step_completed_at, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [r.sno || sno, r.sow || '', r.startDate || '', r.signedSow || '', r.piw || '',
        r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-       r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
+       r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', stepCompletedAt, now, now]
     );
     const newId = db.lastId ? db.lastId() : null;
     // Set human-readable process_id: P1, P2, ...
@@ -338,26 +417,45 @@ router.put('/:id', async (req, res) => {
     }
 
     const oldRecord = db.get('SELECT * FROM ra_process WHERE id=?', [numId]);
+    if (!oldRecord) {
+      return res.status(404).json({ error: 'Process record not found' });
+    }
     const now = new Date().toISOString();
+    const has = (key) => Object.prototype.hasOwnProperty.call(r, key);
+    const pick = (key, fallback) => (has(key) ? String(r[key] ?? '') : String(fallback ?? ''));
+    const touchedKeys = new Set();
+    if (has('sow')) touchedKeys.add('sow');
+    if (has('startDate')) touchedKeys.add('start_date');
+    if (has('signedSow')) touchedKeys.add('signed_sow');
+    if (has('piw')) touchedKeys.add('piw');
+    if (has('active')) touchedKeys.add('active');
+    if (has('salesforceId')) touchedKeys.add('salesforce_id');
+    if (has('promsId')) touchedKeys.add('proms_id');
+    if (has('budget')) touchedKeys.add('budget');
+    if (has('openAirCode')) touchedKeys.add('open_air_code');
+    if (has('eprev')) touchedKeys.add('eprev');
+    if (has('comments')) touchedKeys.add('comments');
+    if (has('accountAnchor')) touchedKeys.add('account_anchor');
     const trackFields = {
-      sow: r.sow || '',
-      start_date: r.startDate || '',
-      signed_sow: r.signedSow || '',
-      piw: r.piw || '',
-      active: r.active || '',
-      salesforce_id: r.salesforceId || '',
-      proms_id: r.promsId || '',
-      budget: r.budget || '',
-      open_air_code: r.openAirCode || '',
-      eprev: r.eprev || '',
-      comments: r.comments || '',
-      account_anchor: r.accountAnchor || '',
+      sow: pick('sow', oldRecord.sow),
+      start_date: pick('startDate', oldRecord.start_date),
+      signed_sow: pick('signedSow', oldRecord.signed_sow),
+      piw: pick('piw', oldRecord.piw),
+      active: pick('active', oldRecord.active),
+      salesforce_id: pick('salesforceId', oldRecord.salesforce_id),
+      proms_id: pick('promsId', oldRecord.proms_id),
+      budget: pick('budget', oldRecord.budget),
+      open_air_code: pick('openAirCode', oldRecord.open_air_code),
+      eprev: pick('eprev', oldRecord.eprev),
+      comments: pick('comments', oldRecord.comments),
+      account_anchor: pick('accountAnchor', oldRecord.account_anchor),
     };
+    const stepCompletedAt = withStepCompletedAt(oldRecord || {}, trackFields, now, touchedKeys);
     db.run(
       `UPDATE ra_process SET sow=?, start_date=?, signed_sow=?, piw=?, active=?,
        salesforce_id=?, proms_id=?, budget=?, open_air_code=?, eprev=?, comments=?,
-       account_anchor=?, updated_at=? WHERE id=?`,
-      [...Object.values(trackFields), now, numId]
+       account_anchor=?, step_completed_at=?, updated_at=? WHERE id=?`,
+      [...Object.values(trackFields), stepCompletedAt, now, numId]
     );
     if (oldRecord) {
       const changedValues = {};
@@ -417,213 +515,6 @@ router.delete('/:id', async (req, res) => {
       }
     }
     db.run('DELETE FROM ra_process WHERE id=?', [parseInt(id, 10)]);
-    res.json({ ok: true });
-  } catch (err) {
-    logger.error('Failed to delete process', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-module.exports = router;
-
-
-// GET /api/process/:id/resources â€” resources linked to a process
-router.get('/:id/resources', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    const rows = db.all(
-      `SELECT id, ra_id, emp_name, piw_role, allocation_status, process_id
-       FROM resources WHERE process_id=? ORDER BY sno`,
-      [parseInt(id, 10)]
-    );
-    res.json({ resources: rows });
-  } catch (err) {
-    logger.error('Failed to fetch process resources', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// GET /api/process
-router.get('/', async (req, res) => {
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    const rows = db.all('SELECT * FROM ra_process ORDER BY sno');
-    res.json({ rows });
-  } catch (err) {
-    logger.error('Failed to list processes', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /api/process/bulk - upsert by sow
-router.post('/bulk', async (req, res) => {
-  const { rows } = req.body;
-  if (!Array.isArray(rows)) {
-    return res.status(400).json({ error: 'rows array required' });
-  }
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    let inserted = 0, updated = 0;
-    const now = new Date().toISOString();
-
-    for (const r of rows) {
-      const sow = String(r.sow || '').trim();
-      if (!sow) continue;
-
-      const existing = db.get('SELECT id, sno FROM ra_process WHERE LOWER(sow) = LOWER(?)', [sow]);
-
-      if (existing) {
-        db.run(
-          `UPDATE ra_process SET sno=?, start_date=?, signed_sow=?, piw=?, active=?,
-           salesforce_id=?, proms_id=?, budget=?, open_air_code=?, comments=?,
-           account_anchor=?, updated_at=? WHERE id=?`,
-          [r.sno || existing.sno, r.startDate || '', r.signedSow || '', r.piw || '',
-           r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-           r.openAirCode || '', r.comments || '', r.accountAnchor || '', now, existing.id]
-        );
-        updated++;
-      } else {
-        const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
-        const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
-        db.run(
-          `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-           salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [r.sno || sno, sow, r.startDate || '', r.signedSow || '', r.piw || '',
-           r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-           r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
-        );
-        const _bid = db.lastId ? db.lastId() : null;
-        if (_bid) { try { db.run(`UPDATE ra_process SET process_id = ? WHERE id = ?`, [`P${_bid}`, _bid]); } catch (e) { logger.warn('Failed to set process identifier', { err: e.message }); } }
-        inserted++;
-      }
-    }
-
-    if (inserted > 0) {
-      try {
-        evaluateTriggers(db, 'ra_process', { __bulk_insert__: `${inserted} new record(s) added` }, null, null, 'system');
-      } catch (triggerErr) {
-        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
-      }
-    }
-    res.json({ ok: true, inserted, updated });
-  } catch (err) {
-    logger.error('Failed to bulk upsert processes', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /api/process - create one
-router.post('/', async (req, res) => {
-  const r = req.body;
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    const now = new Date().toISOString();
-    const maxRow = db.get('SELECT MAX(sno) as m FROM ra_process');
-    const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
-    db.run(
-      `INSERT INTO ra_process (sno, sow, start_date, signed_sow, piw, active,
-       salesforce_id, proms_id, budget, open_air_code, eprev, comments, account_anchor, created_at, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [r.sno || sno, r.sow || '', r.startDate || '', r.signedSow || '', r.piw || '',
-       r.active || '', r.salesforceId || '', r.promsId || '', r.budget || '',
-       r.openAirCode || '', r.eprev || '', r.comments || '', r.accountAnchor || '', now, now]
-    );
-    res.json({ ok: true, id: db.lastId() });
-  } catch (err) {
-    logger.error('Failed to create process', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// PUT /api/process/:id
-router.put('/:id', async (req, res) => {
-  const { id } = req.params;
-  const r = req.body;
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    const oldRecord = db.get('SELECT * FROM ra_process WHERE id=?', [id]);
-    const now = new Date().toISOString();
-    const trackFields = {
-      start_date: r.startDate || '',
-      signed_sow: r.signedSow || '',
-      piw: r.piw || '',
-      active: r.active || '',
-      salesforce_id: r.salesforceId || '',
-      proms_id: r.promsId || '',
-      budget: r.budget || '',
-      open_air_code: r.openAirCode || '',
-      comments: r.comments || '',
-      account_anchor: r.accountAnchor || '',
-    };
-    db.run(
-      `UPDATE ra_process SET start_date=?, signed_sow=?, piw=?, active=?,
-       salesforce_id=?, proms_id=?, budget=?, open_air_code=?, comments=?,
-       account_anchor=?, updated_at=? WHERE id=?`,
-      [...Object.values(trackFields), now, id]
-    );
-    if (oldRecord) {
-      const changedValues = {};
-      for (const [field, newVal] of Object.entries(trackFields)) {
-        const oldVal = oldRecord[field] !== undefined ? String(oldRecord[field] ?? '') : '';
-        if (oldVal !== String(newVal ?? '')) changedValues[field] = newVal;
-      }
-      const updatedRecord = db.get('SELECT * FROM ra_process WHERE id=?', [id]);
-      try {
-        evaluateTriggers(db, 'ra_process', changedValues, oldRecord, updatedRecord || oldRecord, r.changedBy || 'system');
-      } catch (triggerErr) {
-        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
-      }
-    }
-    res.json({ ok: true });
-  } catch (err) {
-    logger.error('Failed to update process', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// DELETE /api/process - clear ALL
-router.delete('/', async (req, res) => {
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    const count = db.get('SELECT COUNT(*) as c FROM ra_process');
-    try {
-      evaluateTriggers(db, 'ra_process', { __delete_all__: `${count ? count.c : 0} records deleted` }, null, null, req.body?.changedBy || 'system');
-    } catch (triggerErr) {
-      logger.warn('Trigger evaluation failed', { err: triggerErr.message });
-    }
-    db.run('DELETE FROM ra_process');
-    res.json({ ok: true });
-  } catch (err) {
-    logger.error('Failed to delete all processes', { err: err.message });
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// DELETE /api/process/:id
-router.delete('/:id', async (req, res) => {
-  const { id } = req.params;
-  try {
-    const db = await getDb();
-    ensureProcessColumns(db);
-    const record = db.get('SELECT * FROM ra_process WHERE id=?', [id]);
-    if (record) {
-      const changedBy = req.query.changedBy || req.body?.changedBy || 'system';
-      const label = record.sow || String(record.id);
-      try {
-        evaluateTriggers(db, 'ra_process', { __record_delete__: `Record "${label}" was deleted` }, record, null, changedBy);
-      } catch (triggerErr) {
-        logger.warn('Trigger evaluation failed', { err: triggerErr.message });
-      }
-    }
-    db.run('DELETE FROM ra_process WHERE id=?', [id]);
     res.json({ ok: true });
   } catch (err) {
     logger.error('Failed to delete process', { err: err.message });

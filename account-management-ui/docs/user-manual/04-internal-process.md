@@ -170,6 +170,32 @@ Resources must be linked to a SOW before they appear in engagement dates, report
 
 ---
 
+## Insights — Process Progress Analysis
+
+The **Insights** tab now includes a **Process Progress Analysis** section at the end of the page.
+
+### What it shows
+
+- Stage-wise average completion time:
+  - Average days from **Date Raised**
+  - Average days from **previous stage**
+- Monthly trend for a selected stage
+- Detailed row-level progression entries (not just summary)
+
+### Filters, Navigation, and Export
+
+1. Use the **global Date Raised From / Date Raised To** range filter at the top of Insights to scope **all** insight cards, charts, and tables.
+2. Select a stage from the Process Progress Analysis dropdown to view stage-specific trend changes over time.
+3. Click any insight metric/chart row/table row to navigate to **Internal Process → Process (Overview)** with the relevant filters pre-applied.
+4. Use the export icon on each insight section to export that section as PNG.
+
+### Last Updated display
+
+- In Process detail view panels, **Last Updated** is shown as:
+  - date-only (no time),
+  - smaller text,
+  - italic and highlighted color for easy scanning.
+
 ## Audit Trail
 
 > **Screenshot:** Audit tab — field-by-field change history table with before/after values colour-coded
@@ -208,4 +234,4 @@ This gives a single timeline of everything that happened on a SOW.
 
 ---
 
-> **Previous:** [Finance Management](./03-finance-management.md) | **Next:** [Client Requests](./05-client-requests.md)
+> **Previous:** [Finance Management](./03-finance-management.md) | **Next:** [Stakeholders](./05-stakeholders.md)

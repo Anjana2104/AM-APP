@@ -138,6 +138,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   const [fromServer, setFromServer] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingDeletedProjectIds, setPendingDeletedProjectIds] = useState<number[]>([]);
   const [visibleColumns, setVisibleColumnsState] = useState<Set<string>>(
     new Set(['sno', 'project', 'company', 'code', 'total', 'comments'])
   );
@@ -241,12 +242,15 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
         onDataChange?.(mapped);
         onMonthsChange?.(months);
         setFromServer(true);
+        setPendingDeletedProjectIds([]);
       }
     } catch { /* ignore */ }
   };
 
   const filterPanelRef = useRef<HTMLDivElement>(null);
   const isFilterApplied = !!(filters.project || filters.company || filters.fy || filters.status);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(12);
 
   useEffect(() => {
     if (!showFilterPanel) return;
@@ -516,7 +520,11 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     setRows(updated);
     onDataChange?.(updated);
     setDirty(true);
-    if (r.id) invoiceApi.deleteInvoiceProject(r.id, currentUser?.username);
+    if (r.id) {
+      setPendingDeletedProjectIds(prev => (prev.includes(r.id!) ? prev : [...prev, r.id!]));
+      message.success('Row deleted (click Save Changes to persist)');
+      return;
+    }
     message.success('Row deleted');
   };
 
@@ -759,7 +767,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     };
 
     const base: ColumnType<InvRow>[] = [
-      { title: 'S.No.', key: 'sno', width: 42, fixed: 'left' as const, render: (_: unknown, __: InvRow, index: number) => index + 1, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
+      { title: 'S.No.', key: 'sno', width: 42, fixed: 'left' as const, render: (_: unknown, __: InvRow, index: number) => ((tablePage - 1) * tablePageSize) + index + 1, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
       {
         title: 'OA Project Code', dataIndex: 'project', key: 'project', width: 280, fixed: 'left' as const,
         sorter: (a: InvRow, b: InvRow) => (a.project || '').localeCompare(b.project || ''),
@@ -958,7 +966,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       if (monthCols.find(c => c.key === col.key)) return true;
       return visibleColumns.has(col.key as string);
     });
-  }, [filteredMonthHeaders, rows, filters, visibleColumns, currency, exchangeRate, handleCommentBlur, openDetailDrawer, canEdit, canDelete, financePlanMap, financeCodeSet, fmtPlanned]);
+  }, [filteredMonthHeaders, rows, filters, visibleColumns, currency, exchangeRate, handleCommentBlur, openDetailDrawer, canEdit, canDelete, financePlanMap, financeCodeSet, fmtPlanned, tablePage, tablePageSize]);
 
   const displayRows = useMemo(() => rows.filter(r => {
     if (filters.project && !r.project.toLowerCase().includes(filters.project.toLowerCase())) return false;
@@ -969,7 +977,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
   }), [rows, filters]);
 
   const handleSave = async () => {
-    if (!dirty || !rows.length) return;
+    if (!dirty || (!rows.length && !pendingDeletedProjectIds.length)) return;
 
     const conflicts = findDuplicateCodes(rows);
     if (conflicts.length) {
@@ -979,6 +987,24 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
 
     setSaving(true);
     try {
+      if (pendingDeletedProjectIds.length) {
+        const deleteResults = await Promise.all(
+          pendingDeletedProjectIds.map(id => invoiceApi.deleteInvoiceProject(id, currentUser?.username))
+        );
+        const failedDeleteIds = pendingDeletedProjectIds.filter((_, idx) => !deleteResults[idx]);
+        if (failedDeleteIds.length) {
+          message.error(`Failed to delete ${failedDeleteIds.length} project(s). Please retry Save Changes.`);
+          return;
+        }
+      }
+
+      if (!rows.length) {
+        setDirty(false);
+        setPendingDeletedProjectIds([]);
+        message.success('All changes saved to database');
+        return;
+      }
+
       const apiProjects = rows.map(r => ({
         id: r.id,
         project: r.project,
@@ -991,6 +1017,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
       const saveResult = await invoiceApi.bulkSaveInvoices(apiProjects, monthHeaders, currentUser?.username);
       if (saveResult.ok) {
         setDirty(false);
+        setPendingDeletedProjectIds([]);
         setFromServer(true);
         message.success('All changes saved to database');
         await reloadFromServer();
@@ -1011,6 +1038,7 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
     setRows([]);
     setMonthHeaders([]);
     setDirty(false);
+    setPendingDeletedProjectIds([]);
     setFromServer(false);
     onDataChange?.([]);
     onMonthsChange?.([]);
@@ -1301,7 +1329,15 @@ function InvoiceList({ onDataChange, onMonthsChange }: InvoiceListProps) {
             </div>
           ) : (
             <Table size="small" dataSource={displayRows} columns={columns}
-              pagination={{ pageSize: 12, showSizeChanger: false }}
+              pagination={{
+                current: tablePage,
+                pageSize: tablePageSize,
+                showSizeChanger: false,
+                onChange: (page, pageSize) => {
+                  setTablePage(page);
+                  setTablePageSize(pageSize);
+                },
+              }}
               scroll={{ x: 'max-content' }}
               style={{ background: '#fff', borderRadius: 8 }}
               summary={() => {

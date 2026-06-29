@@ -228,7 +228,7 @@ onNavigateToProcess(sowName) callback fires
         │
         ▼
 App.tsx sets initialProcessSow = sowName
-  + navigateTo('information', 'information_process')
+  + navigateTo('clientmgmt_connects', 'clientmgmt')
         │
         ▼
 InternalProcess renders with initialSow prop

@@ -46,7 +46,6 @@ src/
 │   ├── AppSettings.tsx        — Settings > App Settings (dropdowns, app values,
 │   │                            notification triggers, templates)
 │   ├── ClientRequests.tsx     — Client Requests (Beeline requests)
-│   ├── CodeGuide.tsx          — Knowledge Base > Code Guide
 │   ├── EngagementMapping.tsx  — Resource Engagement Mapping
 │   │                            Tabs: Deployment Pool | Projects |
 │   │                                  Forecasting | Utilization Insights
@@ -60,7 +59,10 @@ src/
 │   ├── RateCard.tsx           — Information > Rate Card
 │   ├── ResourceHub.tsx        — Resources > Resource Hub (CRUD)
 │   ├── ResourceIntelligence.tsx — Resources > Resource Intelligence
-│   ├── TeamHierarchy.tsx      — Information > Team Hierarchy
+│   ├── stakeholders/
+│   │   ├── StakeholderNetwork.tsx — Clients > Stakeholders
+│   │   ├── StakeholderFilterPanel.tsx — Stakeholder filters + quick team tags
+│   │   └── stakeholderNetworkUtils.ts — Stakeholder shared helpers/layout/mappers
 │   ├── UserAccessControl.tsx  — Settings > User Access Control
 │   └── UserSettings.tsx       — Settings > User Settings
 │                                 Tabs: Column Visibility | Notification Snooze
@@ -85,6 +87,7 @@ src/
 │   ├── resourceApi.ts         — Resources CRUD
 │   ├── resourceInsightsApi.ts — Resource Intelligence entries
 │   ├── sowApi.ts              — SOW generation
+│   ├── stakeholderNetworkApi.ts — Stakeholder network CRUD wrappers
 │   ├── templateApi.ts         — Template file management
 │   └── userPreferencesApi.ts  — User preferences
 ├── context/                   — React context providers
@@ -134,6 +137,7 @@ server/
 │   ├── resources.js           — GET/POST/PUT/DELETE /api/resources/*
 │   ├── roles.js               — /api/roles/*
 │   ├── sowGeneration.js       — POST /api/sowGeneration/generate
+│   ├── team-hierarchy.js      — GET/PUT /api/team-hierarchy/*
 │   ├── templates.js           — GET/POST/DELETE /api/templates/*
 │   ├── user-groups.js         — /api/user-groups/*
 │   ├── user-preferences.js    — /api/user-preferences/*

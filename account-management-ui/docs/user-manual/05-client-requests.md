@@ -35,7 +35,7 @@ The main table lists all client requests with the following columns:
 | Raised By | Person or team who raised the request |
 | Processing Status | Current status in the processing pipeline |
 | Overall Status | High-level status (Open, Closed, etc.) |
-| Account Anchor | Responsible account owner |
+| Owner | Responsible account owner |
 | Date Raised | Date the request was created |
 | Request Type | Category of request |
 
@@ -43,7 +43,7 @@ The main table lists all client requests with the following columns:
 
 ## Filters
 
-> **Screenshot:** Filter bar — Processing Status, Overall Status, Account Anchor, Date Range dropdowns
+> **Screenshot:** Filter bar — Processing Status, Overall Status, Owner, Date Range dropdowns
 
 ### Available Filters
 
@@ -51,7 +51,7 @@ The main table lists all client requests with the following columns:
 |--------|-------------|
 | Processing Status | Filter by current pipeline stage (e.g., In Review, Approved, Rejected) |
 | Overall Status | Filter by high-level status |
-| Account Anchor | Filter by responsible owner |
+| Owner | Filter by responsible owner |
 | Request Type | Filter by category |
 | Date Range | Filter by Date Raised (from / to date picker) |
 
@@ -104,7 +104,7 @@ The main table lists all client requests with the following columns:
 ### Step-by-Step: Editing a Request
 
 1. Open the detail panel for a request.
-2. Click on any editable field (Processing Status, Account Anchor, etc.).
+2. Click on any editable field (Processing Status, Owner, etc.).
 3. Update the value.
 4. Click **Save** to persist changes.
 5. All edits are recorded in the audit log.
@@ -128,7 +128,7 @@ The Insights tab provides analytical summaries of all client request data:
 |---------|-------------|
 | Request Volume by Status | Bar chart — count of requests per Processing Status |
 | Trend Over Time | Line chart — request volume by month |
-| Account Anchor Breakdown | Pie/donut chart — distribution by account owner |
+| Owner Breakdown | Pie/donut chart — distribution by account owner |
 | Request Type Distribution | Breakdown by request category |
 | Summary Metrics | Total requests, open count, approval rate |
 
@@ -149,4 +149,4 @@ The Insights tab provides analytical summaries of all client request data:
 
 ---
 
-> **Previous:** [Internal Process](./04-internal-process.md) | **Next:** [Resource Hub](./06-resource-hub.md)
+> **Previous:** [Stakeholders](./05-stakeholders.md) | **Next:** [Resource Hub](./06-resource-hub.md)

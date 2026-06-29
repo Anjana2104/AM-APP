@@ -117,6 +117,7 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 | Upload PIW | `POST /api/piwGeneration/upload` | `ra_process` + `audit_log` |
 | Generate PIW | `POST /api/piwGeneration/generate` | (file output) |
 | Generate SOW | `POST /api/sowGeneration/generate` | (file output) |
+| Process progress insights (date-range + trend + detail export) | `GET /api/process` | `ra_process.step_completed_at`, `ra_process.start_date`, `ra_process.updated_at` |
 | Audit log (combined) | `GET /api/audit/process-combined/:id` | `audit_log` |
 | Download files | `GET /api/process/:id/files` | `ra_process` |
 
@@ -126,23 +127,16 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 
 | UI Feature | API Endpoint | DB Tables |
 |---|---|---|
-| Rate data | `GET /api/config/items?typeId=rate_card` | `app_config_items` |
+| Rate data from uploaded template | `GET /api/templates?type=rate_card_template`, `GET /api/templates/:id` | `templates` |
 
 ---
 
-## Information > Team Hierarchy (`TeamHierarchy`)
+## Clients > Stakeholders (`StakeholderNetwork`)
 
 | UI Feature | API Endpoint | DB Tables |
 |---|---|---|
-| Hierarchy data | `GET /api/config/items?typeId=team_hierarchy` | `app_config_items` |
-
----
-
-## Information > Code Guide (`CodeGuide`)
-
-| UI Feature | API Endpoint | DB Tables |
-|---|---|---|
-| Guide content | `GET /api/config/items?typeId=code_guide` | `app_config_items` |
+| List stakeholders by team type | `GET /api/team-hierarchy?teamType=client|ra` | `team_hierarchy_entries` |
+| Save uploaded/edited stakeholder network | `PUT /api/team-hierarchy/:teamType/bulk` | `team_hierarchy_entries`, `audit_log` |
 
 ---
 

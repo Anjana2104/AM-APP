@@ -26,6 +26,63 @@ function monthSortKey(m) {
   return yr * 100 + mo;
 }
 
+function normalizeBookingInput(raw = {}) {
+  return {
+    milestone_month: String(raw.milestone_month || '').trim(),
+    booking_month: String(raw.booking_month || '').trim(),
+    amount: Number(raw.amount),
+    notes: raw.notes == null ? '' : String(raw.notes),
+    created_by: raw.created_by == null ? 'system' : String(raw.created_by),
+    booking_type: String(raw.booking_type || '').trim().toLowerCase() === 'anticipated' ? 'anticipated' : 'fixed',
+  };
+}
+
+function validateBookingInput(input, rowLabel) {
+  const issues = [];
+  if (!input.milestone_month || !input.booking_month || Number.isNaN(input.amount)) {
+    issues.push(`${rowLabel}: milestone_month, booking_month, and numeric amount are required`);
+    return issues;
+  }
+  if (input.amount <= 0) {
+    issues.push(`${rowLabel}: amount must be a positive number`);
+  }
+  return issues;
+}
+
+function insertBooking(run, projectId, booking, createdAt) {
+  run(
+    "INSERT INTO project_bookings (project_id, milestone_month, booking_month, amount, notes, created_by, booking_type, created_at) VALUES (?,?,?,?,?,?,?,?)",
+    [projectId, booking.milestone_month, booking.booking_month, booking.amount, booking.notes, booking.created_by, booking.booking_type, createdAt]
+  );
+}
+
+function formatBookingAuditValue(booking) {
+  const amount = Number(booking.amount || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  const notes = (booking.notes || '').trim();
+  return [
+    `Milestone: ${booking.milestone_month}`,
+    `Booked In: ${booking.booking_month}`,
+    `Type: ${booking.booking_type === 'anticipated' ? 'Anticipated' : 'Fixed'}`,
+    `Amount: ${amount}`,
+    `Notes: ${notes || '-'}`,
+  ].join(' | ');
+}
+
+function insertFinanceAudit(run, {
+  recordId,
+  recordName,
+  field,
+  oldValue = '',
+  newValue = '',
+  changedBy = 'system',
+  changedAt = new Date().toISOString(),
+}) {
+  run(
+    "INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at) VALUES (?,?,?,?,?,?,?,?)",
+    ['finance', recordId, recordName || '', field, oldValue, newValue, changedBy, changedAt]
+  );
+}
+
 // GET /api/finance/month-headers
 router.get("/month-headers", async (req, res) => {
   try {
@@ -485,18 +542,28 @@ router.get("/projects/:id/bookings", async (req, res) => {
 
 // POST /api/finance/projects/:id/bookings
 router.post("/projects/:id/bookings", async (req, res) => {
-  const { milestone_month, booking_month, amount, notes, created_by, booking_type } = req.body;
-  if (!milestone_month || !booking_month || amount == null) {
-    return res.status(400).json({ error: "milestone_month, booking_month and amount are required" });
+  const booking = normalizeBookingInput(req.body);
+  const errors = validateBookingInput(booking, 'Row 1');
+  if (errors.length) {
+    return res.status(400).json({ error: errors.join('; ') });
   }
   try {
     const db = await getDb();
+    const projectId = parseInt(req.params.id, 10);
+    const project = db.get("SELECT id, project, code FROM finance_projects WHERE id=?", [projectId]);
+    const recordName = project ? `${project.code || ''}${project.code ? ' - ' : ''}${project.project || ''}`.trim() : `Project ${projectId}`;
     const created_at = new Date().toISOString();
-    db.run(
-      "INSERT INTO project_bookings (project_id, milestone_month, booking_month, amount, notes, created_by, booking_type, created_at) VALUES (?,?,?,?,?,?,?,?)",
-      [req.params.id, milestone_month, booking_month, amount, notes || "", created_by || "system", booking_type || "fixed", created_at]
-    );
+    insertBooking(db.run.bind(db), projectId, booking, created_at);
     const id = db.lastId();
+    insertFinanceAudit(db.run.bind(db), {
+      recordId: projectId,
+      recordName,
+      field: 'Booking Created',
+      oldValue: '',
+      newValue: formatBookingAuditValue(booking),
+      changedBy: booking.created_by || 'system',
+      changedAt: created_at,
+    });
     res.json({ ok: true, id });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -512,27 +579,37 @@ router.post("/projects/:id/bookings/batch", async (req, res) => {
   // Validate all rows before touching the DB
   const created_at = new Date().toISOString();
   const errors = [];
-  for (const [i, b] of bookings.entries()) {
-    const { milestone_month, booking_month, amount } = b;
-    if (!milestone_month || !booking_month || amount == null) {
-      errors.push(`Row ${i + 1}: milestone_month, booking_month, and amount are required`);
-    }
-  }
+  const normalizedBookings = bookings.map((b) => normalizeBookingInput(b));
+  normalizedBookings.forEach((booking, index) => {
+    errors.push(...validateBookingInput(booking, `Row ${index + 1}`));
+  });
   if (errors.length) {
     return res.status(400).json({ error: errors.join("; ") });
   }
   try {
     const db = await getDb();
+    const projectId = parseInt(req.params.id, 10);
+    const project = db.get("SELECT id, project, code FROM finance_projects WHERE id=?", [projectId]);
+    const recordName = project ? `${project.code || ''}${project.code ? ' - ' : ''}${project.project || ''}`.trim() : `Project ${projectId}`;
+    const changedBy = normalizedBookings[0]?.created_by || 'system';
     db.runInTransaction((run) => {
-      for (const b of bookings) {
-        const { milestone_month, booking_month, amount, notes, created_by, booking_type } = b;
-        run(
-          "INSERT INTO project_bookings (project_id, milestone_month, booking_month, amount, notes, created_by, booking_type, created_at) VALUES (?,?,?,?,?,?,?,?)",
-          [req.params.id, milestone_month, booking_month, amount, notes || "", created_by || "system", booking_type || "fixed", created_at]
-        );
+      for (const booking of normalizedBookings) {
+        insertBooking(run, projectId, booking, created_at);
       }
+      const details = normalizedBookings
+        .map((booking, index) => `#${index + 1} ${formatBookingAuditValue(booking)}`)
+        .join('\n');
+      insertFinanceAudit(run, {
+        recordId: projectId,
+        recordName,
+        field: 'Booking Created (Batch)',
+        oldValue: '',
+        newValue: `Count: ${normalizedBookings.length}\n${details}`,
+        changedBy,
+        changedAt: created_at,
+      });
     });
-    res.json({ ok: true, count: bookings.length });
+    res.json({ ok: true, count: normalizedBookings.length });
   } catch (err) {
     res.status(500).json({ error: err.message || "Transaction failed — no data was written." });
   }
@@ -542,7 +619,63 @@ router.post("/projects/:id/bookings/batch", async (req, res) => {
 router.delete("/projects/:id/bookings/:bookingId", async (req, res) => {
   try {
     const db = await getDb();
-    db.run("DELETE FROM project_bookings WHERE id=? AND project_id=?", [req.params.bookingId, req.params.id]);
+    const projectId = parseInt(req.params.id, 10);
+    const bookingId = parseInt(req.params.bookingId, 10);
+    const booking = db.get("SELECT * FROM project_bookings WHERE id=? AND project_id=?", [bookingId, projectId]);
+    if (!booking) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    const project = db.get("SELECT id, project, code FROM finance_projects WHERE id=?", [projectId]);
+    const recordName = project ? `${project.code || ''}${project.code ? ' - ' : ''}${project.project || ''}`.trim() : `Project ${projectId}`;
+    const changedBy = String(req.query.changedBy || req.body?.changedBy || 'system');
+    const changedAt = new Date().toISOString();
+    db.run("DELETE FROM project_bookings WHERE id=? AND project_id=?", [bookingId, projectId]);
+    insertFinanceAudit(db.run.bind(db), {
+      recordId: projectId,
+      recordName,
+      field: 'Booking Deleted',
+      oldValue: formatBookingAuditValue(booking),
+      newValue: '',
+      changedBy,
+      changedAt,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/finance/projects/:id/bookings/:bookingId
+router.put("/projects/:id/bookings/:bookingId", async (req, res) => {
+  const booking = normalizeBookingInput(req.body);
+  const errors = validateBookingInput(booking, 'Row 1');
+  if (errors.length) {
+    return res.status(400).json({ error: errors.join('; ') });
+  }
+  try {
+    const db = await getDb();
+    const projectId = parseInt(req.params.id, 10);
+    const bookingId = parseInt(req.params.bookingId, 10);
+    const existing = db.get("SELECT * FROM project_bookings WHERE id=? AND project_id=?", [bookingId, projectId]);
+    if (!existing) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+    const project = db.get("SELECT id, project, code FROM finance_projects WHERE id=?", [projectId]);
+    const recordName = project ? `${project.code || ''}${project.code ? ' - ' : ''}${project.project || ''}`.trim() : `Project ${projectId}`;
+    const changedAt = new Date().toISOString();
+    db.run(
+      "UPDATE project_bookings SET milestone_month=?, booking_month=?, amount=?, notes=?, booking_type=? WHERE id=? AND project_id=?",
+      [booking.milestone_month, booking.booking_month, booking.amount, booking.notes, booking.booking_type, bookingId, projectId]
+    );
+    insertFinanceAudit(db.run.bind(db), {
+      recordId: projectId,
+      recordName,
+      field: 'Booking Updated',
+      oldValue: formatBookingAuditValue(existing),
+      newValue: formatBookingAuditValue(booking),
+      changedBy: booking.created_by || 'system',
+      changedAt,
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -553,7 +686,25 @@ router.delete("/projects/:id/bookings/:bookingId", async (req, res) => {
 router.delete("/projects/:id/bookings", async (req, res) => {
   try {
     const db = await getDb();
-    db.run("DELETE FROM project_bookings WHERE project_id=?", [req.params.id]);
+    const projectId = parseInt(req.params.id, 10);
+    const existing = db.all("SELECT * FROM project_bookings WHERE project_id=?", [projectId]);
+    const project = db.get("SELECT id, project, code FROM finance_projects WHERE id=?", [projectId]);
+    const recordName = project ? `${project.code || ''}${project.code ? ' - ' : ''}${project.project || ''}`.trim() : `Project ${projectId}`;
+    const changedBy = String(req.query.changedBy || req.body?.changedBy || 'system');
+    const changedAt = new Date().toISOString();
+    db.run("DELETE FROM project_bookings WHERE project_id=?", [projectId]);
+    if (existing.length > 0) {
+      const details = existing.map((b, index) => `#${index + 1} ${formatBookingAuditValue(b)}`).join('\n');
+      insertFinanceAudit(db.run.bind(db), {
+        recordId: projectId,
+        recordName,
+        field: 'Booking Deleted (All)',
+        oldValue: `Count: ${existing.length}\n${details}`,
+        newValue: '',
+        changedBy,
+        changedAt,
+      });
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -564,7 +715,31 @@ router.delete("/projects/:id/bookings", async (req, res) => {
 router.delete("/bookings/all", async (req, res) => {
   try {
     const db = await getDb();
+    const existing = db.all("SELECT * FROM project_bookings");
+    const projectMap = new Map();
+    db.all("SELECT id, project, code FROM finance_projects").forEach((p) => {
+      projectMap.set(p.id, `${p.code || ''}${p.code ? ' - ' : ''}${p.project || ''}`.trim() || `Project ${p.id}`);
+    });
+    const changedBy = String(req.query.changedBy || req.body?.changedBy || 'system');
+    const changedAt = new Date().toISOString();
     db.run("DELETE FROM project_bookings");
+    const groupedByProject = new Map();
+    existing.forEach((b) => {
+      if (!groupedByProject.has(b.project_id)) groupedByProject.set(b.project_id, []);
+      groupedByProject.get(b.project_id).push(b);
+    });
+    groupedByProject.forEach((bookingsForProject, projectId) => {
+      const details = bookingsForProject.map((b, index) => `#${index + 1} ${formatBookingAuditValue(b)}`).join('\n');
+      insertFinanceAudit(db.run.bind(db), {
+        recordId: projectId,
+        recordName: projectMap.get(projectId) || `Project ${projectId}`,
+        field: 'Booking Deleted (All)',
+        oldValue: `Count: ${bookingsForProject.length}\n${details}`,
+        newValue: '',
+        changedBy,
+        changedAt,
+      });
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

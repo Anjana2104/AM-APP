@@ -112,7 +112,7 @@ The Finance Management module is the default landing page after login. It tracks
 
 ## Project Code Reference
 
-For a searchable list of all Open Air project codes, see the [Code Guide](./11-code-guide.md) module.
+Open Air/project code master values are managed through **App Settings** configuration.
 
 ---
 

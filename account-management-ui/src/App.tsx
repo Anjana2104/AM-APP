@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { FinanceSummary } from './pages/FinanceSummary';
 import { AccountSummary } from './pages/AccountSummary';
 import { RateCard } from './pages/RateCard';
-import { TeamHierarchy } from './pages/TeamHierarchy';
+import { StakeholderNetwork } from './pages/stakeholders/StakeholderNetwork';
 import { UserSettings } from './pages/UserSettings';
 import { LoginPage } from './pages/LoginPage';
 import { EngagementMapping } from './pages/EngagementMapping';
@@ -15,18 +15,17 @@ const ResourceInformation = lazy(() => import('./pages/ResourceHub'));
 const RequestManagement  = lazy(() => import('./pages/ClientRequests'));
 const InternalProcess    = lazy(() => import('./pages/InternalProcess').then(m => ({ default: m.InternalProcess })));
 const AppSettings         = lazy(() => import('./pages/AppSettings').then(m => ({ default: m.AppSettings })));
-const CodeGuide          = lazy(() => import('./pages/CodeGuide').then(m => ({ default: m.CodeGuide })));
 const UserAccessControl  = lazy(() => import('./pages/UserAccessControl').then(m => ({ default: m.UserAccessControl })));
 const ResourceInsights   = lazy(() => import('./pages/ResourceIntelligence'));
 import { useAuth } from './context/AuthContext';
 import { NotificationProvider, useNotifications } from './context/NotificationContext';
 import { UserPreferencesProvider } from './context/UserPreferencesContext';
 import {
-  DollarOutlined, TeamOutlined, FileTextOutlined, BarChartOutlined,
+  DollarOutlined, TeamOutlined, BarChartOutlined,
   RocketOutlined, ThunderboltOutlined, UserOutlined,
   MenuFoldOutlined, MenuUnfoldOutlined, DownOutlined, RightOutlined,
   EyeOutlined, HomeOutlined, InfoCircleOutlined,
-  CreditCardOutlined, ApartmentOutlined, NodeIndexOutlined, SettingOutlined,
+  CreditCardOutlined, NodeIndexOutlined, SettingOutlined,
   SafetyCertificateOutlined, BellOutlined, CheckOutlined,
   CloseOutlined, AlertOutlined, InfoCircleFilled,
 } from '@ant-design/icons';
@@ -51,7 +50,6 @@ type EAMPage =
   | 'information_ratecard'
   | 'information_teamhierarchy'
   | 'information_process'
-  | 'information_codeguide'
   | 'user_settings'
   | 'configuration'
   | 'user_access_control';
@@ -72,7 +70,6 @@ const PAGE_SECTION_MAP: Record<EAMPage, EAMSection> = {
   information_ratecard: 'information',
   information_teamhierarchy: 'information',
   information_process: 'information',
-  information_codeguide: 'information',
   configuration: 'configuration',
   user_settings: 'configuration',
   user_access_control: 'configuration',
@@ -593,6 +590,7 @@ export default function App() {
   const [resourceInfoFilterType, setResourceInfoFilterType] = useState<string | undefined>(undefined);
   const [resourceInfoFilterValue, setResourceInfoFilterValue] = useState<string | undefined>(undefined);
   const [requestsBeelineFilter, setRequestsBeelineFilter] = useState<string | undefined>(undefined);
+  const [requestsInitialFilters, setRequestsInitialFilters] = useState<Record<string, any> | undefined>(undefined);
   const [initialProcessSow, setInitialProcessSow] = useState<string | undefined>(undefined);
 
   // Load resources on mount so EngagementMapping and ResourceInsights work without visiting Resource Hub first
@@ -711,11 +709,10 @@ export default function App() {
         case 'resources_info':        return <ResourceInformation onResourcesChange={setResources} initialRoleFilter={resourceInfoRoleFilter} initialRaIdFilter={resourceInfoRaIdFilter} initialFilterType={resourceInfoFilterType} initialFilterValue={resourceInfoFilterValue} onFilterApplied={() => { setResourceInfoRoleFilter(undefined); setResourceInfoRaIdFilter(undefined); setResourceInfoFilterType(undefined); setResourceInfoFilterValue(undefined); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} onNavigateToProcess={(sow) => { setInitialProcessSow(sow); navigateTo('clientmgmt_connects', 'clientmgmt'); }} />;
         case 'resources_utilization': return <EngagementMapping resources={resources} onUpdateResources={setResources} onNavigate={(page, roleFilter) => { setResourceInfoRoleFilter(roleFilter); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
         case 'resources_insights':    return <ResourceInsights resources={resources} onNavigate={(page, raId) => { if (raId) setResourceInfoRaIdFilter(raId); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateWithFilter={(type, value) => { setResourceInfoFilterType(type); setResourceInfoFilterValue(value); navigateTo('resources_info', PAGE_SECTION_MAP['resources_info']); }} onNavigateToRequest={(beelineId) => { setRequestsBeelineFilter(beelineId); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToProcess={(sow) => { setInitialProcessSow(sow); navigateTo('clientmgmt_connects', 'clientmgmt'); }} />;
-        case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} onFilterApplied={() => setRequestsBeelineFilter(undefined)} />;
+        case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} initialFilters={requestsInitialFilters} onFilterApplied={() => { setRequestsBeelineFilter(undefined); setRequestsInitialFilters(undefined); }} />;
         case 'clientmgmt_connects':   return <InternalProcess resources={resources} initialSow={initialProcessSow} />;
         case 'information_ratecard':      return <RateCard />;
-        case 'information_teamhierarchy': return <TeamHierarchy />;
-        case 'information_codeguide':        return <CodeGuide />;
+        case 'information_teamhierarchy': return <StakeholderNetwork />;
         case 'information_process':       return <div style={{ padding: 40, textAlign: 'center', marginTop: 80, color: '#aaa', fontSize: '16px' }}>Client Process — Coming Soon</div>;
         case 'configuration':             return <AppSettings />;
         case 'user_settings':             return <UserSettings />;
@@ -818,15 +815,16 @@ export default function App() {
                     </button>
                   </Popover>
                 )}
-                {/* Client Requests — popover */}
-                {hasPermission('clientmgmt_requests', 'view') && (
+                {/* Clients — popover */}
+                {(hasPermission('clientmgmt_requests', 'view') || hasPermission('information_teamhierarchy', 'view')) && (
                   <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 160 }} content={
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Clients</div>
-                      <button onClick={() => { navigateTo('clientmgmt_requests', 'clientmgmt'); }} style={{ background: activePage === 'clientmgmt_requests' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'clientmgmt_requests' ? '#1677ff' : '#262626', fontWeight: activePage === 'clientmgmt_requests' ? 600 : 400 }}>Requests</button>
+                      {hasPermission('information_teamhierarchy', 'view') && <button onClick={() => { navigateTo('information_teamhierarchy', 'clientmgmt'); }} style={{ background: activePage === 'information_teamhierarchy' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_teamhierarchy' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_teamhierarchy' ? 600 : 400 }}>Stakeholders</button>}
+                      {hasPermission('clientmgmt_requests', 'view') && <button onClick={() => { navigateTo('clientmgmt_requests', 'clientmgmt'); }} style={{ background: activePage === 'clientmgmt_requests' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'clientmgmt_requests' ? '#1677ff' : '#262626', fontWeight: activePage === 'clientmgmt_requests' ? 600 : 400 }}>Requests</button>}
                     </div>
                   }>
-                    <button style={{ background: activePage.startsWith('clientmgmt') && activePage !== 'clientmgmt_connects' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('clientmgmt') && activePage !== 'clientmgmt_connects' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
+                    <button style={{ background: (activePage.startsWith('clientmgmt') && activePage !== 'clientmgmt_connects') || activePage === 'information_teamhierarchy' ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: (activePage.startsWith('clientmgmt') && activePage !== 'clientmgmt_connects') || activePage === 'information_teamhierarchy' ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
                       <UserOutlined />
                     </button>
                   </Popover>
@@ -853,14 +851,12 @@ export default function App() {
                   </Popover>
                 )}
                 {/* Information — popover */}
-                {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (
+                {(hasPermission('information_ratecard', 'view') || hasPermission('information_process', 'view')) && (
                   <Popover placement="rightTop" trigger="hover" overlayInnerStyle={{ padding: 4, minWidth: 160 }} content={
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: '#8c8c8c', padding: '2px 8px 4px', textTransform: 'uppercase', letterSpacing: 0.5 }}>Information</div>
                       {hasPermission('information_ratecard', 'view') && <button onClick={() => { navigateTo('information_ratecard', 'information'); }} style={{ background: activePage === 'information_ratecard' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_ratecard' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_ratecard' ? 600 : 400 }}>Client Rate Card</button>}
-                      {hasPermission('information_teamhierarchy', 'view') && <button onClick={() => { navigateTo('information_teamhierarchy', 'information'); }} style={{ background: activePage === 'information_teamhierarchy' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_teamhierarchy' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_teamhierarchy' ? 600 : 400 }}>Team Hierarchy</button>}
                       {hasPermission('information_process', 'view') && <button onClick={() => { navigateTo('information_process', 'information'); }} style={{ background: activePage === 'information_process' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_process' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_process' ? 600 : 400 }}>Client Process</button>}
-                      {hasPermission('information_codeguide', 'view') && <button onClick={() => { navigateTo('information_codeguide', 'information'); }} style={{ background: activePage === 'information_codeguide' ? '#e6f4ff' : 'transparent', border: 'none', cursor: 'pointer', padding: '6px 10px', borderRadius: 6, textAlign: 'left', fontSize: 12, color: activePage === 'information_codeguide' ? '#1677ff' : '#262626', fontWeight: activePage === 'information_codeguide' ? 600 : 400 }}>Code Guide</button>}
                     </div>
                   }>
                     <button style={{ background: activePage.startsWith('information') ? 'rgba(59,130,246,0.22)' : 'transparent', border: 'none', color: activePage.startsWith('information') ? '#60a5fa' : 'rgba(255,255,255,0.55)', cursor: 'pointer', padding: '9px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', fontSize: '15px', transition: 'all 0.15s' }}>
@@ -926,15 +922,16 @@ export default function App() {
                 </SideNavGroup>
                 )}
 
-                {/* Client Requests */}
-                {hasPermission('clientmgmt_requests', 'view') && (
+                {/* Clients */}
+                {(hasPermission('clientmgmt_requests', 'view') || hasPermission('information_teamhierarchy', 'view')) && (
                 <SideNavGroup
                   icon={<UserOutlined />} label="Clients"
-                  active={activePage === 'clientmgmt_requests'}
+                  active={activePage === 'clientmgmt_requests' || activePage === 'information_teamhierarchy'}
                   expanded={isExp('clientmgmt')}
                   onToggle={() => toggleSection('clientmgmt')}
                 >
-                  <SubNavItem label="Requests" active={activePage === 'clientmgmt_requests'} onClick={() => navigateTo('clientmgmt_requests', 'clientmgmt')} />
+                  {hasPermission('information_teamhierarchy', 'view') && <SubNavItem label="Stakeholders" active={activePage === 'information_teamhierarchy'} onClick={() => navigateTo('information_teamhierarchy', 'clientmgmt')} />}
+                  {hasPermission('clientmgmt_requests', 'view') && <SubNavItem label="Requests" active={activePage === 'clientmgmt_requests'} onClick={() => navigateTo('clientmgmt_requests', 'clientmgmt')} />}
                 </SideNavGroup>
                 )}
 
@@ -993,7 +990,7 @@ export default function App() {
                 </>)}
 
                 {/* ── INFORMATION section ── */}
-                {(hasPermission('information_ratecard', 'view') || hasPermission('information_teamhierarchy', 'view') || hasPermission('information_process', 'view') || hasPermission('information_codeguide', 'view')) && (<>
+                {(hasPermission('information_ratecard', 'view') || hasPermission('information_process', 'view')) && (<>
                 <SectionLabel
                   label="Information"
                   collapsible
@@ -1007,20 +1004,10 @@ export default function App() {
                     active={activePage === 'information_ratecard'}
                     onClick={() => navigateTo('information_ratecard', 'information')} showArrow />
                   )}
-                  {hasPermission('information_teamhierarchy', 'view') && (
-                  <SideNavItem icon={<ApartmentOutlined />} label="Team Hierarchy"
-                    active={activePage === 'information_teamhierarchy'}
-                    onClick={() => navigateTo('information_teamhierarchy', 'information')} showArrow />
-                  )}
                   {hasPermission('information_process', 'view') && (
                   <SideNavItem icon={<RocketOutlined />} label="Client Process"
                     active={activePage === 'information_process'}
                     onClick={() => navigateTo('information_process', 'information')} showArrow />
-                  )}
-                  {hasPermission('information_codeguide', 'view') && (
-                  <SideNavItem icon={<FileTextOutlined />} label="Code Guide"
-                    active={activePage === 'information_codeguide'}
-                    onClick={() => navigateTo('information_codeguide', 'information')} showArrow />
                   )}
                 </>)}
                 </>)}
@@ -1091,8 +1078,8 @@ export default function App() {
       icon: <UserOutlined style={{ fontSize: 26, color: '#fa8c16' }} />,
       iconBg: '#fff7e6',
       title: 'Client Operations',
-      desc: 'Manage and resolve client requests seamlessly.',
-      page: 'clientmgmt_requests' as EAMPage,
+      desc: 'Manage stakeholders first, then track and resolve client requests.',
+      page: 'information_teamhierarchy' as EAMPage,
       section: 'clientmgmt' as EAMSection,
     },
     {

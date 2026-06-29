@@ -72,15 +72,17 @@ export async function bulkSave(requests: RequestPayload[]): Promise<{ ok: boolea
   return res.json();
 }
 
-export async function createRequest(payload: RequestPayload): Promise<{ ok: boolean; id?: number }> {
+export async function createRequest(payload: RequestPayload): Promise<{ ok: boolean; id?: number; error?: string }> {
   const online = await isServerAvailable();
-  if (!online) return { ok: false };
+  if (!online) return { ok: false, error: 'Server unavailable' };
   const res = await fetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return res.json();
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data.error || 'Failed to create request' };
+  return data;
 }
 
 export async function updateRequest(id: number, payload: Partial<RequestPayload>): Promise<boolean> {
@@ -189,4 +191,3 @@ export async function deleteRequestComment(requestId: number, commentId: number)
     return data.ok === true;
   } catch { return false; }
 }
-

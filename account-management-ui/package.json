@@ -10,8 +10,11 @@
     "server": "cd server && node index.js",
     "dev:full": "npm run dev"
   },
+  "overrides": {
+    "dompurify": "^3.4.11"
+  },
   "devDependencies": {
-    "vite": "^8.0.12"
+    "vite": "^8.1.0"
   },
   "dependencies": {
     "@ant-design/icons": "^6.2.3",

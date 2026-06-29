@@ -35,6 +35,9 @@ interface ProcessRow {
   eprev?: string;
   comments?: string;
   accountAnchor?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  stepCompletedAt?: Record<string, string> | string;
 }
 
 interface LinkedResource {
@@ -75,10 +78,47 @@ function cleanVal(v: string | null | undefined): string {
   return s;
 }
 
+function parseStepCompletedAtMap(value: ProcessRow['stepCompletedAt']): Record<string, string> {
+  if (!value) return {};
+  if (typeof value === 'object') return value;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed || {}).filter(([, v]) => typeof v === 'string' && String(v).trim()),
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function toCompletionDate(map: Record<string, string>, key: string, fallbackDate?: string) {
+  const keyAliases: Record<string, string[]> = {
+    signed_sow: ['signed_sow', 'signedSow'],
+    salesforce_id: ['salesforce_id', 'salesforceId', 'sf'],
+    proms_id: ['proms_id', 'proms', 'promsId'],
+    budget: ['budget'],
+    open_air_code: ['open_air_code', 'openAirCode'],
+    piw: ['piw'],
+    eprev: ['eprev'],
+    sow: ['sow'],
+  };
+  const ts = (keyAliases[key] || [key]).map(k => map[k]).find(Boolean) || fallbackDate || '';
+  return formatDateUtcOnly(ts);
+}
+
+function formatDateUtcOnly(value: string | undefined): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
 export default function ProcessDetailPanel({
   row, currentUser, canEdit, canDelete, linkedResources = [], onEdit, onToggleActive, onLinkResources,
 }: Props) {
   const isActive = row.active === 'Yes';
+  const stepCompletedAt = parseStepCompletedAtMap(row.stepCompletedAt);
+  const lastUpdatedDate = formatDateUtcOnly(row.updatedAt || row.createdAt || '');
 
   // ── Audit state ─────────────────────────────────────────────────────────────
   const [auditLog, setAuditLog]                 = useState<AuditEntry[]>([]);
@@ -150,16 +190,16 @@ export default function ProcessDetailPanel({
     setComments(prev => prev.filter(c => c.id !== commentId));
   };
 
-  const infoFields: Array<[string, string | undefined]> = [
-    ['Start Date',    row.startDate],
-    ['Account Anchor', row.accountAnchor],
-    ['Signed SOW',    row.signedSow],
-    ['PIW',           row.piw],
-    ['Salesforce ID', row.salesforceId],
-    ['PROMS ID',      row.promsId],
-    ['Budget (INR)',   row.budget],
-    ['Eprev',         row.eprev],
-    ['OpenAir Code',  row.openAirCode],
+  const infoFields: Array<{ label: string; value?: string; completedKey?: string }> = [
+    { label: 'Start Date', value: row.startDate },
+    { label: 'Account Anchor', value: row.accountAnchor },
+    { label: 'Signed SOW', value: row.signedSow, completedKey: 'signed_sow' },
+    { label: 'PIW', value: row.piw, completedKey: 'piw' },
+    { label: 'Salesforce ID', value: row.salesforceId, completedKey: 'salesforce_id' },
+    { label: 'PROMS ID', value: row.promsId, completedKey: 'proms_id' },
+    { label: 'Budget (INR)', value: row.budget, completedKey: 'budget' },
+    { label: 'Eprev', value: row.eprev, completedKey: 'eprev' },
+    { label: 'OpenAir Code', value: row.openAirCode, completedKey: 'open_air_code' },
   ];
 
   // ── Header card ─────────────────────────────────────────────────────────────
@@ -186,6 +226,11 @@ export default function ProcessDetailPanel({
                 </Button>
               )}
             </div>
+      {lastUpdatedDate && (
+        <Text type="secondary" italic style={{ fontSize: 10, color: '#722ed1' }}>
+          Last Updated: {lastUpdatedDate}
+        </Text>
+      )}
     </div>
   );
 
@@ -193,10 +238,15 @@ export default function ProcessDetailPanel({
   const infoGrid = (
     <div style={{ background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0', padding: '10px 12px' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px' }}>
-        {infoFields.filter(([, v]) => v).map(([label, value]) => (
+        {infoFields.filter(({ value }) => value).map(({ label, value, completedKey }) => (
           <div key={label}>
             <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{label}</Text>
             <Text style={{ fontSize: 12, fontWeight: 500, wordBreak: 'break-word' }}>{value || '—'}</Text>
+            {completedKey && toCompletionDate(stepCompletedAt, completedKey, row.updatedAt || row.createdAt) && (
+              <Text type="secondary" italic style={{ fontSize: 10, color: '#722ed1', display: 'block' }}>
+                on {toCompletionDate(stepCompletedAt, completedKey, row.updatedAt || row.createdAt)}
+              </Text>
+            )}
           </div>
         ))}
       </div>

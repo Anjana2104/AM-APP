@@ -29,6 +29,11 @@ import * as financeApi from '../api/financeApi';
 import * as invoiceApi from '../api/invoiceApi';
 import * as auditApi from '../api/auditApi';
 import type { AuditEntry } from '../api/auditApi';
+import {
+  validateAndGroupBulkBookings,
+} from './finance/bookingUploadUtils';
+import ProjectBookingDrawer from './finance/ProjectBookingDrawer';
+import BulkBookingDrawer from './finance/BulkBookingDrawer';
 import { useConfig } from '../context/ConfigContext';
 import { useAuth } from '../context/AuthContext';
 import { useUserPreferences } from '../context/UserPreferencesContext';
@@ -54,6 +59,8 @@ type Row = {
   comments: string;
 };
 
+const BULK_BOOKING_UPLOAD_REQUIRED_HEADERS = ['Project Code', 'Milestone Month', 'Booking Month', 'Amount'] as const;
+
 const inr = (n: number) =>
   n ? `₹ ${n.toLocaleString('en-IN', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}` : '—';
 
@@ -66,6 +73,10 @@ function parseINR(v: any): number {
   const cleaned = String(v).replace(/₹|,/g, '').trim();
   const num = Number(cleaned);
   return isFinite(num) ? num : 0;
+}
+
+function findMissingHeaders(headers: string[], required: readonly string[]): string[] {
+  return required.filter((h) => !headers.includes(h));
 }
 
 // ─── Fiscal year helpers ─────────────────────────────────────────────────────
@@ -224,202 +235,6 @@ function downloadTemplate() {
   XLSXStyle.writeFile(wb, 'SOW_Details_Template.xlsx');
 }
 
-// ── Booking bulk-upload template ──────────────────────────────────────────────
-function downloadBookingTemplate(
-  refData?: Array<{ milestoneMonth: string; totalAmount: number; alreadyBooked: number; available: number; bookingMonths?: string[]; milestoneType?: 'booked' | 'anticipated' }>,
-  projectName?: string,
-  projectCode?: string,
-) {
-  const headerStyle = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '389e0d' } }, alignment: { horizontal: 'center' } };
-  const numStyle = { alignment: { horizontal: 'right' } };
-  const templateRows: any[][] = [['Milestone Month', 'Booking Month', 'Amount', 'Notes']];
-  if (refData && refData.length > 0) {
-    refData.filter(r => r.available > 0).forEach(r => {
-      templateRows.push([r.milestoneMonth, '', r.available, '']);
-    });
-  } else {
-    templateRows.push(["Jan'26", "Jun'26", 50000, 'PO-1234']);
-    templateRows.push(["Feb'26", "Jun'26", 30000, '']);
-  }
-  const ws: any = XLSXStyle.utils.aoa_to_sheet(templateRows);
-  ['A1','B1','C1','D1'].forEach(addr => { if (ws[addr]) ws[addr].s = headerStyle; });
-  ws['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 30 }];
-
-  // Instructions sheet
-  const instrAoa = [
-    ['Column', 'Description', 'Required?', 'Example'],
-    ['Milestone Month', "Format: Mon'YY — must match a booked milestone with remaining capacity", 'Yes', "Jan'26"],
-    ['Booking Month',   'Month the booking is officially recorded', 'Yes', "Jun'26"],
-    ['Amount',          'Numeric amount to book (must not exceed available capacity shown in Reference Data)', 'Yes', '50000'],
-    ['Notes',           'Optional; mandatory if amount < full available capacity of that milestone', 'No', 'PO-1234'],
-  ];
-  const wsInstr: any = XLSXStyle.utils.aoa_to_sheet(instrAoa);
-  wsInstr['!cols'] = [{ wch: 18 }, { wch: 60 }, { wch: 12 }, { wch: 12 }];
-
-  // Reference Data sheet — Project Code + Project Name + milestone details
-  const refHeaderStyle = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1d6196' } }, alignment: { horizontal: 'center' } };
-  const availStyle = { font: { bold: true }, fill: { fgColor: { rgb: 'f6ffed' } }, alignment: { horizontal: 'right' } };
-  const bookedStyle = { fill: { fgColor: { rgb: 'fff1f0' } }, alignment: { horizontal: 'right' } };
-  const zeroAvailStyle = { font: { bold: true, color: { rgb: 'cf1322' } }, fill: { fgColor: { rgb: 'fff1f0' } }, alignment: { horizontal: 'right' } };
-  const refRows: any[][] = [['Project Code', 'Project Name', 'Milestone Month', 'Type', 'Total Amount', 'Already Booked', 'Available to Book', 'Booking Month(s)', 'Status']];
-  (refData || []).forEach(r => {
-    refRows.push([
-      projectCode || '—',
-      projectName || '—',
-      r.milestoneMonth,
-      r.milestoneType === 'anticipated' ? 'Anticipated' : 'Fixed',
-      r.totalAmount,
-      r.alreadyBooked,
-      r.available,
-      (r.bookingMonths || []).join(', ') || '—',
-      r.available <= 0 ? 'Fully Booked' : r.alreadyBooked > 0 ? 'Partially Booked' : 'Open',
-    ]);
-  });
-  const wsRef: any = XLSXStyle.utils.aoa_to_sheet(refRows);
-  ['A1','B1','C1','D1','E1','F1','G1','H1','I1'].forEach(addr => { if (wsRef[addr]) wsRef[addr].s = refHeaderStyle; });
-  refRows.slice(1).forEach((row, i) => {
-    const r = i + 2;
-    const isZero = row[6] <= 0; // "Available to Book" is now col index 6
-    (['E','F'] as const).forEach(col => { const addr = `${col}${r}`; if (wsRef[addr]) wsRef[addr].s = isZero ? bookedStyle : numStyle; });
-    const gAddr = `G${r}`; if (wsRef[gAddr]) wsRef[gAddr].s = isZero ? zeroAvailStyle : availStyle;
-  });
-  wsRef['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 22 }, { wch: 16 }];
-
-  const wb = XLSXStyle.utils.book_new();
-  XLSXStyle.utils.book_append_sheet(wb, ws, 'Booking Template');
-  XLSXStyle.utils.book_append_sheet(wb, wsInstr, 'Instructions');
-  XLSXStyle.utils.book_append_sheet(wb, wsRef, 'Reference Data');
-  XLSXStyle.writeFile(wb, 'Booking_Template.xlsx');
-}
-
-// ── Export booking history ───────────────────────────────────────────────────
-function exportBookingHistory(
-  projectName: string,
-  projectCode: string,
-  bookings: financeApi.ProjectBooking[],
-) {
-  const hdrStyle = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1d6196' } }, alignment: { horizontal: 'center' } };
-  const numStyle = { alignment: { horizontal: 'right' } };
-  const aoa: any[][] = [['Project Code', 'Project Name', 'Milestone Month', 'Booking Month', 'Type', 'Amount', 'Notes', 'Recorded By', 'Recorded At']];
-  bookings.forEach(b => {
-    aoa.push([
-      projectCode || '—',
-      projectName || '—',
-      b.milestone_month,
-      b.booking_month,
-      b.booking_type === 'anticipated' ? 'Anticipated' : 'Fixed',
-      b.amount,
-      b.notes || '',
-      b.created_by || '',
-      b.created_at ? new Date(b.created_at).toLocaleDateString() : '',
-    ]);
-  });
-  const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-  ['A1','B1','C1','D1','E1','F1','G1','H1','I1'].forEach(addr => { if (ws[addr]) ws[addr].s = hdrStyle; });
-  aoa.slice(1).forEach((_, i) => { const addr = `F${i + 2}`; if (ws[addr]) ws[addr].s = numStyle; });
-  ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 16 }, { wch: 14 }];
-  const wb = XLSXStyle.utils.book_new();
-  XLSXStyle.utils.book_append_sheet(wb, ws, 'Booking History');
-  XLSXStyle.writeFile(wb, `Bookings_${(projectCode || projectName || 'export').replace(/\s+/g,'_')}_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
-
-function exportBulkBookingHistory(
-  projects: Array<{ name: string; code: string; bookings: financeApi.ProjectBooking[] }>,
-) {
-  const hdrStyle = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1d6196' } }, alignment: { horizontal: 'center' } };
-  const numStyle = { alignment: { horizontal: 'right' } };
-  const aoa: any[][] = [['Project Code', 'Project Name', 'Milestone Month', 'Booking Month', 'Type', 'Amount', 'Notes', 'Recorded By', 'Recorded At']];
-  projects.forEach(p => {
-    p.bookings.forEach(b => {
-      aoa.push([
-        p.code || '—',
-        p.name || '—',
-        b.milestone_month,
-        b.booking_month,
-        b.booking_type === 'anticipated' ? 'Anticipated' : 'Fixed',
-        b.amount,
-        b.notes || '',
-        b.created_by || '',
-        b.created_at ? new Date(b.created_at).toLocaleDateString() : '',
-      ]);
-    });
-  });
-  const ws: any = XLSXStyle.utils.aoa_to_sheet(aoa);
-  ['A1','B1','C1','D1','E1','F1','G1','H1','I1'].forEach(addr => { if (ws[addr]) ws[addr].s = hdrStyle; });
-  aoa.slice(1).forEach((_, i) => { const addr = `F${i + 2}`; if (ws[addr]) ws[addr].s = numStyle; });
-  ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 16 }, { wch: 14 }];
-  const wb = XLSXStyle.utils.book_new();
-  XLSXStyle.utils.book_append_sheet(wb, ws, 'Booking History');
-  XLSXStyle.writeFile(wb, `Bulk_Bookings_Export_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
-
-// ── Combined template for multiple projects ───────────────────────────────────
-function downloadBulkBookingTemplate(
-  projects: Array<{
-    code: string; project: string;
-    milestones: Array<{ milestoneMonth: string; totalAmount: number; alreadyBooked: number; available: number; bookingMonths: string[]; milestoneType?: 'booked' | 'anticipated' }>;
-  }>
-) {
-  const hdrGreen  = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '389e0d' } }, alignment: { horizontal: 'center' } };
-  const hdrBlue   = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1d6196' } }, alignment: { horizontal: 'center' } };
-  const projStyle = { font: { bold: true, italic: true }, fill: { fgColor: { rgb: 'e6f4ff' } } };
-  const numStyle  = { alignment: { horizontal: 'right' } };
-  const availOk   = { font: { bold: true }, fill: { fgColor: { rgb: 'f6ffed' } }, alignment: { horizontal: 'right' } };
-  const availZero = { font: { bold: true, color: { rgb: 'cf1322' } }, fill: { fgColor: { rgb: 'fff1f0' } }, alignment: { horizontal: 'right' } };
-  const bookedClr = { fill: { fgColor: { rgb: 'fff1f0' } }, alignment: { horizontal: 'right' } };
-
-  // ── Booking Template sheet — with Project Code column ──
-  const tplAoa: any[][] = [['Project Code', 'Milestone Month', 'Booking Month', 'Amount', 'Notes']];
-  projects.forEach(p => {
-    p.milestones.filter(m => m.available > 0).forEach(m => {
-      tplAoa.push([p.code, m.milestoneMonth, '', m.available, '']);
-    });
-  });
-  const wsTpl: any = XLSXStyle.utils.aoa_to_sheet(tplAoa);
-  ['A1','B1','C1','D1','E1'].forEach(addr => { if (wsTpl[addr]) wsTpl[addr].s = hdrGreen; });
-  wsTpl['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 14 }, { wch: 30 }];
-
-  // ── Instructions ──
-  const instrAoa = [
-    ['Column', 'Description', 'Required?'],
-    ['Project Code', 'Must match the code in Reference Data exactly', 'Yes'],
-    ['Milestone Month', "Format: Mon'YY — must have available capacity", 'Yes'],
-    ['Booking Month',  'Month the booking is recorded', 'Yes'],
-    ['Amount', 'Cannot exceed available capacity for that milestone', 'Yes'],
-    ['Notes', 'Optional; mandatory if amount < available capacity', 'No'],
-  ];
-  const wsInstr: any = XLSXStyle.utils.aoa_to_sheet(instrAoa);
-  wsInstr['!cols'] = [{ wch: 18 }, { wch: 55 }, { wch: 12 }];
-  ['A1','B1','C1'].forEach(addr => { if (wsInstr[addr]) wsInstr[addr].s = hdrBlue; });
-
-  // ── Reference Data — all projects grouped ──
-  const refAoa: any[][] = [['Project Code', 'Project Name', 'Milestone Month', 'Type', 'Total Amount', 'Already Booked', 'Available to Book', 'Booking Month(s)', 'Status']];
-  const refStyleMap: Array<{ row: number; isZero: boolean; isProjectRow: boolean }> = [];
-  let rowIdx = 2;
-  projects.forEach(p => {
-    p.milestones.forEach(m => {
-      refAoa.push([p.code, p.project, m.milestoneMonth, m.milestoneType === 'anticipated' ? 'Anticipated' : 'Fixed', m.totalAmount, m.alreadyBooked, m.available, (m.bookingMonths || []).join(', ') || '—', m.available <= 0 ? 'Fully Booked' : m.alreadyBooked > 0 ? 'Partially Booked' : 'Open']);
-      refStyleMap.push({ row: rowIdx, isZero: m.available <= 0, isProjectRow: false });
-      rowIdx++;
-    });
-  });
-  const wsRef: any = XLSXStyle.utils.aoa_to_sheet(refAoa);
-  ['A1','B1','C1','D1','E1','F1','G1','H1','I1'].forEach(addr => { if (wsRef[addr]) wsRef[addr].s = hdrBlue; });
-  refStyleMap.forEach(({ row: r, isZero }) => {
-    const eAddr = `E${r}`; if (wsRef[eAddr]) wsRef[eAddr].s = isZero ? bookedClr : numStyle;
-    const fAddr = `F${r}`; if (wsRef[fAddr]) wsRef[fAddr].s = isZero ? bookedClr : numStyle;
-    const gAddr = `G${r}`; if (wsRef[gAddr]) wsRef[gAddr].s = isZero ? availZero : availOk;
-    void projStyle; // used for future project-separator rows
-  });
-  wsRef['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 18 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 22 }, { wch: 16 }];
-
-  const wb = XLSXStyle.utils.book_new();
-  XLSXStyle.utils.book_append_sheet(wb, wsTpl, 'Bulk Booking Template');
-  XLSXStyle.utils.book_append_sheet(wb, wsInstr, 'Instructions');
-  XLSXStyle.utils.book_append_sheet(wb, wsRef, 'Reference Data');
-  XLSXStyle.writeFile(wb, `Bulk_Booking_Template_${new Date().toISOString().slice(0,10)}.xlsx`);
-}
-
 // Comment date formatting helpers
 function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd'];
@@ -457,6 +272,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
   const [fromServer, setFromServer] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingDeletedProjectIds, setPendingDeletedProjectIds] = useState<number[]>([]);
   const [visibleColumns, setVisibleColumnsState] = useState<Set<string>>(
     new Set(['sno', 'project', 'company', 'code', 'space', 'owner', 'total', 'comments'])
   );
@@ -503,7 +319,6 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
 
   // Bulk booking panel (multi-project)
   const [bulkBookingOpen, setBulkBookingOpen] = useState(false);
-  const [bulkBookingActiveKey, setBulkBookingActiveKey] = useState<string>('');
   const [bulkAllUploadErrors, setBulkAllUploadErrors] = useState<string[] | null>(null);
   const [bulkAllSaving, setBulkAllSaving] = useState(false);
   const [bulkRefreshToken, setBulkRefreshToken] = useState(0);
@@ -533,40 +348,13 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
   const [auditSearch, setAuditSearch] = useState('');
   const [auditFieldFilter, setAuditFieldFilter] = useState<string | null>(null);
   const [auditByFilter, setAuditByFilter] = useState<string | null>(null);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(12);
 
-  // Booking state
-  const [bookings, setBookings] = useState<financeApi.ProjectBooking[]>([]);
-  const [bookingsLoading, setBookingsLoading] = useState(false);
-  const [bkMilestoneMonths, setBkMilestoneMonths] = useState<string[]>([]);
-  const [bkBookingMonth, setBkBookingMonth] = useState<string | undefined>(undefined);
-  const [bkAmount, setBkAmount] = useState<number | null>(null);
-  const [bkAmountEdited, setBkAmountEdited] = useState(false);
-  const [bkNotes, setBkNotes] = useState('');
-  const [bkSaving, setBkSaving] = useState(false);
-  // Per-milestone breakdown (used when total amount is edited below auto-calc)
-  const [bkBreakdown, setBkBreakdown] = useState<Record<string, { amount: number | null; notes: string }>>({});
-  const [bkUploadErrors, setBkUploadErrors] = useState<string[] | null>(null);
-  // Separate booking panel (side panel, no mask, table stays visible)
   const [bookingPanelRow, setBookingPanelRow] = useState<Row | null>(null);
-  const [bkPanelExpanded, setBkPanelExpanded] = useState(false);
-  const [bkHistoryFilter, setBkHistoryFilter] = useState('');
-  const [bkFilterMilestone, setBkFilterMilestone] = useState<string | undefined>(undefined);
-  const [bkFilterBookedIn, setBkFilterBookedIn] = useState<string | undefined>(undefined);
 
   const openBookingPanel = (r: Row) => {
     setBookingPanelRow(r);
-    setBkMilestoneMonths([]);
-    setBkBookingMonth(undefined);
-    setBkAmount(null);
-    setBkAmountEdited(false);
-    setBkNotes('');
-    setBkBreakdown({});
-    if (r.id) {
-      setBookingsLoading(true);
-      financeApi.getBookings(r.id).then(b => { setBookings(b); setBookingsLoading(false); }).catch(() => setBookingsLoading(false));
-    } else {
-      setBookings([]);
-    }
   };
 
   // Load from API on mount
@@ -630,6 +418,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
         onDataChange?.(mapped);
         onMonthsChange?.(months);
         setFromServer(true);
+        setPendingDeletedProjectIds([]);
       }
     } catch { /* ignore — current state remains */ }
   };
@@ -934,7 +723,11 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
     setRows(updated);
     onDataChange?.(updated);
     setDirty(true);
-    if (r.id) financeApi.deleteProject(r.id, currentUser?.username);
+    if (r.id) {
+      setPendingDeletedProjectIds(prev => (prev.includes(r.id!) ? prev : [...prev, r.id!]));
+      message.success('Row deleted (click Save Changes to persist)');
+      return;
+    }
     message.success('Row deleted');
   };
 
@@ -1092,68 +885,6 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
     return false;
   };
 
-  // ── Booking bulk upload ───────────────────────────────────────────────────
-  const handleBookingUpload = async (file: File, bkRow: Row, availableForMs: (m: string) => number) => {
-    setBkUploadErrors(null);
-    try {
-      const buffer = await file.arrayBuffer();
-      const uint8 = new Uint8Array(buffer);
-      const wb = XLSX.read(uint8, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      if (!ws) { setBkUploadErrors(['No sheet found in the uploaded file.']); return false; }
-      const json = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
-      if (!json.length) { setBkUploadErrors(['The uploaded sheet is empty.']); return false; }
-      const headers = Object.keys(json[0]);
-      const required = ['Milestone Month', 'Booking Month', 'Amount'];
-      const missing = required.filter(h => !headers.includes(h));
-      if (missing.length) {
-        setBkUploadErrors([`Missing required columns: ${missing.join(', ')}`, 'Please download the correct Booking Template and use it.']);
-        return false;
-      }
-      const errors: string[] = [];
-      const valid: Array<{ milestone_month: string; booking_month: string; amount: number; notes: string; booking_type: 'fixed' | 'anticipated' }> = [];
-      // Track cumulative amount per milestone across all rows in this upload
-      const batchAccum: Record<string, number> = {};
-      json.forEach((row, idx) => {
-        const rowNum = idx + 2;
-        const mm = String(row['Milestone Month'] || '').trim();
-        const bm = String(row['Booking Month'] || '').trim();
-        const amt = parseFloat(String(row['Amount'] || '0'));
-        const notes = String(row['Notes'] || '').trim();
-        if (!mm || !bm) { errors.push(`Row ${rowNum}: Milestone Month and Booking Month are required.`); return; }
-        if (isNaN(amt) || amt <= 0) { errors.push(`Row ${rowNum}: Amount must be a positive number (got "${row['Amount']}").`); return; }
-        const avail = availableForMs(mm);
-        if (avail <= 0) { errors.push(`Row ${rowNum}: Milestone "${mm}" is fully booked or has no remaining capacity.`); return; }
-        const cumulative = (batchAccum[mm] || 0) + amt;
-        if (cumulative > avail) {
-          errors.push(`Row ${rowNum}: Total for milestone "${mm}" (${cumulative.toLocaleString()}) exceeds available capacity ${avail.toLocaleString()}.`);
-          return;
-        }
-        batchAccum[mm] = cumulative;
-        valid.push({ milestone_month: mm, booking_month: bm, amount: amt, notes, booking_type: (bkRow.milestoneTypes[mm] === 'anticipated' ? 'anticipated' : 'fixed') });
-      });
-      if (errors.length) { setBkUploadErrors(errors); return false; }
-      if (!valid.length) { setBkUploadErrors(['No valid rows found to import.']); return false; }
-
-      // Atomic batch save — all-or-nothing
-      setBkSaving(true);
-      const result = await financeApi.addBookingsBatch(bkRow.id!, valid.map(v => ({
-        ...v,
-        created_by: currentUser?.username || 'system',
-      })));
-      setBkSaving(false);
-      if (result.ok) {
-        message.success(`${valid.length} booking entr${valid.length === 1 ? 'y' : 'ies'} imported successfully.`);
-        financeApi.getBookings(bkRow.id!).then(setBookings);
-      } else {
-        setBkUploadErrors([`Server error: ${result.error || 'Failed to save. No data was written.'}`, 'All rows were rolled back. Please fix the issue and retry.']);
-      }
-    } catch (e: any) {
-      setBkUploadErrors([`Failed to read file: ${e.message || 'Unknown error'}`, 'Please ensure the file is a valid .xlsx file.']);
-    }
-    return false;
-  };
-
   // ── Bulk upload for ALL selected projects (Project Code column routes rows) ──
   const handleBulkAllProjectsUpload = async (file: File, selectedRows: Row[]) => {
     setBulkAllUploadErrors(null);
@@ -1164,8 +895,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
       if (!ws) { setBulkAllUploadErrors(['No sheet found in the uploaded file.']); return false; }
       const json = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
       if (!json.length) { setBulkAllUploadErrors(['The uploaded sheet is empty.']); return false; }
-      const required = ['Project Code', 'Milestone Month', 'Booking Month', 'Amount'];
-      const missing = required.filter(h => !Object.keys(json[0]).includes(h));
+      const missing = findMissingHeaders(Object.keys(json[0]), BULK_BOOKING_UPLOAD_REQUIRED_HEADERS);
       if (missing.length) { setBulkAllUploadErrors([`Missing required columns: ${missing.join(', ')}`, 'Please use the Bulk Booking Template.']); return false; }
 
       // Pre-fetch all existing bookings to know available capacity per project
@@ -1175,52 +905,32 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
       }));
 
       const errors: string[] = [];
-      const byProject: Record<string, Array<{ milestone_month: string; booking_month: string; amount: number; notes: string; booking_type: 'fixed' | 'anticipated'; rowId: string }>> = {};
-
-      json.forEach((row, i) => {
-        const rowNum = i + 2;
-        const code = String(row['Project Code'] || '').trim();
-        const mm   = String(row['Milestone Month'] || '').trim();
-        const bm   = String(row['Booking Month'] || '').trim();
-        const amt  = parseFloat(String(row['Amount'] || '0'));
-        const notes = String(row['Notes'] || '').trim();
-        const btype = String(row['Booking Type'] || 'fixed').trim().toLowerCase() === 'anticipated' ? 'anticipated' : 'fixed';
-
-        if (!code || !mm || !bm) { errors.push(`Row ${rowNum}: Project Code, Milestone Month, Booking Month are required.`); return; }
-        if (isNaN(amt) || amt <= 0) { errors.push(`Row ${rowNum}: Amount must be a positive number (got "${row['Amount']}").`); return; }
-
-        const projRow = selectedRows.find(r => (r.code || r.key) === code);
-        if (!projRow) { errors.push(`Row ${rowNum}: Project code "${code}" not found in selected projects.`); return; }
-        if (!projRow.id) { errors.push(`Row ${rowNum}: Project "${code}" has no ID — cannot save.`); return; }
-
-        const existing = bookingsByProject[code] || [];
-        const alreadyBooked = existing.filter(b => b.milestone_month === mm && b.booking_type === btype).reduce((s, b) => s + b.amount, 0);
-        const total = projRow.revenue[monthHeaders.indexOf(mm)] || 0;
-        const available = Math.max(0, total - alreadyBooked);
-        const expectedType = (projRow.milestoneTypes[mm] || 'booked') === 'anticipated' ? 'anticipated' : 'fixed';
-        if (btype !== expectedType) { errors.push(`Row ${rowNum}: Milestone "${mm}" in "${code}" is of type "${expectedType}", not "${btype}".`); return; }
-        if (total <= 0) { errors.push(`Row ${rowNum}: Milestone "${mm}" has no revenue for project "${code}".`); return; }
-        if (available <= 0) { errors.push(`Row ${rowNum}: Milestone "${mm}" is fully booked for project "${code}".`); return; }
-        if (amt > available) { errors.push(`Row ${rowNum}: Amount ${amt.toLocaleString()} exceeds available ${available.toLocaleString()} for "${mm}" in "${code}".`); return; }
-
-        if (!byProject[code]) byProject[code] = [];
-        byProject[code].push({ milestone_month: mm, booking_month: bm, amount: amt, notes, booking_type: btype, rowId: projRow.id });
-      });
+      const { groupedByProject, errors: validationErrors, totalEntries } = validateAndGroupBulkBookings(
+        json,
+        selectedRows.map(r => ({
+          id: r.id,
+          key: String(r.key),
+          code: r.code || String(r.key),
+          revenue: r.revenue,
+          milestoneTypes: r.milestoneTypes,
+        })),
+        bookingsByProject,
+        monthHeaders,
+      );
+      errors.push(...validationErrors);
 
       // Stop and show all errors before writing anything
       if (errors.length) { setBulkAllUploadErrors(errors); return false; }
 
-      const allEntries = Object.values(byProject).flat();
-      if (!allEntries.length) { setBulkAllUploadErrors(['No valid rows found to import.']); return false; }
+      if (!totalEntries) { setBulkAllUploadErrors(['No valid rows found to import.']); return false; }
 
       // Save atomically per project using batch endpoint
       setBulkAllSaving(true);
-      const projectCodes = Object.keys(byProject);
+      const projectCodes = Object.keys(groupedByProject);
       const results = await Promise.all(
         projectCodes.map(code => {
-          const entries = byProject[code];
-          const projRow = selectedRows.find(r => (r.code || r.key) === code)!;
-          return financeApi.addBookingsBatch(projRow.id!, entries.map(v => ({
+          const grouped = groupedByProject[code];
+          return financeApi.addBookingsBatch(grouped.projectId, grouped.entries.map(v => ({
             milestone_month: v.milestone_month, booking_month: v.booking_month,
             amount: v.amount, notes: v.notes, booking_type: v.booking_type,
             created_by: currentUser?.username || 'system',
@@ -1231,7 +941,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
 
       const failed = results.filter(r => !r.ok);
       if (failed.length === 0) {
-        message.success(`${allEntries.length} booking entr${allEntries.length === 1 ? 'y' : 'ies'} across ${projectCodes.length} project${projectCodes.length !== 1 ? 's' : ''} imported.`);
+        message.success(`${totalEntries} booking entr${totalEntries === 1 ? 'y' : 'ies'} across ${projectCodes.length} project${projectCodes.length !== 1 ? 's' : ''} imported.`);
         setBulkRefreshToken(t => t + 1);
       } else {
         const failedErrors = failed.map(r => `Server error: ${r.error || 'Unknown error'}`);
@@ -1342,7 +1052,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
     };
 
     const base: ColumnType<Row>[] = [
-      { title: 'S.No.', key: 'sno', width: 42, fixed: 'left' as const, render: (_: unknown, __: Row, index: number) => index + 1, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
+      { title: 'S.No.', key: 'sno', width: 42, fixed: 'left' as const, render: (_: unknown, __: Row, index: number) => ((tablePage - 1) * tablePageSize) + index + 1, onHeaderCell: () => ({ style: hs }), onCell: () => ({ style: cs }) },
       {
         title: 'Project', dataIndex: 'project', key: 'project', width: 200, fixed: 'left' as const,
         sorter: (a: Row, b: Row) => (a.project || '').localeCompare(b.project || ''),
@@ -1584,7 +1294,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
       if (monthCols.find(c => c.key === col.key)) return true;
       return visibleColumns.has(col.key as string);
     });
-  }, [filteredMonthHeaders, rows, filters, visibleColumns, openEdit, handleDeleteRow, handleToggleActive, handleTypeToggle, handleCommentBlur, openDetailDrawer, openBookingPanel, currency, exchangeRate, fmtRev, invoiceCodeSet]);
+  }, [filteredMonthHeaders, rows, filters, visibleColumns, openEdit, handleDeleteRow, handleToggleActive, handleTypeToggle, handleCommentBlur, openDetailDrawer, openBookingPanel, currency, exchangeRate, fmtRev, invoiceCodeSet, tablePage, tablePageSize]);
 
   const displayRows = useMemo(() => rows.filter(r => {
     if (filters.project && !r.project.toLowerCase().includes(filters.project.toLowerCase())) return false;
@@ -1597,7 +1307,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
   }), [rows, filters]);
 
   const handleSave = async () => {
-    if (!dirty || !rows.length) return;
+    if (!dirty || (!rows.length && !pendingDeletedProjectIds.length)) return;
 
     // Check for duplicate codes across ALL rows before saving
     const conflicts = findDuplicateCodes(rows);
@@ -1608,6 +1318,24 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
 
     setSaving(true);
     try {
+      if (pendingDeletedProjectIds.length) {
+        const deleteResults = await Promise.all(
+          pendingDeletedProjectIds.map(id => financeApi.deleteProject(id, currentUser?.username))
+        );
+        const failedDeleteIds = pendingDeletedProjectIds.filter((_, idx) => !deleteResults[idx]);
+        if (failedDeleteIds.length) {
+          message.error(`Failed to delete ${failedDeleteIds.length} project(s). Please retry Save Changes.`);
+          return;
+        }
+      }
+
+      if (!rows.length) {
+        setDirty(false);
+        setPendingDeletedProjectIds([]);
+        message.success('All changes saved to database');
+        return;
+      }
+
       const apiProjects = rows.map(r => ({
         id: r.id,                           // send id so server matches by id, not name
         project: r.project,
@@ -1623,6 +1351,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
       const saveResult = await financeApi.bulkSave(apiProjects, monthHeaders, currentUser?.username);
       if (saveResult.ok) {
         setDirty(false);
+        setPendingDeletedProjectIds([]);
         setFromServer(true);
         message.success('All changes saved to database');
         // Reload from server to get DB-assigned IDs — ensures renames and new rows have correct ids for future saves
@@ -1644,6 +1373,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
     setRows([]);
     setMonthHeaders([]);
     setDirty(false);
+    setPendingDeletedProjectIds([]);
     setFromServer(false);
     onDataChange?.([]);
     onMonthsChange?.([]);
@@ -1941,7 +1671,15 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
             </div>
           ) : (
             <Table size="small" dataSource={displayRows} columns={columns}
-              pagination={{ pageSize: 12, showSizeChanger: false }}
+              pagination={{
+                current: tablePage,
+                pageSize: tablePageSize,
+                showSizeChanger: false,
+                onChange: (page, pageSize) => {
+                  setTablePage(page);
+                  setTablePageSize(pageSize);
+                },
+              }}
               scroll={{ x: 'max-content' }}
               style={{ background: '#fff', borderRadius: 8 }}
               summary={() => {
@@ -2406,7 +2144,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
                   <Button size="small" icon={<CalendarOutlined />} style={{ fontSize: '11px' }}
                     disabled={selectedRowKeys.length === 0}
                     type={selectedRowKeys.length > 0 ? 'primary' : 'default'}
-                    onClick={() => { if (!selectedRowKeys.length) return; setBulkBookingActiveKey(String(selectedRowKeys[0])); setBulkBookingOpen(true); setMoreActionsOpen(false); }}>
+                    onClick={() => { if (!selectedRowKeys.length) return; setBulkBookingOpen(true); setMoreActionsOpen(false); }}>
                     Open Booking Panel{selectedRowKeys.length > 0 ? ` (${selectedRowKeys.length})` : ''}
                   </Button>
                 </div>
@@ -2457,7 +2195,7 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
                     <Popconfirm
                       title="Delete all booking records?"
                       description="This will permanently remove ALL bookings. This cannot be undone."
-                      onConfirm={async () => { const ok = await financeApi.deleteAllBookings(); if (ok) { message.success('All booking records deleted.'); setBookings([]); } else { message.error('Failed to delete all bookings.'); } setMoreActionsOpen(false); }}
+                      onConfirm={async () => { const ok = await financeApi.deleteAllBookings(currentUser?.username); if (ok) { message.success('All booking records deleted.'); setBulkRefreshToken(t => t + 1); } else { message.error('Failed to delete all bookings.'); } setMoreActionsOpen(false); }}
                       okText="Yes, delete all" okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
                       <Button size="small" danger icon={<DeleteOutlined />} style={{ fontSize: '11px' }}>Delete All Bookings</Button>
                     </Popconfirm>
@@ -2492,1033 +2230,35 @@ function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) {
         })()}
       </Modal>
 
-      {/* ── Booking Panel — no mask, slides in from right so table stays fully visible ── */}
-      <Drawer
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <Space>
-              <CalendarOutlined style={{ color: '#52c41a' }} />
-              <span style={{ fontSize: '13px', fontWeight: 600 }}>Booking Details</span>
-              {bookingPanelRow && (
-                <Tag style={{ fontSize: '10px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {bookingPanelRow.code || bookingPanelRow.project}
-                </Tag>
-              )}
-            </Space>
-            <Tooltip title={bkPanelExpanded ? 'Collapse' : 'Expand'} overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button
-                type="text" size="small"
-                icon={bkPanelExpanded ? <FullscreenExitOutlined style={{ fontSize: '13px' }} /> : <FullscreenOutlined style={{ fontSize: '13px' }} />}
-                onClick={() => setBkPanelExpanded(e => !e)}
-                style={{ marginRight: 32 }}
-              />
-            </Tooltip>
-          </div>
-        }
-        placement="right"
-        width={bkPanelExpanded ? '65vw' : 440}
+      <ProjectBookingDrawer
         open={!!bookingPanelRow}
-        onClose={() => { setBookingPanelRow(null); setBookings([]); setBkMilestoneMonths([]); setBkBookingMonth(undefined); setBkAmount(null); setBkAmountEdited(false); setBkNotes(''); setBkBreakdown({}); setBkHistoryFilter(''); setBkFilterMilestone(undefined); setBkFilterBookedIn(undefined); setBkPanelExpanded(false); setBkUploadErrors(null); }}
-        mask={false}
-        style={{ boxShadow: '-4px 0 20px rgba(0,0,0,0.13)' }}
-        bodyStyle={{ padding: 14, overflowY: 'auto', background: '#fafafa' }}
-        headerStyle={{ borderBottom: '1px solid #f0f0f0', padding: '10px 16px' }}
-      >
-        {bookingPanelRow && (() => {
-          const bkRow = bookingPanelRow;
-          // ── Compute already-booked amounts per milestone from ALL bookings ──
-          const bookedPerMs: Record<string, number> = {};
-          bookings.forEach(b => {
-            bookedPerMs[b.milestone_month] = (bookedPerMs[b.milestone_month] || 0) + b.amount;
-          });
-          // Available remaining = revenue - already booked (floored at 0)
-          const availableForMs = (m: string) =>
-            Math.max(0, (bkRow.revenue[monthHeaders.indexOf(m)] || 0) - (bookedPerMs[m] || 0));
+        row={bookingPanelRow}
+        monthHeaders={monthHeaders}
+        fmtRev={fmtRev}
+        canEdit={canEdit}
+        currentUsername={currentUser?.username || 'system'}
+        onClose={() => setBookingPanelRow(null)}
+      />
 
-          // All milestones with revenue (both fixed and anticipated)
-          const allBookedMonths = monthHeaders.filter(m =>
-            (bkRow.revenue[monthHeaders.indexOf(m)] || 0) > 0
-          );
-          // Only offer milestones that still have remaining capacity
-          const selectableMonths = allBookedMonths.filter(m => availableForMs(m) > 0);
-          const fullyBookedMonths = allBookedMonths.filter(m => availableForMs(m) <= 0);
-
-          const allMonthLabels = [...new Set([
-            ...monthHeaders,
-            ...Array.from({ length: 12 }, (_, i) => {
-              const d = new Date(); d.setMonth(d.getMonth() + i);
-              const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-              return `${mo}'${String(d.getFullYear()).slice(2)}`;
-            }),
-          ])];
-
-          // calcTotal = sum of AVAILABLE (remaining) amounts for selected milestones
-          const calcTotal = bkMilestoneMonths.reduce((sum, m) => sum + availableForMs(m), 0);
-          const amountEdited = bkAmountEdited && bkAmount !== null && bkAmount !== calcTotal;
-          const exceedsMax = bkAmount !== null && bkMilestoneMonths.length > 0 && bkAmount > calcTotal;
-
-          // ── Per-milestone breakdown validation (only relevant when amount is edited) ──
-          const breakdownTotal = amountEdited
-            ? bkMilestoneMonths.reduce((s, m) => s + (bkBreakdown[m]?.amount || 0), 0)
-            : 0;
-          const breakdownMatchesTotal = !amountEdited || Math.abs(breakdownTotal - (bkAmount || 0)) < 0.01;
-          const breakdownRowsValid = !amountEdited || bkMilestoneMonths.every(m => {
-            const bd = bkBreakdown[m];
-            if (!bd || bd.amount === null || bd.amount <= 0) return false;
-            if (bd.amount > availableForMs(m)) return false;
-            // notes required if this milestone is only partially booked (amount < available)
-            if (bd.amount < availableForMs(m) && !bd.notes.trim()) return false;
-            return true;
-          });
-
-          const isValid =
-            bkMilestoneMonths.length > 0 &&
-            !!bkBookingMonth &&
-            bkAmount !== null && bkAmount > 0 && !exceedsMax &&
-            (!amountEdited || (breakdownMatchesTotal && breakdownRowsValid));
-
-          // Parse "Jan'25" → numeric sort key (YYYYMM) for date-descending sort
-          const msToSortKey = (s: string) => {
-            const MONTHS: Record<string, number> = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
-            const m = s.match(/^([A-Za-z]{3})'(\d{2})$/);
-            if (!m) return 0;
-            return (2000 + parseInt(m[2], 10)) * 100 + (MONTHS[m[1]] || 0);
-          };
-
-          // Unique sorted options for milestone/booked-in dropdowns
-          const histMilestoneOpts = [...new Set(bookings.map(b => b.milestone_month))]
-            .sort((a, b) => msToSortKey(b) - msToSortKey(a));
-          const histBookedInOpts = [...new Set(bookings.map(b => b.booking_month))]
-            .sort((a, b) => msToSortKey(b) - msToSortKey(a));
-
-          const filteredBookings = (
-            bookings.filter(b => {
-              if (bkFilterMilestone && b.milestone_month !== bkFilterMilestone) return false;
-              if (bkFilterBookedIn && b.booking_month !== bkFilterBookedIn) return false;
-              if (bkHistoryFilter.trim()) {
-                const q = bkHistoryFilter.toLowerCase();
-                return (
-                  b.milestone_month.toLowerCase().includes(q) ||
-                  b.booking_month.toLowerCase().includes(q) ||
-                  (b.notes || '').toLowerCase().includes(q) ||
-                  (b.created_by || '').toLowerCase().includes(q)
-                );
-              }
-              return true;
-            })
-          ).sort((a, b) => {
-            const msDiff = msToSortKey(b.milestone_month) - msToSortKey(a.milestone_month);
-            if (msDiff !== 0) return msDiff;
-            return msToSortKey(b.booking_month) - msToSortKey(a.booking_month);
-          });
-
-          const selectedMsType: 'fixed' | 'anticipated' | 'mixed' | null =
-            bkMilestoneMonths.length === 0 ? null :
-            bkMilestoneMonths.every(m => bkRow.milestoneTypes[m] === 'anticipated') ? 'anticipated' :
-            bkMilestoneMonths.every(m => bkRow.milestoneTypes[m] !== 'anticipated') ? 'fixed' :
-            'mixed';
-
-          const panelContent = (
-            <div style={{ display: bkPanelExpanded ? 'grid' : 'flex', gridTemplateColumns: bkPanelExpanded ? '1fr 1fr' : undefined, flexDirection: bkPanelExpanded ? undefined : 'column', gap: 14, height: '100%' }}>
-
-              {/* LEFT / TOP: Add Booking Entry (compact) */}
-              {canEdit && (
-              <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: '10px 12px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 600, color: '#434343', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <PlusOutlined style={{ color: '#52c41a', fontSize: '10px' }} />Add Booking Entry
-                </div>
-                {/* 2-column compact grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px' }}>
-                  {/* Milestone months — full width */}
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>
-                      Milestone(s)
-                      {fullyBookedMonths.length > 0 && (
-                        <Tooltip
-                          title={`Fully booked: ${fullyBookedMonths.join(', ')}`}
-                          overlayInnerStyle={{ fontSize: '11px' }}
-                        >
-                          <Tag color="red" style={{ fontSize: '10px', marginLeft: 6, cursor: 'default' }}>
-                            {fullyBookedMonths.length} fully booked
-                          </Tag>
-                        </Tooltip>
-                      )}
-                    </div>
-                    <Select
-                      mode="multiple"
-                      size="small"
-                      placeholder={selectableMonths.length === 0 ? 'All milestones fully booked' : 'Select milestones…'}
-                      value={bkMilestoneMonths}
-                      onChange={vals => {
-                        setBkMilestoneMonths(vals);
-                        // Auto-populate breakdown with available amounts
-                        const newBreakdown: Record<string, { amount: number | null; notes: string }> = {};
-                        vals.forEach((m: string) => {
-                          newBreakdown[m] = bkBreakdown[m] ?? { amount: availableForMs(m), notes: '' };
-                        });
-                        setBkBreakdown(newBreakdown);
-                        const total = vals.reduce((s: number, m: string) => s + availableForMs(m), 0);
-                        setBkAmount(total || null);
-                        setBkAmountEdited(false);
-                      }}
-                      style={{ width: '100%', fontSize: '11px' }}
-                      maxTagCount="responsive"
-                      disabled={selectableMonths.length === 0}
-                      options={selectableMonths.map(m => ({
-                        value: m,
-                        label: `${m} — avail. ${fmtRev(availableForMs(m))} / ${fmtRev(bkRow.revenue[monthHeaders.indexOf(m)] || 0)}`,
-                      }))}
-                      notFoundContent={<span style={{ fontSize: '11px', color: '#bbb' }}>No milestones with remaining capacity</span>}
-                    />
-                  </div>
-                  <div style={{ gridColumn: '1 / -1' }}>
-                    <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Type</div>
-                    <div style={{ fontSize: '11px', padding: '1px 8px', background: '#f5f5f5', border: '1px solid #d9d9d9', borderRadius: 4, color: selectedMsType === 'anticipated' ? '#d46b08' : selectedMsType === 'mixed' ? '#722ed1' : selectedMsType === 'fixed' ? '#389e0d' : '#bfbfbf', fontWeight: 500, height: 24, display: 'flex', alignItems: 'center' }}>
-                      {selectedMsType === 'anticipated' ? 'Anticipated' : selectedMsType === 'mixed' ? 'Mixed (Fixed & Anticipated)' : selectedMsType === 'fixed' ? 'Fixed' : '—'}
-                    </div>
-                  </div>
-                  {/* Booking month */}
-                  <div>
-                    <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Booking Month</div>
-                    <Select
-                      size="small"
-                      placeholder="Month…"
-                      value={bkBookingMonth}
-                      onChange={v => setBkBookingMonth(v)}
-                      style={{ width: '100%', fontSize: '11px' }}
-                      showSearch
-                      options={allMonthLabels.map(m => ({ value: m, label: m }))}
-                    />
-                  </div>
-                  {/* Total amount */}
-                  <div>
-                    <div style={{ fontSize: '10px', marginBottom: 2, color: exceedsMax ? '#ff4d4f' : amountEdited ? '#fa8c16' : '#8c8c8c' }}>
-                      Total Amount{bkMilestoneMonths.length > 0 ? (amountEdited ? ` (max ${fmtRev(calcTotal)})` : ` ✓ auto`) : ''}
-                    </div>
-                    <InputNumber
-                      size="small"
-                      placeholder="Amount"
-                      value={bkAmount}
-                      onChange={v => {
-                        setBkAmount(v);
-                        const edited = v !== null && v !== calcTotal;
-                        setBkAmountEdited(edited);
-                        // Reset breakdown when returning to auto value
-                        if (!edited) {
-                          const resetBd: Record<string, { amount: number | null; notes: string }> = {};
-                          bkMilestoneMonths.forEach(m => { resetBd[m] = { amount: availableForMs(m), notes: '' }; });
-                          setBkBreakdown(resetBd);
-                        }
-                      }}
-                      style={{ width: '100%', fontSize: '11px' }}
-                      min={0}
-                      max={calcTotal || undefined}
-                      formatter={val => `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                      status={exceedsMax ? 'error' : undefined}
-                    />
-                  </div>
-                  {/* Global notes (non-breakdown) — full width */}
-                  {!amountEdited && (
-                    <div style={{ gridColumn: '1 / -1' }}>
-                      <div style={{ fontSize: '10px', marginBottom: 2, color: '#8c8c8c' }}>Notes (optional)</div>
-                      <Input
-                        size="small"
-                        placeholder="e.g. PO reference"
-                        value={bkNotes}
-                        onChange={e => setBkNotes(e.target.value)}
-                        style={{ fontSize: '11px' }}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Per-milestone breakdown (shown only when total amount is edited) ── */}
-                {amountEdited && bkMilestoneMonths.length > 0 && (
-                  <div style={{ marginTop: 10, border: '1px dashed #faad14', borderRadius: 6, padding: '8px 10px', background: '#fffbe6' }}>
-                    <div style={{ fontSize: '10px', fontWeight: 600, color: '#d48806', marginBottom: 6, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span>Milestone Breakdown — specify how the total is split</span>
-                      <span style={{ color: Math.abs(breakdownTotal - (bkAmount || 0)) < 0.01 ? '#52c41a' : '#ff4d4f', fontWeight: 700 }}>
-                        Allocated: {fmtRev(breakdownTotal)} / {fmtRev(bkAmount || 0)}
-                      </span>
-                    </div>
-                    {bkMilestoneMonths.map(m => {
-                      const bd = bkBreakdown[m] ?? { amount: availableForMs(m), notes: '' };
-                      const isPartial = bd.amount !== null && bd.amount < availableForMs(m);
-                      const exceedsMsMax = bd.amount !== null && bd.amount > availableForMs(m);
-                      return (
-                        <div key={m} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr', gap: '4px 8px', alignItems: 'center', marginBottom: 6 }}>
-                          <Tag color="blue" style={{ fontSize: '10px', margin: 0, whiteSpace: 'nowrap' }}>{m}</Tag>
-                          <div>
-                            <div style={{ fontSize: '9px', color: exceedsMsMax ? '#ff4d4f' : '#8c8c8c', marginBottom: 1 }}>
-                              Amount (avail. {fmtRev(availableForMs(m))})
-                            </div>
-                            <InputNumber
-                              size="small"
-                              value={bd.amount}
-                              min={0}
-                              max={availableForMs(m)}
-                              onChange={v => {
-                                setBkBreakdown(prev => ({ ...prev, [m]: { ...prev[m], amount: v } }));
-                              }}
-                              formatter={val => `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                              style={{ width: '100%', fontSize: '11px' }}
-                              status={exceedsMsMax ? 'error' : undefined}
-                            />
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '9px', color: isPartial && !bd.notes.trim() ? '#ff4d4f' : '#8c8c8c', marginBottom: 1, fontWeight: isPartial ? 600 : 400 }}>
-                              {isPartial ? 'Reason * (partial)' : 'Notes (optional)'}
-                            </div>
-                            <Input
-                              size="small"
-                              placeholder={isPartial ? 'Why partial?' : 'optional'}
-                              value={bd.notes}
-                              onChange={e => setBkBreakdown(prev => ({ ...prev, [m]: { ...prev[m], notes: e.target.value } }))}
-                              status={isPartial && !bd.notes.trim() ? 'error' : undefined}
-                              style={{ fontSize: '11px' }}
-                            />
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {!breakdownMatchesTotal && (
-                      <div style={{ fontSize: '10px', color: '#ff4d4f', marginTop: 2 }}>
-                        ⚠ Breakdown total ({fmtRev(breakdownTotal)}) must equal the amount ({fmtRev(bkAmount || 0)})
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <Button
-                  size="small"
-                  loading={bkSaving}
-                  disabled={!isValid}
-                  icon={<PlusOutlined />}
-                  style={{ fontSize: '11px', marginTop: 8 }}
-                  onClick={async () => {
-                    if (!bkRow.id || bkMilestoneMonths.length === 0 || !bkBookingMonth || !bkAmount) return;
-                    setBkSaving(true);
-                    const entries = bkMilestoneMonths.map(mm => ({
-                      milestone_month: mm,
-                      booking_month: bkBookingMonth,
-                      amount: amountEdited ? (bkBreakdown[mm]?.amount ?? availableForMs(mm)) : availableForMs(mm),
-                      notes: amountEdited ? (bkBreakdown[mm]?.notes || bkNotes) : bkNotes,
-                      created_by: currentUser?.username || 'system',
-                      booking_type: (bkRow.milestoneTypes[mm] === 'anticipated' ? 'anticipated' : 'fixed'),
-                    }));
-                    const result = await financeApi.addBookingsBatch(bkRow.id!, entries);
-                    setBkSaving(false);
-                    if (result.ok) {
-                      message.success('Booking recorded');
-                      setBkMilestoneMonths([]);
-                      setBkBookingMonth(undefined);
-                      setBkAmount(null);
-                      setBkAmountEdited(false);
-                      setBkNotes('');
-                      setBkBreakdown({});
-                      financeApi.getBookings(bkRow.id).then(setBookings);
-                    } else {
-                      message.error(`Failed to save: ${result.error || 'Unknown error'}`);
-                    }
-                  }}
-                >
-                  Record Booking
-                </Button>
-              </div>
-              )}
-
-              {/* RIGHT / BOTTOM: Booking History */}
-              <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: '10px 12px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-                {/* Header row */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexShrink: 0 }}>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#434343' }}>
-                    Booking History
-                    {bookings.length > 0 && (
-                      <Tag style={{ fontSize: '10px', marginLeft: 6 }}>
-                        {filteredBookings.length}{filteredBookings.length !== bookings.length ? `/${bookings.length}` : ''}
-                      </Tag>
-                    )}
-                  </span>
-                  <Space size={4}>
-                    {(bkFilterMilestone || bkFilterBookedIn || bkHistoryFilter) && (
-                      <Button
-                        type="link" size="small"
-                        style={{ fontSize: '10px', padding: 0, color: '#ff4d4f' }}
-                        onClick={() => { setBkFilterMilestone(undefined); setBkFilterBookedIn(undefined); setBkHistoryFilter(''); }}
-                      >
-                        Clear filters
-                      </Button>
-                    )}
-                    {canEdit && bookings.length > 0 && (
-                      <Popconfirm
-                        title="Delete all bookings for this project?"
-                        description="This cannot be undone."
-                        onConfirm={async () => {
-                          if (!bkRow.id) return;
-                          await financeApi.deleteAllProjectBookings(bkRow.id);
-                          financeApi.getBookings(bkRow.id).then(setBookings);
-                        }}
-                        okText="Delete All"
-                        okButtonProps={{ danger: true, size: 'small' }}
-                        cancelButtonProps={{ size: 'small' }}
-                      >
-                        <Button type="link" size="small" danger style={{ fontSize: '10px', padding: 0 }}>
-                          Delete All
-                        </Button>
-                      </Popconfirm>
-                    )}
-                    {canEdit && (
-                      <Tooltip title="Upload bookings (.xlsx)" overlayInnerStyle={{ fontSize: '11px' }}>
-                        <Upload
-                          accept=".xlsx,.xls"
-                          showUploadList={false}
-                          beforeUpload={f => handleBookingUpload(f as File, bkRow, availableForMs)}
-                        >
-                          <Button type="text" size="small" icon={<UploadOutlined style={{ fontSize: '12px', color: '#595959' }} />} />
-                        </Upload>
-                      </Tooltip>
-                    )}
-                    <Tooltip title="Download booking template" overlayInnerStyle={{ fontSize: '11px' }}>
-                      <Button
-                        type="text" size="small"
-                        icon={<DownloadOutlined style={{ fontSize: '12px', color: '#595959' }} />}
-                        onClick={() => downloadBookingTemplate(
-                          allBookedMonths.map(m => ({
-                            milestoneMonth: m,
-                            totalAmount: bkRow.revenue[monthHeaders.indexOf(m)] || 0,
-                            alreadyBooked: bookedPerMs[m] || 0,
-                            available: availableForMs(m),
-                            bookingMonths: [...new Set(bookings.filter(b => b.milestone_month === m).map(b => b.booking_month))],
-                            milestoneType: bkRow.milestoneTypes[m] || 'booked',
-                          })),
-                          bkRow.project,
-                          bkRow.code,
-                        )}
-                      />
-                    </Tooltip>
-                    {bookings.length > 0 && (
-                      <Tooltip title="Export booking history (.xlsx)" overlayInnerStyle={{ fontSize: '11px' }}>
-                        <Button
-                          type="text" size="small"
-                          icon={<FileExcelOutlined style={{ fontSize: '12px', color: '#52c41a' }} />}
-                          onClick={() => exportBookingHistory(bkRow.project, bkRow.code || '', filteredBookings.length > 0 ? filteredBookings : bookings)}
-                        />
-                      </Tooltip>
-                    )}
-                  </Space>
-                </div>
-                {/* Upload error alert */}
-                {bkUploadErrors && (
-                  <Alert
-                    type="error"
-                    showIcon
-                    style={{ fontSize: '11px', marginBottom: 6 }}
-                    message="Upload failed"
-                    description={
-                      <ul style={{ margin: 0, paddingLeft: 16 }}>
-                        {bkUploadErrors.map((e, i) => <li key={i} style={{ fontSize: '11px' }}>{e}</li>)}
-                      </ul>
-                    }
-                    closable
-                    onClose={() => setBkUploadErrors(null)}
-                  />
-                )}
-                {/* Filter bar */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px 6px', marginBottom: 8, flexShrink: 0 }}>
-                  <Select
-                    size="small"
-                    allowClear
-                    placeholder="Milestone…"
-                    value={bkFilterMilestone}
-                    onChange={v => setBkFilterMilestone(v)}
-                    style={{ fontSize: '11px' }}
-                    options={histMilestoneOpts.map(m => ({ value: m, label: m }))}
-                    popupMatchSelectWidth={false}
-                  />
-                  <Select
-                    size="small"
-                    allowClear
-                    placeholder="Booked In…"
-                    value={bkFilterBookedIn}
-                    onChange={v => setBkFilterBookedIn(v)}
-                    style={{ fontSize: '11px' }}
-                    options={histBookedInOpts.map(m => ({ value: m, label: m }))}
-                    popupMatchSelectWidth={false}
-                  />
-                  <Input
-                    size="small"
-                    allowClear
-                    placeholder="Search…"
-                    value={bkHistoryFilter}
-                    onChange={e => setBkHistoryFilter(e.target.value)}
-                    style={{ fontSize: '11px' }}
-                    prefix={<span style={{ color: '#bbb', fontSize: '10px' }}>⌕</span>}
-                  />
-                </div>
-                {bookingsLoading ? (
-                  <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
-                ) : bookings.length === 0 ? (
-                  <Text type="secondary" style={{ fontSize: '12px' }}>No bookings recorded yet.</Text>
-                ) : filteredBookings.length === 0 ? (
-                  <Text type="secondary" style={{ fontSize: '12px' }}>No results match the current filters.</Text>
-                ) : (
-                  <Table
-                    size="small"
-                    dataSource={filteredBookings}
-                    rowKey="id"
-                    pagination={{ pageSize: 10, size: 'small', showSizeChanger: false, hideOnSinglePage: true }}
-                    scroll={{ x: 'max-content' }}
-                    columns={[
-                      { title: 'Milestone', dataIndex: 'milestone_month', key: 'mm', width: 85,
-                        render: (v: string) => <Tag color="blue" style={{ fontSize: '10px', margin: 0 }}>{v}</Tag> },
-                      { title: 'Booked In', dataIndex: 'booking_month', key: 'bm', width: 85,
-                        render: (v: string) => <Tag color="green" style={{ fontSize: '10px', margin: 0 }}>{v}</Tag> },
-                      { title: 'Type', dataIndex: 'booking_type', key: 'btype', width: 88,
-                        render: (v: string) => (
-                          <Tag color={v === 'anticipated' ? 'orange' : 'blue'} style={{ fontSize: '10px', margin: 0 }}>
-                            {v === 'anticipated' ? 'Anticipated' : 'Fixed'}
-                          </Tag>
-                        )},
-                      { title: 'Amount', dataIndex: 'amount', key: 'amt', width: 95,
-                        render: (v: number) => <Text style={{ fontSize: '11px', fontWeight: 600 }}>{fmtRev(v)}</Text> },
-                      { title: 'Notes', dataIndex: 'notes', key: 'notes', ellipsis: true,
-                        render: (v: string) => <Tooltip title={v} overlayInnerStyle={{ fontSize: '11px' }}><Text style={{ fontSize: '11px', color: '#8c8c8c' }}>{v || '—'}</Text></Tooltip> },
-                      { title: 'By', dataIndex: 'created_by', key: 'by', width: 70,
-                        render: (v: string) => <Text style={{ fontSize: '10px', color: '#595959' }}>{v}</Text> },
-                      ...(canEdit ? [{
-                        title: '', key: 'del', width: 30,
-                        render: (_: any, rec: financeApi.ProjectBooking) => (
-                          <Popconfirm
-                            title="Delete this booking?"
-                            onConfirm={async () => {
-                              if (!bkRow.id) return;
-                              await financeApi.deleteBooking(bkRow.id, rec.id);
-                              financeApi.getBookings(bkRow.id).then(setBookings);
-                            }}
-                            okText="Delete" okButtonProps={{ danger: true, size: 'small' }}
-                            cancelButtonProps={{ size: 'small' }}
-                          >
-                            <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: '10px' }} />} />
-                          </Popconfirm>
-                        ),
-                      }] : []),
-                    ]}
-                  />
-                )}
-              </div>
-            </div>
-          );
-          return (
-            <div style={{ height: '100%' }}>
-              {panelContent}
-            </div>
-          );
-        })()}
-      </Drawer>
-
-      {/* ── Bulk Booking Drawer — multi-project, tabbed, no mask ── */}
-      <Drawer
-        title={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-            <Space>
-              <CalendarOutlined style={{ color: '#52c41a' }} />
-              <span style={{ fontSize: '13px', fontWeight: 600 }}>Manage Bookings</span>
-              <Tag style={{ fontSize: '10px' }}>{selectedRowKeys.length} project{selectedRowKeys.length !== 1 ? 's' : ''}</Tag>
-            </Space>
-            <Space size={6} style={{ marginRight: 32 }}>
-              {canEdit && (
-                <Tooltip title="Upload bookings for all selected projects (.xlsx)" overlayInnerStyle={{ fontSize: '11px' }}>
-                  <Upload
-                    accept=".xlsx,.xls"
-                    showUploadList={false}
-                    beforeUpload={f => {
-                      const selectedRows = rows.filter(r => selectedRowKeys.includes(r.key));
-                      return handleBulkAllProjectsUpload(f as File, selectedRows);
-                    }}
-                  >
-                    <Button
-                      size="small"
-                      loading={bulkAllSaving}
-                      icon={<UploadOutlined style={{ fontSize: '12px' }} />}
-                      style={{ fontSize: '11px' }}
-                    >
-                      Upload All
-                    </Button>
-                  </Upload>
-                </Tooltip>
-              )}
-              <Tooltip title="Download combined template for all selected projects" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button
-                  size="small"
-                  icon={<DownloadOutlined style={{ fontSize: '12px' }} />}
-                  style={{ fontSize: '11px' }}
-                  onClick={async () => {
-                    // Fetch live bookings for all selected rows to populate reference data
-                    const selectedRows = rows.filter(r => selectedRowKeys.includes(r.key));
-                    const allBookings = await Promise.all(
-                      selectedRows.filter(r => r.id).map(r => financeApi.getBookings(r.id!))
-                    );
-                    const projData = selectedRows.map((r, i) => {
-                      const bks = allBookings[i] || [];
-                      const bookedPer: Record<string, number> = {};
-                      bks.forEach(b => { bookedPer[b.milestone_month] = (bookedPer[b.milestone_month] || 0) + b.amount; });
-                      const bookedMonthsPerMs: Record<string, string[]> = {};
-                      bks.forEach(b => { (bookedMonthsPerMs[b.milestone_month] = bookedMonthsPerMs[b.milestone_month] || []).push(b.booking_month); });
-                      const milestones = monthHeaders
-                        .filter(m => (r.revenue[monthHeaders.indexOf(m)] || 0) > 0)
-                        .map(m => ({
-                          milestoneMonth: m,
-                          totalAmount: r.revenue[monthHeaders.indexOf(m)] || 0,
-                          alreadyBooked: bookedPer[m] || 0,
-                          available: Math.max(0, (r.revenue[monthHeaders.indexOf(m)] || 0) - (bookedPer[m] || 0)),
-                          bookingMonths: [...new Set(bookedMonthsPerMs[m] || [])],
-                          milestoneType: r.milestoneTypes[m] || 'booked',
-                        }));
-                      return { code: r.code || r.key, project: r.project, milestones };
-                    });
-                    downloadBulkBookingTemplate(projData);
-                  }}
-                >
-                  Template (All)
-                </Button>
-              </Tooltip>
-              <Tooltip title="Export all booking history (.xlsx)" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button
-                  size="small"
-                  icon={<FileExcelOutlined style={{ fontSize: '12px', color: '#52c41a' }} />}
-                  style={{ fontSize: '11px' }}
-                  onClick={async () => {
-                    const selectedRows = rows.filter(r => selectedRowKeys.includes(r.key));
-                    const allBookings = await Promise.all(
-                      selectedRows.filter(r => r.id).map(r => financeApi.getBookings(r.id!))
-                    );
-                    const projData = selectedRows.map((r, i) => ({
-                      name: r.project,
-                      code: r.code || r.key,
-                      bookings: allBookings[i] || [],
-                    }));
-                    exportBulkBookingHistory(projData);
-                  }}
-                >
-                  Export All
-                </Button>
-              </Tooltip>
-              <Button
-                type="link" size="small"
-                style={{ fontSize: '11px', color: '#595959' }}
-                onClick={() => { setSelectedRowKeys([]); setBulkBookingOpen(false); setBulkAllUploadErrors(null); }}
-              >
-                Clear &amp; close
-              </Button>
-            </Space>
-          </div>
-        }
-        placement="right"
-        width="75vw"
+      <BulkBookingDrawer
         open={bulkBookingOpen}
-        onClose={() => { setBulkBookingOpen(false); setBulkAllUploadErrors(null); }}
-        mask={false}
-        style={{ boxShadow: '-4px 0 20px rgba(0,0,0,0.13)' }}
-        bodyStyle={{ padding: 0, overflowY: 'hidden', background: '#f5f5f5' }}
-        headerStyle={{ borderBottom: '1px solid #f0f0f0', padding: '10px 16px' }}
-      >
-        {bulkBookingOpen && (() => {
-          const selectedRows = rows.filter(r => selectedRowKeys.includes(r.key));
-          if (!selectedRows.length) return null;
-          return (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              {bulkAllUploadErrors && (
-                <Alert
-                  type="error" showIcon closable
-                  onClose={() => setBulkAllUploadErrors(null)}
-                  message={<span style={{ fontSize: '11px', fontWeight: 600 }}>Bulk upload failed — {bulkAllUploadErrors.length} error{bulkAllUploadErrors.length !== 1 ? 's' : ''}</span>}
-                  description={
-                    <ul style={{ margin: 0, paddingLeft: 16, maxHeight: 120, overflowY: 'auto' }}>
-                      {bulkAllUploadErrors.map((e, i) => <li key={i} style={{ fontSize: '11px' }}>{e}</li>)}
-                    </ul>
-                  }
-                  style={{ margin: '8px 12px 0', fontSize: '11px' }}
-                />
-              )}
-              <Tabs
-                activeKey={bulkBookingActiveKey || selectedRows[0].key}
-                onChange={setBulkBookingActiveKey}
-                tabPosition="left"
-                size="small"
-                style={{ flex: 1, minHeight: 0 }}
-                tabBarStyle={{ width: 180, background: '#fafafa', borderRight: '1px solid #f0f0f0', paddingTop: 8 }}
-                items={selectedRows.map(r => ({
-                  key: r.key,
-                  label: (
-                    <div style={{ maxWidth: 155, overflow: 'hidden' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {r.project}
-                      </div>
-                      <div style={{ fontSize: '10px', color: '#8c8c8c' }}>{r.code || r.company}</div>
-                    </div>
-                  ),
-                  children: (
-                    <div style={{ padding: 14, height: 'calc(100vh - 110px)', overflowY: 'auto' }}>
-                      <BulkBookingProjectPanel
-                        row={r}
-                        monthHeaders={monthHeaders}
-                        fmtRev={fmtRev}
-                        canEdit={canEdit}
-                        currentUsername={currentUser?.username || 'system'}
-                        refreshToken={bulkRefreshToken}
-                      />
-                    </div>
-                  ),
-                }))}
-              />
-            </div>
-          );
-        })()}
-      </Drawer>
+        rows={rows}
+        selectedRowKeys={selectedRowKeys}
+        setSelectedRowKeys={setSelectedRowKeys}
+        monthHeaders={monthHeaders}
+        fmtRev={fmtRev}
+        canEdit={canEdit}
+        currentUsername={currentUser?.username || 'system'}
+        bulkAllUploadErrors={bulkAllUploadErrors}
+        setBulkAllUploadErrors={setBulkAllUploadErrors}
+        bulkAllSaving={bulkAllSaving}
+        onBulkAllProjectsUpload={handleBulkAllProjectsUpload}
+        refreshToken={bulkRefreshToken}
+        onClose={() => setBulkBookingOpen(false)}
+      />
+
     </div>
   );
-}
-
-// ── Self-contained booking panel for one project (used by BulkBookingDrawer) ─
-interface BulkBookingProjectPanelProps {
-  row: Row;
-  monthHeaders: string[];
-  fmtRev: (v: number) => string;
-  canEdit: boolean;
-  currentUsername: string;
-  refreshToken?: number;
-}
-function BulkBookingProjectPanel({ row, monthHeaders, fmtRev, canEdit, currentUsername, refreshToken }: BulkBookingProjectPanelProps) {
-  const [bookings, setBookings] = useState<financeApi.ProjectBooking[]>([]);
-  const [bookingsLoading, setBookingsLoading] = useState(false);
-  const [bkMilestoneMonths, setBkMilestoneMonths] = useState<string[]>([]);
-  const [bkBookingMonth, setBkBookingMonth] = useState<string | undefined>(undefined);
-  const [bkAmount, setBkAmount] = useState<number | null>(null);
-  const [bkAmountEdited, setBkAmountEdited] = useState(false);
-  const [bkNotes, setBkNotes] = useState('');
-  const [bkSaving, setBkSaving] = useState(false);
-  const [bkBreakdown, setBkBreakdown] = useState<Record<string, { amount: number | null; notes: string }>>({});
-  const [bkHistoryFilter, setBkHistoryFilter] = useState('');
-  const [bkFilterMilestone, setBkFilterMilestone] = useState<string | undefined>(undefined);
-  const [bkFilterBookedIn, setBkFilterBookedIn] = useState<string | undefined>(undefined);
-  const [bkUploadErrors, setBkUploadErrors] = useState<string[] | null>(null);
-
-  useEffect(() => {
-    if (!row.id) return;
-    setBookingsLoading(true);
-    financeApi.getBookings(row.id).then(b => { setBookings(b); setBookingsLoading(false); }).catch(() => setBookingsLoading(false));
-  }, [row.id, refreshToken]);
-
-  const bookedPerMs: Record<string, number> = {};
-  bookings.forEach(b => {
-    bookedPerMs[b.milestone_month] = (bookedPerMs[b.milestone_month] || 0) + b.amount;
-  });
-  const availableForMs = (m: string) => Math.max(0, (row.revenue[monthHeaders.indexOf(m)] || 0) - (bookedPerMs[m] || 0));
-
-  const allBookedMonths = monthHeaders.filter(m => (row.revenue[monthHeaders.indexOf(m)] || 0) > 0);
-  const selectableMonths = allBookedMonths.filter(m => availableForMs(m) > 0);
-  const fullyBookedMonths = allBookedMonths.filter(m => availableForMs(m) <= 0);
-  const selectedMsType: 'fixed' | 'anticipated' | 'mixed' | null =
-    bkMilestoneMonths.length === 0 ? null :
-    bkMilestoneMonths.every(m => row.milestoneTypes[m] === 'anticipated') ? 'anticipated' :
-    bkMilestoneMonths.every(m => row.milestoneTypes[m] !== 'anticipated') ? 'fixed' :
-    'mixed';
-
-  const allMonthLabels = [...new Set([
-    ...monthHeaders,
-    ...Array.from({ length: 12 }, (_, i) => {
-      const d = new Date(); d.setMonth(d.getMonth() + i);
-      const mo = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
-      return `${mo}'${String(d.getFullYear()).slice(2)}`;
-    }),
-  ])];
-
-  const calcTotal = bkMilestoneMonths.reduce((sum, m) => sum + availableForMs(m), 0);
-  const amountEdited = bkAmountEdited && bkAmount !== null && bkAmount !== calcTotal;
-  const exceedsMax = bkAmount !== null && bkMilestoneMonths.length > 0 && bkAmount > calcTotal;
-  const breakdownTotal = amountEdited ? bkMilestoneMonths.reduce((s, m) => s + (bkBreakdown[m]?.amount || 0), 0) : 0;
-  const breakdownMatchesTotal = !amountEdited || Math.abs(breakdownTotal - (bkAmount || 0)) < 0.01;
-  const breakdownRowsValid = !amountEdited || bkMilestoneMonths.every(m => {
-    const bd = bkBreakdown[m];
-    if (!bd || bd.amount === null || bd.amount <= 0) return false;
-    if (bd.amount > availableForMs(m)) return false;
-    if (bd.amount < availableForMs(m) && !bd.notes.trim()) return false;
-    return true;
-  });
-  const isValid = bkMilestoneMonths.length > 0 && !!bkBookingMonth && bkAmount !== null && bkAmount > 0 && !exceedsMax &&
-    (!amountEdited || (breakdownMatchesTotal && breakdownRowsValid));
-
-  const msToSortKey = (s: string) => {
-    const MONTHS: Record<string, number> = { Jan:1,Feb:2,Mar:3,Apr:4,May:5,Jun:6,Jul:7,Aug:8,Sep:9,Oct:10,Nov:11,Dec:12 };
-    const m = s.match(/^([A-Za-z]{3})'(\d{2})$/);
-    if (!m) return 0;
-    return (2000 + parseInt(m[2], 10)) * 100 + (MONTHS[m[1]] || 0);
-  };
-
-  const histMilestoneOpts = [...new Set(bookings.map(b => b.milestone_month))].sort((a, b) => msToSortKey(b) - msToSortKey(a));
-  const histBookedInOpts  = [...new Set(bookings.map(b => b.booking_month))].sort((a, b) => msToSortKey(b) - msToSortKey(a));
-
-  const filteredBookings = bookings.filter(b => {
-    if (bkFilterMilestone && b.milestone_month !== bkFilterMilestone) return false;
-    if (bkFilterBookedIn  && b.booking_month  !== bkFilterBookedIn)  return false;
-    if (bkHistoryFilter.trim()) {
-      const q = bkHistoryFilter.toLowerCase();
-      return b.milestone_month.toLowerCase().includes(q) || b.booking_month.toLowerCase().includes(q) ||
-        (b.notes || '').toLowerCase().includes(q) || (b.created_by || '').toLowerCase().includes(q);
-    }
-    return true;
-  }).sort((a, b) => {
-    const d = msToSortKey(b.milestone_month) - msToSortKey(a.milestone_month);
-    return d !== 0 ? d : msToSortKey(b.booking_month) - msToSortKey(a.booking_month);
-  });
-
-  const handleBulkBookingUpload = async (file: File) => {
-    setBkUploadErrors(null);
-    try {
-      const uint8 = new Uint8Array(await file.arrayBuffer());
-      const wb = XLSX.read(uint8, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      if (!ws) { setBkUploadErrors(['No sheet found in the uploaded file.']); return false; }
-      const json = XLSX.utils.sheet_to_json<Record<string, any>>(ws, { defval: '' });
-      if (!json.length) { setBkUploadErrors(['The uploaded sheet is empty.']); return false; }
-      const required = ['Milestone Month', 'Booking Month', 'Amount'];
-      const missing = required.filter(h => !Object.keys(json[0]).includes(h));
-      if (missing.length) { setBkUploadErrors([`Missing required columns: ${missing.join(', ')}. Please use the correct template.`]); return false; }
-      const errors: string[] = [];
-      const valid: Array<{ milestone_month: string; booking_month: string; amount: number; notes: string; booking_type: 'fixed' | 'anticipated' }> = [];
-      json.forEach((r, i) => {
-        const mm = String(r['Milestone Month'] || '').trim();
-        const bm = String(r['Booking Month'] || '').trim();
-        const amt = parseFloat(String(r['Amount'] || '0'));
-        const notes = String(r['Notes'] || '').trim();
-        if (!mm || !bm) { errors.push(`Row ${i + 2}: Milestone Month and Booking Month are required.`); return; }
-        if (isNaN(amt) || amt <= 0) { errors.push(`Row ${i + 2}: Amount must be a positive number (got "${r['Amount']}").`); return; }
-        const avail = availableForMs(mm);
-        if (avail <= 0) { errors.push(`Row ${i + 2}: Milestone "${mm}" is fully booked or has no remaining capacity.`); return; }
-        if (amt > avail) { errors.push(`Row ${i + 2}: Amount ${amt.toLocaleString()} exceeds available ${avail.toLocaleString()} for "${mm}".`); return; }
-        valid.push({ milestone_month: mm, booking_month: bm, amount: amt, notes, booking_type: (row.milestoneTypes[mm] === 'anticipated' ? 'anticipated' : 'fixed') });
-      });
-      if (errors.length) { setBkUploadErrors(errors); return false; }
-      if (!valid.length) { setBkUploadErrors(['No valid rows found to import.']); return false; }
-      setBkSaving(true);
-      const result = await financeApi.addBookingsBatch(row.id!, valid.map(v => ({ ...v, created_by: currentUsername })));
-      setBkSaving(false);
-      if (result.ok) {
-        message.success(`${valid.length} booking entr${valid.length === 1 ? 'y' : 'ies'} imported successfully.`);
-        financeApi.getBookings(row.id!).then(setBookings);
-      } else {
-        setBkUploadErrors([`Server error: ${result.error || 'Failed to save.'}`, 'No data was written. Please fix the errors and retry.']);
-      }
-    } catch (e: any) {
-      setBkUploadErrors([`Failed to read file: ${e.message || 'Unknown error'}`, 'Please ensure the file is a valid .xlsx file.']);
-    }
-    return false;
-  };
-
-  const panelContent = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Add Booking Entry */}
-      {canEdit && (
-      <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: '10px 12px' }}>
-        <div style={{ fontSize: '11px', fontWeight: 600, color: '#434343', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <PlusOutlined style={{ color: '#52c41a', fontSize: '10px' }} />Add Booking Entry
-          {fullyBookedMonths.length > 0 && (
-            <Tooltip title={`Fully booked: ${fullyBookedMonths.join(', ')}`} overlayInnerStyle={{ fontSize: '11px' }}>
-              <Tag color="red" style={{ fontSize: '10px', cursor: 'default' }}>{fullyBookedMonths.length} fully booked</Tag>
-            </Tooltip>
-          )}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px' }}>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Milestone(s)</div>
-            <Select mode="multiple" size="small" placeholder={selectableMonths.length === 0 ? 'All milestones fully booked' : 'Select milestones…'}
-              value={bkMilestoneMonths} disabled={selectableMonths.length === 0}
-              onChange={vals => {
-                setBkMilestoneMonths(vals);
-                const nb: Record<string, { amount: number | null; notes: string }> = {};
-                vals.forEach((m: string) => { nb[m] = bkBreakdown[m] ?? { amount: availableForMs(m), notes: '' }; });
-                setBkBreakdown(nb);
-                setBkAmount(vals.reduce((s: number, m: string) => s + availableForMs(m), 0) || null);
-                setBkAmountEdited(false);
-              }}
-              style={{ width: '100%', fontSize: '11px' }} maxTagCount="responsive"
-              options={selectableMonths.map(m => ({ value: m, label: `${m} — avail. ${fmtRev(availableForMs(m))} / ${fmtRev(row.revenue[monthHeaders.indexOf(m)] || 0)}` }))}
-            />
-          </div>
-          <div style={{ gridColumn: '1 / -1' }}>
-            <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Type</div>
-            <div style={{ fontSize: '11px', padding: '1px 8px', background: '#f5f5f5', border: '1px solid #d9d9d9', borderRadius: 4, color: selectedMsType === 'anticipated' ? '#d46b08' : selectedMsType === 'mixed' ? '#722ed1' : selectedMsType === 'fixed' ? '#389e0d' : '#bfbfbf', fontWeight: 500, height: 24, display: 'flex', alignItems: 'center' }}>
-              {selectedMsType === 'anticipated' ? 'Anticipated' : selectedMsType === 'mixed' ? 'Mixed (Fixed & Anticipated)' : selectedMsType === 'fixed' ? 'Fixed' : '—'}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Booking Month</div>
-            <Select size="small" placeholder="Month…" value={bkBookingMonth} onChange={v => setBkBookingMonth(v)}
-              style={{ width: '100%', fontSize: '11px' }} showSearch
-              options={allMonthLabels.map(m => ({ value: m, label: m }))} />
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', marginBottom: 2, color: exceedsMax ? '#ff4d4f' : amountEdited ? '#fa8c16' : '#8c8c8c' }}>
-              Total Amount{bkMilestoneMonths.length > 0 ? (amountEdited ? ` (max ${fmtRev(calcTotal)})` : ' ✓ auto') : ''}
-            </div>
-            <InputNumber size="small" value={bkAmount}
-              onChange={v => {
-                setBkAmount(v); const edited = v !== null && v !== calcTotal; setBkAmountEdited(edited);
-                if (!edited) { const rb: Record<string, { amount: number | null; notes: string }> = {}; bkMilestoneMonths.forEach(m => { rb[m] = { amount: availableForMs(m), notes: '' }; }); setBkBreakdown(rb); }
-              }}
-              style={{ width: '100%', fontSize: '11px' }} min={0} max={calcTotal || undefined}
-              formatter={val => `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')} status={exceedsMax ? 'error' : undefined} />
-          </div>
-          {!amountEdited && (
-            <div style={{ gridColumn: '1 / -1' }}>
-              <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 2 }}>Notes (optional)</div>
-              <Input size="small" placeholder="e.g. PO reference" value={bkNotes} onChange={e => setBkNotes(e.target.value)} style={{ fontSize: '11px' }} />
-            </div>
-          )}
-        </div>
-        {amountEdited && bkMilestoneMonths.length > 0 && (
-          <div style={{ marginTop: 10, border: '1px dashed #faad14', borderRadius: 6, padding: '8px 10px', background: '#fffbe6' }}>
-            <div style={{ fontSize: '10px', fontWeight: 600, color: '#d48806', marginBottom: 6, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Milestone Breakdown</span>
-              <span style={{ color: breakdownMatchesTotal ? '#52c41a' : '#ff4d4f', fontWeight: 700 }}>
-                Allocated: {fmtRev(breakdownTotal)} / {fmtRev(bkAmount || 0)}
-              </span>
-            </div>
-            {bkMilestoneMonths.map(m => {
-              const bd = bkBreakdown[m] ?? { amount: availableForMs(m), notes: '' };
-              const isPartial = bd.amount !== null && bd.amount < availableForMs(m);
-              const exceeds = bd.amount !== null && bd.amount > availableForMs(m);
-              return (
-                <div key={m} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr 1fr', gap: '4px 8px', alignItems: 'center', marginBottom: 6 }}>
-                  <Tag color="blue" style={{ fontSize: '10px', margin: 0, whiteSpace: 'nowrap' }}>{m}</Tag>
-                  <div>
-                    <div style={{ fontSize: '9px', color: exceeds ? '#ff4d4f' : '#8c8c8c', marginBottom: 1 }}>Amount (avail. {fmtRev(availableForMs(m))})</div>
-                    <InputNumber size="small" value={bd.amount} min={0} max={availableForMs(m)}
-                      onChange={v => setBkBreakdown(prev => ({ ...prev, [m]: { ...prev[m], amount: v } }))}
-                      formatter={val => `${val}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                      style={{ width: '100%', fontSize: '11px' }} status={exceeds ? 'error' : undefined} />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '9px', color: isPartial && !bd.notes.trim() ? '#ff4d4f' : '#8c8c8c', marginBottom: 1, fontWeight: isPartial ? 600 : 400 }}>
-                      {isPartial ? 'Reason * (partial)' : 'Notes (optional)'}
-                    </div>
-                    <Input size="small" placeholder={isPartial ? 'Why partial?' : 'optional'} value={bd.notes}
-                      onChange={e => setBkBreakdown(prev => ({ ...prev, [m]: { ...prev[m], notes: e.target.value } }))}
-                      status={isPartial && !bd.notes.trim() ? 'error' : undefined} style={{ fontSize: '11px' }} />
-                  </div>
-                </div>
-              );
-            })}
-            {!breakdownMatchesTotal && <div style={{ fontSize: '10px', color: '#ff4d4f' }}>⚠ Breakdown total must equal {fmtRev(bkAmount || 0)}</div>}
-          </div>
-        )}
-        <Button size="small" loading={bkSaving} disabled={!isValid} icon={<PlusOutlined />} style={{ fontSize: '11px', marginTop: 8 }}
-          onClick={async () => {
-            if (!row.id || !bkMilestoneMonths.length || !bkBookingMonth || !bkAmount) return;
-            setBkSaving(true);
-            const entries = bkMilestoneMonths.map(mm => ({
-              milestone_month: mm,
-              booking_month: bkBookingMonth!,
-              amount: amountEdited ? (bkBreakdown[mm]?.amount ?? availableForMs(mm)) : availableForMs(mm),
-              notes: amountEdited ? (bkBreakdown[mm]?.notes || bkNotes) : bkNotes,
-              created_by: currentUsername,
-              booking_type: (row.milestoneTypes[mm] === 'anticipated' ? 'anticipated' : 'fixed') as 'fixed' | 'anticipated',
-            }));
-            const result = await financeApi.addBookingsBatch(row.id!, entries);
-            setBkSaving(false);
-            if (result.ok) {
-              message.success('Booking recorded');
-              setBkMilestoneMonths([]); setBkBookingMonth(undefined); setBkAmount(null); setBkAmountEdited(false); setBkNotes(''); setBkBreakdown({});
-              financeApi.getBookings(row.id!).then(setBookings);
-            } else { message.error(`Failed to save: ${result.error || 'Unknown error'}`); }
-          }}>Record Booking</Button>
-      </div>
-      )}
-
-      {/* Booking History */}
-      <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 8, padding: '10px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <span style={{ fontSize: '11px', fontWeight: 600, color: '#434343' }}>
-            Booking History
-          {bookings.length > 0 && <Tag style={{ fontSize: '10px', marginLeft: 6 }}>{filteredBookings.length}{filteredBookings.length !== bookings.length ? `/${bookings.length}` : ''}</Tag>}
-          </span>
-          <Space size={4}>
-            {(bkFilterMilestone || bkFilterBookedIn || bkHistoryFilter) && (
-              <Button type="link" size="small" style={{ fontSize: '10px', padding: 0, color: '#ff4d4f' }}
-                onClick={() => { setBkFilterMilestone(undefined); setBkFilterBookedIn(undefined); setBkHistoryFilter(''); }}>
-                Clear filters
-              </Button>
-            )}
-            {canEdit && (
-              <Tooltip title="Upload bookings (.xlsx)" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={f => handleBulkBookingUpload(f as File)}>
-                  <Button type="text" size="small" icon={<UploadOutlined style={{ fontSize: '12px', color: '#595959' }} />} />
-                </Upload>
-              </Tooltip>
-            )}
-            <Tooltip title="Download booking template" overlayInnerStyle={{ fontSize: '11px' }}>
-              <Button type="text" size="small" icon={<DownloadOutlined style={{ fontSize: '12px', color: '#595959' }} />}
-                onClick={() => downloadBookingTemplate(
-                allBookedMonths.map(m => ({ milestoneMonth: m, totalAmount: row.revenue[monthHeaders.indexOf(m)] || 0, alreadyBooked: bookedPerMs[m] || 0, available: availableForMs(m), bookingMonths: [...new Set(bookings.filter(b => b.milestone_month === m).map(b => b.booking_month))], milestoneType: row.milestoneTypes[m] || 'booked' })),
-                  row.project,
-                  row.code,
-                )} />
-            </Tooltip>
-            {bookings.length > 0 && (
-              <Tooltip title="Export booking history (.xlsx)" overlayInnerStyle={{ fontSize: '11px' }}>
-                <Button type="text" size="small" icon={<FileExcelOutlined style={{ fontSize: '12px', color: '#52c41a' }} />}
-                onClick={() => exportBookingHistory(row.project, row.code || '', filteredBookings.length > 0 ? filteredBookings : bookings)} />
-              </Tooltip>
-            )}
-          </Space>
-        </div>
-        {bkUploadErrors && (
-          <Alert type="error" showIcon style={{ fontSize: '11px', marginBottom: 6 }} message="Upload failed"
-            description={<ul style={{ margin: 0, paddingLeft: 16 }}>{bkUploadErrors.map((e, i) => <li key={i} style={{ fontSize: '11px' }}>{e}</li>)}</ul>}
-            closable onClose={() => setBkUploadErrors(null)} />
-        )}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '4px 6px', marginBottom: 8 }}>
-          <Select size="small" allowClear placeholder="Milestone…" value={bkFilterMilestone} onChange={v => setBkFilterMilestone(v)}
-            style={{ fontSize: '11px' }} options={histMilestoneOpts.map(m => ({ value: m, label: m }))} popupMatchSelectWidth={false} />
-          <Select size="small" allowClear placeholder="Booked In…" value={bkFilterBookedIn} onChange={v => setBkFilterBookedIn(v)}
-            style={{ fontSize: '11px' }} options={histBookedInOpts.map(m => ({ value: m, label: m }))} popupMatchSelectWidth={false} />
-          <Input size="small" allowClear placeholder="Search…" value={bkHistoryFilter} onChange={e => setBkHistoryFilter(e.target.value)}
-            style={{ fontSize: '11px' }} prefix={<span style={{ color: '#bbb', fontSize: '10px' }}>⌕</span>} />
-        </div>
-        {bookingsLoading ? (
-          <div style={{ textAlign: 'center', padding: 20 }}><Spin size="small" /></div>
-        ) : bookings.length === 0 ? (
-          <Text type="secondary" style={{ fontSize: '12px' }}>No bookings recorded yet.</Text>
-        ) : filteredBookings.length === 0 ? (
-          <Text type="secondary" style={{ fontSize: '12px' }}>No results match the current filters.</Text>
-        ) : (
-          <Table size="small" dataSource={filteredBookings} rowKey="id"
-            pagination={{ pageSize: 10, size: 'small', showSizeChanger: false, hideOnSinglePage: true }}
-            scroll={{ x: 'max-content' }}
-            columns={[
-              { title: 'Milestone', dataIndex: 'milestone_month', key: 'mm', width: 85, render: (v: string) => <Tag color="blue" style={{ fontSize: '10px', margin: 0 }}>{v}</Tag> },
-              { title: 'Booked In', dataIndex: 'booking_month', key: 'bm', width: 85, render: (v: string) => <Tag color="green" style={{ fontSize: '10px', margin: 0 }}>{v}</Tag> },
-              { title: 'Type', dataIndex: 'booking_type', key: 'btype', width: 88, render: (v: string) => <Tag color={v === 'anticipated' ? 'orange' : 'blue'} style={{ fontSize: '10px', margin: 0 }}>{v === 'anticipated' ? 'Anticipated' : 'Fixed'}</Tag> },
-              { title: 'Amount', dataIndex: 'amount', key: 'amt', width: 95, render: (v: number) => <Text style={{ fontSize: '11px', fontWeight: 600 }}>{fmtRev(v)}</Text> },
-              { title: 'Notes', dataIndex: 'notes', key: 'notes', ellipsis: true, render: (v: string) => <Tooltip title={v} overlayInnerStyle={{ fontSize: '11px' }}><Text style={{ fontSize: '11px', color: '#8c8c8c' }}>{v || '—'}</Text></Tooltip> },
-              { title: 'By', dataIndex: 'created_by', key: 'by', width: 70, render: (v: string) => <Text style={{ fontSize: '10px', color: '#595959' }}>{v}</Text> },
-              ...(canEdit ? [{
-                title: '', key: 'del', width: 30,
-                render: (_: any, rec: financeApi.ProjectBooking) => (
-                  <Popconfirm title="Delete this booking?" onConfirm={async () => { await financeApi.deleteBooking(row.id!, rec.id); financeApi.getBookings(row.id!).then(setBookings); }}
-                    okText="Delete" okButtonProps={{ danger: true, size: 'small' }} cancelButtonProps={{ size: 'small' }}>
-                    <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: '10px' }} />} />
-                  </Popconfirm>
-                ),
-              }] : []),
-            ]}
-          />
-        )}
-      </div>
-    </div>
-  );
-
-  return <>{panelContent}</>;
 }
 
 interface InsightsProps {

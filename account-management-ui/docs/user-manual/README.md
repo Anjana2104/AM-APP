@@ -24,16 +24,16 @@ This user manual provides step-by-step instructions for all screens and features
 | # | Module | Description |
 |---|--------|-------------|
 | 1 | [Login & Authentication](./01-login-authentication.md) | How to log in, roles, session management |
-| 2 | [Navigation](./02-navigation.md) | Layout, sidebar, browser back/forward |
+| 2 | [Navigation](./02-navigation.md) | Layout, sidebar, browser back/forward, Clients group ordering |
 | 3 | [Finance Management](./03-finance-management.md) | Revenue tracking, invoices, project codes |
-| 4 | [Internal Process](./04-internal-process.md) | SOW lifecycle, PIW upload, resource linking, audit |
-| 5 | [Client Requests](./05-client-requests.md) | Beeline requests, filters, insights, detail panel |
-| 6 | [Resource Hub](./06-resource-hub.md) | Master resource list, bulk import, detail drawer |
-| 7 | [Resource Intelligence](./07-resource-intelligence.md) | Per-resource analytics, PDF export |
-| 8 | [App Settings](./08-configuration.md) | Dropdown values, notification triggers, templates, app values |
-| 9 | [User Access Control](./09-user-access-control.md) | Users, roles, permissions, user groups |
-| 10 | [Notifications](./10-notifications.md) | Bell icon, notification triggers, notification snooze |
-| 11 | [Code Guide](./11-code-guide.md) | Project/Open Air code reference |
+| 4 | [Internal Process](./04-internal-process.md) | SOW lifecycle, PIW upload, resource linking, audit, process progress insights |
+| 5 | [Stakeholders](./05-stakeholders.md) | Stakeholder relationship network, profile panel, filters, and exports |
+| 6 | [Client Requests](./05-client-requests.md) | Beeline requests, filters, insights, detail panel |
+| 7 | [Resource Hub](./06-resource-hub.md) | Master resource list, bulk import, detail drawer |
+| 8 | [Resource Intelligence](./07-resource-intelligence.md) | Per-resource analytics, PDF export |
+| 9 | [App Settings](./08-configuration.md) | Dropdown values, notification triggers, templates, app values |
+| 10 | [User Access Control](./09-user-access-control.md) | Users, roles, permissions, user groups |
+| 11 | [Notifications](./10-notifications.md) | Bell icon, notification triggers, notification snooze |
 
 ---
 

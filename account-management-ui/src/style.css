@@ -454,3 +454,18 @@ code {
 .ant-form-item-explain-success {
   font-size: 11px !important;
 }
+.process-insights-date-range .ant-picker-input > input {
+  font-size: 10px !important;
+}
+
+.process-insights-date-range .ant-picker-input > input::placeholder {
+  font-size: 10px !important;
+}
+
+.client-requests-filter-panel .ant-select-selection-item,
+.client-requests-filter-panel .ant-select-selection-placeholder,
+.client-requests-filter-panel .ant-select-arrow,
+.client-requests-filter-panel .ant-picker-input > input,
+.client-requests-filter-panel .ant-picker-input > input::placeholder {
+  font-size: 11px !important;
+}

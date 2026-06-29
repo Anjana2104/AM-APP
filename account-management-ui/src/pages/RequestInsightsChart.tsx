@@ -310,7 +310,7 @@ export function BeelineResourcePanel({ requests, allResources, onExportBeelineMa
                 <Text style={{ fontSize: 12, fontWeight: 500 }}>{drilldownRequest.raisedBy || '—'}</Text>
               </Col>
               <Col span={8}>
-                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Account Anchor</Text>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Owner</Text>
                 <Text style={{ fontSize: 12, fontWeight: 500 }}>{drilldownRequest.accountAnchor || '—'}</Text>
               </Col>
               <Col span={8}>

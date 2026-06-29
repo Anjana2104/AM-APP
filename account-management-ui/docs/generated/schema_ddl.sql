@@ -3,14 +3,18 @@
 -- =============================================================================
 -- Engine  : SQLite 3
 -- File    : server/data/eam_finance.db
--- Updated : 2026-06-24
+-- Updated : 2026-06-29
+-- Generated-At (IST): 2026-06-29T23:25:00+05:30
+-- Source of Truth    : server/index.js (startup migrations), server/db/migrate.js
 --
--- Tables (22):
+-- Tables (25):
 --   Finance        : finance_projects, finance_revenue
 --   Invoice        : invoice_projects, invoice_amounts
 --   Client Mgmt    : client_requests, request_comments
 --   Resources      : resources, resource_comments, resource_insights
 --   Process        : ra_process
+--   Stakeholders   : team_hierarchy_entries, stakeholder_comments,
+--                    stakeholder_comment_resources
 --   Configuration  : app_config_types, app_config_items, app_values
 --   User & Access  : roles, users, user_groups, user_group_members,
 --                    user_preferences
@@ -20,8 +24,10 @@
 --
 -- UI Pages referencing page IDs in roles.permissions:
 --   account_summary, executive_summary, executive_revenue, executive_invoicing,
---   clientmgmt_requests, resources_info, engagement_mapping,
---   clientmgmt_connects, configuration, user_access_control, user_settings
+--   information_teamhierarchy, clientmgmt_requests, clientmgmt_connects,
+--   resources_info, resources_insights, resources_utilization,
+--   information_ratecard, information_process,
+--   configuration, user_access_control, user_settings
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -111,6 +117,9 @@ CREATE TABLE IF NOT EXISTS client_requests (
   created_at        TEXT,
   updated_at        TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_client_requests_beeline_id_ci_unique
+  ON client_requests (LOWER(TRIM(beeline_id)))
+  WHERE beeline_id IS NOT NULL AND TRIM(beeline_id) != '';
 
 -- Comments and notes on client requests
 CREATE TABLE IF NOT EXISTS request_comments (
@@ -157,7 +166,11 @@ CREATE TABLE IF NOT EXISTS resource_comments (
   author      TEXT    NOT NULL DEFAULT '',
   tag         TEXT    NOT NULL DEFAULT 'General',
   body        TEXT    NOT NULL DEFAULT '',
-  created_at  TEXT    NOT NULL
+  reported_by TEXT             DEFAULT '',
+  source_module TEXT            DEFAULT '',
+  source_ref_id INTEGER         DEFAULT NULL,
+  created_at  TEXT    NOT NULL,
+  updated_at  TEXT
 );
 
 -- Log entries for Resource Intelligence
@@ -198,6 +211,7 @@ CREATE TABLE IF NOT EXISTS ra_process (
   eprev          TEXT             DEFAULT '',    -- ePrev stage
   comments       TEXT             DEFAULT '',
   account_anchor TEXT             DEFAULT '',
+  step_completed_at TEXT          DEFAULT '{}',  -- JSON map of step -> first completion UTC timestamp
   created_at     TEXT,
   updated_at     TEXT
 );
@@ -206,6 +220,54 @@ CREATE TABLE IF NOT EXISTS ra_process (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique
   ON ra_process (piw)
   WHERE piw != '' AND piw IS NOT NULL;
+
+-- =============================================================================
+-- STAKEHOLDERS
+-- =============================================================================
+
+-- Stakeholder network records for client/internal hierarchies
+CREATE TABLE IF NOT EXISTS team_hierarchy_entries (
+  id             TEXT PRIMARY KEY,
+  team_type      TEXT    NOT NULL,              -- 'client' | 'ra'
+  name           TEXT    NOT NULL DEFAULT '',
+  title          TEXT             DEFAULT '',
+  department     TEXT             DEFAULT '',
+  reporting_to   TEXT             DEFAULT NULL,  -- logical self-reference to id
+  email          TEXT             DEFAULT '',
+  phone          TEXT             DEFAULT '',
+  responsibility TEXT             DEFAULT '',
+  sort_order     INTEGER          DEFAULT 0,
+  created_at     TEXT,
+  updated_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_hierarchy_team_type_sort
+  ON team_hierarchy_entries (team_type, sort_order);
+
+-- Stakeholder comments and requirement/escalation notes
+CREATE TABLE IF NOT EXISTS stakeholder_comments (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  stakeholder_id        TEXT    NOT NULL,
+  stakeholder_team_type TEXT    NOT NULL DEFAULT '',   -- 'client' | 'ra'
+  author                TEXT    NOT NULL DEFAULT '',
+  tag                   TEXT    NOT NULL DEFAULT 'Interactions',
+  body                  TEXT    NOT NULL DEFAULT '',
+  requirement_status    TEXT             DEFAULT '',   -- open | inprogress | completed
+  account_anchor        TEXT             DEFAULT '',
+  requirement_request_id INTEGER         DEFAULT NULL, -- linked auto-created client request id
+  requirement_request_beeline TEXT       DEFAULT '',   -- linked auto-created client request beeline id
+  created_at            TEXT    NOT NULL,
+  updated_at            TEXT
+);
+
+-- Escalation-linked resources for stakeholder comments
+CREATE TABLE IF NOT EXISTS stakeholder_comment_resources (
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  stakeholder_comment_id INTEGER NOT NULL,
+  resource_id            INTEGER NOT NULL REFERENCES resources (id),
+  created_at             TEXT    NOT NULL,
+  UNIQUE (stakeholder_comment_id, resource_id)
+);
 
 -- =============================================================================
 -- CONFIGURATION
@@ -389,3 +451,15 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_changed_at
 -- =============================================================================
 -- END OF DDL
 -- =============================================================================
+
+-- =============================================================================
+-- DOC SYNC CHANGELOG (generated docs metadata)
+-- =============================================================================
+-- 2026-06-29:
+--   - Added Stakeholders schema section (team_hierarchy_entries) and index.
+--   - Updated permissions page-ID reference list to current App page IDs.
+--   - Corrected table count from 22 to 23.
+--   - Added generated-doc metadata block (updated/generation/source-of-truth).
+--   - Added stakeholder_comments and stakeholder_comment_resources tables.
+--   - Added source_module/source_ref_id/updated_at columns to resource_comments.
+--   - Updated table count from 23 to 25.

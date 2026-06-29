@@ -118,4 +118,4 @@ During the snooze period, matching notifications are suppressed for your account
 
 ---
 
-> **Previous:** [User Access Control](./09-user-access-control.md) | **Next:** [Code Guide](./11-code-guide.md)
+> **Previous:** [User Access Control](./09-user-access-control.md) | **Back to Index:** [README](./README.md)
