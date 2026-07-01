@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import html2canvas from 'html2canvas';
+import { captureElementCanvas } from '../../utils/exportChartAsPng';
 import { jsPDF } from 'jspdf';
 import { Alert, Button, Card, Col, Empty, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
 import { CheckCircleFilled, CommentOutlined, FilePdfOutlined, FileProtectOutlined, FileWordOutlined, HistoryOutlined, InfoCircleOutlined, RightOutlined, TeamOutlined } from '@ant-design/icons';
@@ -171,14 +171,12 @@ export default function ProcessDetailViewPanel({ rows, initialSow }: ProcessDeta
     if (!detailRef.current || !selectedRow) return;
     setExportingPdf(true);
     try {
-      const canvas = await html2canvas(detailRef.current, {
-        scale: 2,
-        useCORS: true,
-        backgroundColor: '#f5f5f5',
+      const canvas = await captureElementCanvas(detailRef.current, '#f5f5f5', {
         scrollY: -window.scrollY,
         windowWidth: detailRef.current.scrollWidth,
         windowHeight: detailRef.current.scrollHeight,
       });
+      if (!canvas) throw new Error('Canvas capture failed');
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
       const pageW = pdf.internal.pageSize.getWidth();

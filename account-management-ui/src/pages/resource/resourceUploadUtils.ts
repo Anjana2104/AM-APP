@@ -60,6 +60,11 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
     throw new Error('No data found in file');
   }
 
+  const headerRow: string[] = ((XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[]) || [])
+    .map((value) => String(value || '').trim());
+  const hasEngagementStartDateColumn = ['Engagement Start Date', 'Eng Start Date'].some((header) => headerRow.includes(header));
+  const hasEngagementEndDateColumn = ['Engagement End Date', 'Eng End Date'].some((header) => headerRow.includes(header));
+
   const totalRows = jsonData.length;
   const skippedRows: UploadSkippedRow[] = [];
   const raIdCountInFile = new Map<string, number[]>();
@@ -149,8 +154,8 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
       if (u.doj) patch.doj = u.doj;
       if (u.totalWorkex) patch.totalWorkex = u.totalWorkex;
       if (u.engagement !== undefined && u.engagement !== '') patch.engagement = u.engagement;
-      if (u.engagementStartDate) patch.engagementStartDate = u.engagementStartDate;
-      if (u.engagementEndDate) patch.engagementEndDate = u.engagementEndDate;
+      if (hasEngagementStartDateColumn) patch.engagementStartDate = u.engagementStartDate || '';
+      if (hasEngagementEndDateColumn) patch.engagementEndDate = u.engagementEndDate || '';
       if (u.allocationPercentage != null) patch.allocationPercentage = u.allocationPercentage;
 
       if (u.engagement.toLowerCase() === 'bench') {

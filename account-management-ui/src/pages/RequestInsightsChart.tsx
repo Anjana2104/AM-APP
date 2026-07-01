@@ -7,7 +7,8 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Card, Row, Col, Statistic, Empty, Tag, Button, Tooltip, message, Modal, Table, Badge, Space, Typography, Input } from 'antd';
 import { CheckCircleOutlined, ClockCircleOutlined, DownloadOutlined, LinkOutlined, UserOutlined, SearchOutlined, ExportOutlined } from '@ant-design/icons';
-import html2canvas from 'html2canvas';
+import { exportChartAsPng, captureElementCanvas } from '../utils/exportChartAsPng';
+import { getCurrentDateStamp } from '../utils/styledExcelExport';
 import { jsPDF } from 'jspdf';
 import dayjs from 'dayjs';
 
@@ -347,11 +348,7 @@ export function RequestInsightsChart({ requests, allResources = [] }: RequestIns
     if (!chartRef.current) return;
     setExporting(true);
     try {
-      const canvas = await html2canvas(chartRef.current, { backgroundColor: '#fff', scale: 2, useCORS: true });
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
-      a.download = `Request_Insights_${new Date().toISOString().slice(0, 10)}.png`;
-      a.click();
+      await exportChartAsPng(chartRef.current, `Request_Insights_${getCurrentDateStamp()}.png`);
     } catch {
       message.error('PNG export failed');
     } finally {
@@ -363,7 +360,8 @@ export function RequestInsightsChart({ requests, allResources = [] }: RequestIns
     if (!chartRef.current) return;
     setExporting(true);
     try {
-      const canvas = await html2canvas(chartRef.current, { backgroundColor: '#fff', scale: 2, useCORS: true });
+      const canvas = await captureElementCanvas(chartRef.current);
+      if (!canvas) throw new Error('Canvas capture failed');
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
@@ -375,7 +373,7 @@ export function RequestInsightsChart({ requests, allResources = [] }: RequestIns
       const imgWidth = pdfWidth - 10;
       const imgHeight = (canvas.height / canvas.width) * imgWidth;
       pdf.addImage(imgData, 'PNG', 5, 5, imgWidth, imgHeight);
-      pdf.save(`Request_Insights_${new Date().toISOString().slice(0, 10)}.pdf`);
+      pdf.save(`Request_Insights_${getCurrentDateStamp()}.pdf`);
     } catch {
       message.error('PDF export failed');
     } finally {

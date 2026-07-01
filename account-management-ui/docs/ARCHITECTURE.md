@@ -32,7 +32,7 @@ EAM (Engagement & Account Management) is a single-page React application with a 
 ## Frontend Architecture
 
 ### Entry Point
-`src/main.tsx` → mounts `<App />` wrapped in `AuthProvider`, `ConfigProvider`, `NotificationProvider`, `UserPreferencesProvider`.
+`src/main.tsx` → mounts `<Provider store={store}><App /></Provider>` wrapped in `AuthProvider`, `ConfigProvider`, `NotificationProvider`, `UserPreferencesProvider`.
 
 ### Routing
 Client-side routing via `window.history.pushState` — no React Router. `App.tsx` owns all page-switch logic with `activePage` state. Browser Back/Forward handled via `popstate` listener.
@@ -50,10 +50,16 @@ src/
 │   │                            Tabs: Deployment Pool | Projects |
 │   │                                  Forecasting | Utilization Insights
 │   ├── EnhancedInsights.tsx   — Cross-resource insights (AI-assisted)
-│   ├── FinanceManagement.tsx  — Finance > Revenue Management
+│   ├── FinanceManagement.tsx  — Finance > SOW Project Milestones + Insights (Project/Booking)
+│   ├── SowManagement.tsx      — UI-aligned page alias used by router for SOW workspace
 │   ├── FinanceSummary.tsx     — Finance > Summary dashboard
 │   ├── FinanceProjectTable.tsx— Reusable finance project grid
-│   ├── InternalProcess.tsx    — Process > SOW/PIW management
+│   ├── InternalProcess.tsx    — Internal Process workspace (Process-first SOW/PIW lifecycle)
+│   ├── internal-process/
+│   │   ├── PiwCreateTabPanel.tsx — PIW create/review/export flow
+│   │   ├── PiwUploadSubTabPanel.tsx — PIW upload and linking flow
+│   │   ├── ProcessInsightsPanel.tsx — Process insights widgets
+│   │   └── ProcessDetailViewPanel.tsx — SOW process detail panel
 │   ├── InvoiceManagement.tsx  — Finance > Invoice Management
 │   ├── LoginPage.tsx          — Authentication page
 │   ├── RateCard.tsx           — Information > Rate Card
@@ -95,14 +101,25 @@ src/
 │   ├── ConfigContext.tsx      — App config (dropdowns)
 │   ├── NotificationContext.tsx— Notification polling + state
 │   └── UserPreferencesContext.tsx — UI preference persistence
-└── types/
-    └── resource.ts            — Shared ResourceRow type
+├── types/
+│   └── resource.ts            — Shared ResourceRow type
+└── store/
+    ├── index.ts               — Redux store setup (configureStore + RootState/AppDispatch types)
+    ├── hooks.ts               — Typed useAppDispatch / useAppSelector hooks
+    ├── resourcesSlice.ts      — Resource list (items, loaded, fromServer)
+    ├── requestsSlice.ts       — Request list + active Beeline options (loaded, fromServer)
+    ├── financeDataSlice.ts    — Finance + invoice shared project/month datasets
+    ├── appShellSlice.ts       — App shell: active module/page, sidebar state, cross-page nav filters
+    └── adminDirectorySlice.ts — Users, roles, user groups (loaded flags per entity)
 ```
 
 ### State Management
-- **No global store** (no Redux/Zustand) — state lives in page components
-- Context used only for: auth session, app config, notifications, user prefs
-- Cross-page navigation state passed via `App.tsx` props / callbacks
+- **Redux Toolkit** (`@reduxjs/toolkit`, `react-redux`) — centralized store for all shared server-backed datasets
+- **Redux slices hold:** resources, requests + active Beeline options, finance/invoice project datasets, app shell/navigation state, admin directory (users/roles/groups)
+- **Rule:** local page UI state (filters, drawers, form values) stays local — only shared server-backed data moves to Redux
+- **React Contexts remain** for: auth session (`AuthContext`), app config (`ConfigContext`), notifications (`NotificationContext`), user preferences (`UserPreferencesContext`)
+- **Selector-first pattern:** pages read from Redux first; only fetch from server if slice `loaded` flag is false
+- **Post-mutation refresh:** after any server mutation (create/update/delete/link), the relevant slice is refreshed via dispatch so all consumers stay consistent
 
 ### Performance Patterns
 - `useMemo` / `useCallback` for expensive derivations and stable callbacks
@@ -125,7 +142,13 @@ server/
 │   ├── audit.js               — GET/POST /api/audit/*
 │   ├── auth.js                — POST /api/auth/login, /logout
 │   ├── config.js              — GET/POST/PUT/DELETE /api/config/*
-│   ├── finance.js             — GET/POST/PUT/DELETE /api/finance/*
+│   ├── finance.js             — Passthrough → finance/ sub-domain modules
+│   ├── finance/
+│   │   ├── index.js           — Assembles finance sub-routers
+│   │   ├── helpers.js         — Shared utilities (month sort, booking helpers, audit helpers)
+│   │   ├── projects.js        — /api/finance/projects CRUD + bulk + milestone-types
+│   │   ├── revenue.js         — /api/finance/month-headers
+│   │   └── bookings.js        — /api/finance/projects/:id/bookings CRUD
 │   ├── invoices.js            — GET/POST/PUT/DELETE /api/invoice/*
 │   ├── notification-triggers.js — /api/notification-triggers/*
 │   │                              GET /relevant?userId= (persona-filtered)

@@ -14,13 +14,15 @@ import {
   FileExcelOutlined, FileTextOutlined, WarningOutlined, CheckCircleOutlined,
   ClockCircleOutlined, TrophyOutlined, ExportOutlined,
 } from '@ant-design/icons';
-import html2canvas from 'html2canvas';
+import { exportChartAsPng } from '../utils/exportChartAsPng';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip,
   Legend, ResponsiveContainer, Cell, LineChart, Line, ReferenceLine,
 } from 'recharts';
 import * as financeApi from '../api/financeApi';
 import * as invoiceApi from '../api/invoiceApi';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setFinanceData, setInvoiceData } from '../store/financeDataSlice';
 
 const { Text } = Typography;
 
@@ -121,14 +123,17 @@ interface FinanceSummaryProps {
 }
 
 export function FinanceSummary({ onNavigate }: FinanceSummaryProps) {
+  const dispatch = useAppDispatch();
   const [loading, setLoading] = useState(true);
   const pageRef = useRef<HTMLDivElement>(null);
 
   // Raw server data
-  const [revProjects, setRevProjects] = useState<financeApi.FinanceProject[]>([]);
-  const [revMonths,   setRevMonths]   = useState<string[]>([]);
-  const [invProjects, setInvProjects] = useState<invoiceApi.InvoiceProject[]>([]);
-  const [invMonths,   setInvMonths]   = useState<string[]>([]);
+  const revProjects = useAppSelector((state) => state.financeData.financeProjects) as financeApi.FinanceProject[];
+  const revMonths = useAppSelector((state) => state.financeData.financeMonths);
+  const invProjects = useAppSelector((state) => state.financeData.invoiceProjects) as invoiceApi.InvoiceProject[];
+  const invMonths = useAppSelector((state) => state.financeData.invoiceMonths);
+  const financeLoaded = useAppSelector((state) => state.financeData.financeLoaded);
+  const invoiceLoaded = useAppSelector((state) => state.financeData.invoiceLoaded);
 
   // Filters
   const [filterFY,      setFilterFY]      = useState<number | null>(null);
@@ -145,28 +150,24 @@ export function FinanceSummary({ onNavigate }: FinanceSummaryProps) {
   const cumulativeRef = useRef<HTMLDivElement>(null);
 
   const exportCard = (ref: React.RefObject<HTMLDivElement | null>, filename: string) => {
-    if (!ref.current) return;
-    html2canvas(ref.current, { backgroundColor: '#fff', scale: 2, useCORS: true }).then(canvas => {
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
-      a.download = `${filename}.png`;
-      a.click();
-    });
+    exportChartAsPng(ref.current, `${filename}.png`).catch(() => {});
   };
 
   useEffect(() => {
+    if (financeLoaded && invoiceLoaded) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     Promise.all([
       financeApi.getProjects(),
       invoiceApi.getInvoiceProjects(),
     ]).then(([rev, inv]) => {
-      setRevProjects(rev.projects);
-      setRevMonths(rev.months);
-      setInvProjects(inv.projects);
-      setInvMonths(inv.months);
+      dispatch(setFinanceData({ projects: rev.projects, months: rev.months, fromServer: rev.fromServer }));
+      dispatch(setInvoiceData({ projects: inv.projects, months: inv.months, fromServer: inv.fromServer }));
       setLoading(false);
     });
-  }, []);
+  }, [dispatch, financeLoaded, invoiceLoaded]);
 
   // ── Derive available FYs from union of both month sets ──────────────────────
   const allFYs = useMemo(() => {
@@ -385,11 +386,7 @@ export function FinanceSummary({ onNavigate }: FinanceSummaryProps) {
                 if (!pageRef.current) return;
                 setExporting(true);
                 try {
-                  const canvas = await html2canvas(pageRef.current, { scale: 2, useCORS: true, backgroundColor: '#f5f6fa' });
-                  const link = document.createElement('a');
-                  link.download = `finance-summary-FY${filterFY ?? ''}.png`;
-                  link.href = canvas.toDataURL('image/png');
-                  link.click();
+                  await exportChartAsPng(pageRef.current, `finance-summary-FY${filterFY ?? ''}.png`, '#f5f6fa');
                 } finally {
                   setExporting(false);
                 }

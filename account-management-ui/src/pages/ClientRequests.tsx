@@ -77,23 +77,20 @@ import type { ResourcePayload } from '../api/resourceApi';
 import { clearModuleArtifact } from '../utils/moduleCleanupApi';
 import { buildStyledWorksheetFromAoa, getCurrentDateStamp } from '../utils/styledExcelExport';
 import { writeJsonSheetFile } from '../utils/xlsxExport';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import {
+  RequestRow as ReduxRequestRow,
+  setActiveRequestOptions as setActiveRequestOptionsAction,
+  setRequests as setRequestsAction,
+  setRequestsFromServer as setRequestsFromServerAction,
+  clearRequests as clearRequestsAction,
+} from '../store/requestsSlice';
+import { setResources as setResourcesAction, setResourcesFromServer } from '../store/resourcesSlice';
+import { mapResourceApiRowToResourceRow } from './resource/resourceRowMappers';
 import '../style.css';
 
 // Types and interfaces
-interface ClientRequest {
-  id?: number;
-  sno: string;
-  beelineId: string;
-  description: string;
-  raisedBy: string;
-  processingStatus: string;
-  overallStatus: string;
-  accountAnchor: string;
-  dateRaised: string;
-  requestType?: string;
-  updatedOn?: string;
-  isActive?: boolean;
-}
+type ClientRequest = ReduxRequestRow;
 
 function toSortableTimestamp(value?: string): number {
   const raw = String(value || '').trim();
@@ -126,9 +123,14 @@ const getOverallStatusBackgroundColor = (status: string): string => OVERALL_STAT
 
 // Main Component
 export default function ClientRequests({ initialBeelineFilter, initialFilters, onFilterApplied }: { initialBeelineFilter?: string; initialFilters?: Record<string, any>; onFilterApplied?: () => void } = {}) {
+  const dispatch = useAppDispatch();
   const { getConfigByLink, configs } = useConfig();
   const { hasPermission, currentUser } = useAuth();
   const { preferencesLoaded, getColumnVisibility, saveColumnVisibility } = useUserPreferences();
+  const requests = useAppSelector((state) => state.requests.items) as ClientRequest[];
+  const requestsLoaded = useAppSelector((state) => state.requests.loaded);
+  const reduxResources = useAppSelector((state) => state.resources.items);
+  const resourcesLoaded = useAppSelector((state) => state.resources.loaded);
   const canEdit = hasPermission('clientmgmt_requests', 'edit');
   const canDelete = hasPermission('clientmgmt_requests', 'delete');
   const changedBy = currentUser?.username || 'system';
@@ -153,7 +155,6 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
     PROCESSING_STATUS_DISPLAY_MAP,
     OVERALL_STATUS_DISPLAY_MAP,
   } = buildRequestConfigMappings(typeItems, processingStatusItems, overallStatusItems);
-  const [requests, setRequests] = useState<ClientRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [fromServer, setFromServer] = useState(false);
   const [form] = Form.useForm();
@@ -189,6 +190,14 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
       .sort((a, b) => a.localeCompare(b))
       .map(v => ({ label: v, value: v }));
   }, [requests]);
+
+  const applyRequests = (updater: ClientRequest[] | ((prev: ClientRequest[]) => ClientRequest[])) => {
+    const next = typeof updater === 'function'
+      ? (updater as (prev: ClientRequest[]) => ClientRequest[])(requests)
+      : updater;
+    dispatch(setRequestsAction(next));
+    return next;
+  };
 
   // Apply saved user preferences once loaded
   useEffect(() => {
@@ -267,7 +276,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
         let uploadSummary = { newCount: 0, updCount: 0 };
         let mergedRows: ClientRequestUploadRow[] = [];
 
-        setRequests(prev => {
+        applyRequests(prev => {
           const result = mergeClientRequestRows(prev as ClientRequestUploadRow[], uploaded);
           uploadSummary = { newCount: result.newCount, updCount: result.updCount };
           mergedRows = result.mergedRows;
@@ -279,10 +288,11 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
           requestApi.bulkSave(toRequestBulkSavePayload(mergedRows)).then(result => {
             if (result.ok) {
               setFromServer(true);
+              dispatch(setRequestsFromServerAction(true));
               // Re-fetch from server to get proper DB IDs for all records (esp. newly inserted)
               requestApi.getRequests().then(({ requests: fresh }) => {
                 if (fresh.length > 0) {
-                  setRequests(fresh.map((r: any, i: number) => mapApiRequestRow(r, i) as ClientRequest));
+                  applyRequests(fresh.map((r: any, i: number) => mapApiRequestRow(r, i) as ClientRequest));
                 }
               });
             }
@@ -346,7 +356,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
       okType: 'danger',
       onOk: () => {
         if (request.id) requestApi.deleteRequest(request.id, currentUser?.username);
-        setRequests(prev => prev.filter(r => r.sno !== request.sno));
+        applyRequests(prev => prev.filter(r => r.sno !== request.sno));
       },
     });
   };
@@ -363,7 +373,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
       });
       return;
     }
-    setRequests(prev => prev.map(r => r.id === request.id ? { ...r, isActive: newActive } : r));
+    applyRequests(prev => prev.map(r => r.id === request.id ? { ...r, isActive: newActive } : r));
     // If this request is currently open in the view panel, refresh it
     if (viewDetailRecord && viewDetailRecord.id === request.id) {
       setViewDetailRecord(prev => prev ? { ...prev, isActive: newActive } : prev);
@@ -396,7 +406,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
           return;
         }
       }
-      setRequests(prev => prev.map(r => (editingRequest.id && r.id === editingRequest.id) ? updated : (r.sno === editingRequest.sno ? updated : r)));
+      applyRequests(prev => prev.map(r => (editingRequest.id && r.id === editingRequest.id) ? updated : (r.sno === editingRequest.sno ? updated : r)));
       message.success('Request updated');
     } else {
       const sno = (requests.length + 1).toString();
@@ -411,7 +421,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
         message.error((result as any).error || 'Failed to create request. Beeline ID may already exist.');
         return;
       }
-      setRequests(prev => [...prev, { ...newReq, id: result.id }]);
+      applyRequests(prev => [...prev, { ...newReq, id: result.id }]);
       message.success('Request created');
     }
     setEditDrawer(false);
@@ -427,7 +437,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
       onOk: () => {
         const toDelete = requests.filter(r => selectedRowKeys.includes(r.sno) && r.id);
         toDelete.forEach(r => requestApi.deleteRequest(r.id!, currentUser?.username));
-        setRequests(requests.filter(r => !selectedRowKeys.includes(r.sno)));
+        applyRequests(requests.filter(r => !selectedRowKeys.includes(r.sno)));
         setSelectedRowKeys([]);
       },
     });
@@ -435,8 +445,9 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
 
   const handleClearAll = async () => {
     await requestApi.clearAll(currentUser?.username);
-    setRequests([]);
+    dispatch(clearRequestsAction());
     setFromServer(false);
+    dispatch(setRequestsFromServerAction(false));
     message.success('All request data cleared');
   };
 
@@ -515,7 +526,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
         changedBy,
       ) as any,
     ));
-    setRequests(requests.map(r =>
+    applyRequests(requests.map(r =>
       selectedRowKeys.includes(r.sno)
         ? { ...r, [field]: value, updatedOn }
         : r
@@ -698,13 +709,18 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
   const isFilterApplied = Object.values(filters).some(v => v);
   const filterPanelRef = useRef<HTMLDivElement>(null);
 
-  // ── Resources state (for beeline linking) ────────────────────────────────
-  const [allResources, setAllResources] = useState<ResourcePayload[]>([]);
+  // ── Resources state (for beeline linking) — backed by Redux ──────────────
+  const [allResources, setAllResources] = useState<ResourcePayload[]>(() => reduxResources as unknown as ResourcePayload[]);
   const [linkResourcesModal, setLinkResourcesModal] = useState<{ open: boolean; request: ClientRequest | null }>({ open: false, request: null });
   const [linkResourcesChecked, setLinkResourcesChecked] = useState<Set<number>>(new Set());
   const [linkResourcesSearch, setLinkResourcesSearch] = useState('');
   const [savingLinks, setSavingLinks] = useState(false);
   const [loadingLinkResources, setLoadingLinkResources] = useState(false);
+
+  // Keep allResources in sync whenever Redux resources update
+  useEffect(() => {
+    setAllResources(reduxResources as unknown as ResourcePayload[]);
+  }, [reduxResources]);
 
   // Compute linked count per beelineId from allResources
   const linkedCountMap = useMemo(() => {
@@ -720,10 +736,20 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
     setLoadingLinkResources(true);
     setLinkResourcesChecked(new Set()); // clear while loading
     setLinkResourcesSearch('');
-    // Refresh resources so beeline IDs are current
-    const { resources: rawRes } = await resourceApi.getResources();
-    const mapped = rawRes.map(mapResourceApiRow);
-    setAllResources(mapped);
+    // Use Redux cache first; only refresh from server to get latest beeline IDs
+    let mapped: ResourcePayload[] = resourcesLoaded
+      ? (reduxResources as unknown as ResourcePayload[])
+      : allResources;
+    if (!resourcesLoaded) {
+      const { resources: rawRes, fromServer: online } = await resourceApi.getResources();
+      if (online) {
+        const reduxMapped = rawRes.map((r: any, i: number) => mapResourceApiRowToResourceRow(r, i));
+        dispatch(setResourcesAction(reduxMapped));
+        dispatch(setResourcesFromServer(true));
+        mapped = rawRes.map(mapResourceApiRow);
+        setAllResources(mapped);
+      }
+    }
     const checked = new Set<number>(
       mapped.filter(r => r.beelineId === request.beelineId && r.id != null).map(r => r.id as number)
     );
@@ -745,8 +771,10 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
       ...toUnlink.map(id => resourceApi.setBeelineLink(id, '', currentUser?.username || 'system')),
     ];
     await Promise.all(ops);
-    // Refresh resources
+    // Refresh resources in Redux after link changes
     const { resources: rawRes } = await resourceApi.getResources();
+    const reduxMapped = rawRes.map((r: any, i: number) => mapResourceApiRowToResourceRow(r, i));
+    dispatch(setResourcesAction(reduxMapped));
     setAllResources(rawRes.map(mapResourceApiRow));
     setSavingLinks(false);
     message.success('Resource links updated');
@@ -756,17 +784,20 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
 
   // Load from DB on mount
   useEffect(() => {
+    if (requestsLoaded) {
+      setLoading(false);
+    } else {
     setLoading(true);
     requestApi.getRequests().then(({ requests: apiRows, fromServer: online }) => {
-      if (online && apiRows.length > 0) {
+      if (online) {
         const mapped: ClientRequest[] = apiRows.map((r: any, i: number) => mapApiRequestRow(r, i) as ClientRequest);
-        setRequests(mapped);
+        dispatch(setRequestsAction(mapped));
         setFromServer(true);
+        dispatch(setRequestsFromServerAction(true));
       }
     }).finally(() => setLoading(false));
-    // Load all resources for beeline linking
-    resourceApi.getResources().then(({ resources }) => setAllResources(resources.map(mapResourceApiRow)));
-  }, []);
+    }
+  }, [dispatch, requestsLoaded]);
 
   // Apply initial beeline filter when provided from navigation
   useEffect(() => {
@@ -1109,7 +1140,7 @@ export default function ClientRequests({ initialBeelineFilter, initialFilters, o
                             Modal.error({ title: 'Cannot Mark Inactive', content: result.error || 'Failed to update status', okText: 'OK' });
                             return;
                           }
-                          setRequests(prev => prev.map(r => r.id === id ? { ...r, isActive } : r));
+                          applyRequests(prev => prev.map(r => r.id === id ? { ...r, isActive } : r));
                         }}
                       />
                     </div>

@@ -21,11 +21,13 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@reduxjs/toolkit": "^2.12.0",
     "antd": "^6.4.3",
     "docx": "^9.7.1",
     "exceljs": "^4.4.0",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
+    "react-redux": "^9.3.0",
     "recharts": "^3.8.1",
     "xlsx": "^0.18.5",
     "xlsx-js-style": "^1.2.0"

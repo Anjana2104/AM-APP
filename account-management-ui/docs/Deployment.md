@@ -228,11 +228,20 @@ When UI/navigation/page IDs change, update all of:
 3. `docs/UI_API_DB_MAPPING.md`
 4. `docs/MODULE_FILE_FUNCTIONALITY_OVERVIEW.md`
 5. `docs/ARCHITECTURE.md`
-6. `docs/user-manual/*.md`
-7. `docs/generated/schema_ddl.sql` header page-ID block
+6. `docs/WORKFLOW.md`
+7. `docs/user-manual/*.md`
+8. `docs/generated/schema_ddl.sql` header page-ID block
 
-Recommended PR checklist item:
+When adding new shared server-backed state (cross-page data), also update:
+
+9. `src/store/` — add or extend the relevant Redux slice
+10. `docs/ARCHITECTURE.md` — State Management → Redux slice table
+11. `docs/WORKFLOW.md` — Section 10 slice/consumer table
+
+Recommended PR checklist items:
 - [ ] "UI state and page-ID docs synced"
+- [ ] "New shared state added to Redux slice (not local state)"
+- [ ] "Redux slice `loaded` flag and skip-if-loaded fetch pattern applied"
 
 ---
 

@@ -19,6 +19,11 @@ The Internal Process module is the operational core of EAM. It manages the full 
 | **Process** | Per-SOW detail: fields, PIW upload, resource linking |
 | **SOW Detail View** | Full edit form, timeline, engagement dates, audit |
 
+### Default tab behavior
+
+- Internal Process now lands on **Process** first for faster operational access.
+- In SOW and PIW flows, sub-tab order is **Create** first, then **Upload**.
+
 ---
 
 ## Overview Tab
@@ -37,7 +42,7 @@ Each SOW card displays:
 | Open Air Code | Finance system code |
 | Budget | Contracted budget value |
 | Start Date | Engagement start date |
-| Account Anchor | Responsible account owner |
+| Owner | Responsible account owner |
 | Active Status | Green (Active) / Grey (Inactive) badge |
 | Resource Count | Number of resources currently linked |
 
@@ -129,6 +134,37 @@ PIW (Project Initiation Workbook) is an Excel file (.xlsm / .xlsx) that contains
 8. Click **Confirm Upload** to save the PIW data to the selected SOW.
 
 > ⚠️ **Note:** Only one PIW file is allowed per SOW. Uploading a new file **replaces** the existing one. This action is logged in the audit trail.
+
+---
+
+## Process Tab — PIW Create & Review (Recent Enhancements)
+
+### Review panel enhancements
+
+- Generated PIW review shows both:
+  - **Actual** rates (source values)
+  - **Considered** rates (edited/uploaded values used for generation)
+- Discrepancies are highlighted with warning notes.
+- Warning notes include skill/experience context where available.
+- Missing or invalid experience values are explicitly shown (no silent assumptions).
+
+### Allocation support
+
+- Allocation % is supported in PIW template, form input, review, export, and calculation sheet.
+- Hours/day uses allocation scaling:
+  - 100% → 8 hours
+  - 50% → 4 hours
+  - 25% → 2 hours
+- If allocation is blank, processing defaults to 100%.
+
+### Exports
+
+- In review, **Download Details (.xlsx)** is available.
+- Export includes calculated hourly-rate context and review-level details.
+
+### UI consistency updates
+
+- Date fields in create/review flows use a light readable style consistent with the rest of the form.
 
 ### PIW File Requirements
 

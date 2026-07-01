@@ -3,6 +3,7 @@ import { Upload, Table, Typography, Space, Button, message, Input, Tooltip, Chec
 import type { ColumnsType } from 'antd/es/table';
 import { UploadOutlined, DownloadOutlined, FilterOutlined } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
+import { writeAoaSheetFile } from '../utils/xlsxExport';
 
 const { Text } = Typography;
 
@@ -42,10 +43,7 @@ export function FinanceProjectTable({ onDataChange, onMonthsChange }: ProjectLis
 
   const downloadTemplate = () => {
     const headers = ['Project Name', 'Client', 'Fiscal Year', 'Status', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar'];
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Finance');
-    XLSX.writeFile(wb, 'Finance_Template.xlsx');
+    writeAoaSheetFile(XLSX, [headers], 'Finance', 'Finance_Template.xlsx');
   };
 
   const handleFile = (file: File) => {

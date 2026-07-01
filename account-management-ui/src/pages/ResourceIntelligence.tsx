@@ -8,20 +8,18 @@
  */
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  Select, Tabs, Button, Modal, Form, Input, Tag, Space, Row, Col,
-  Empty, Card, Tooltip, Spin, Typography, Dropdown, message,
+  Select, Tabs, Button, Modal, Input, Tag, Space, Row, Col,
+  Empty, Card, Tooltip, Spin, Typography, message,
   DatePicker, Divider, Alert, Table, Skeleton, Badge,
   Descriptions, Avatar, Segmented,
 } from 'antd';
 import {
   MessageOutlined, WarningOutlined, UserOutlined, BulbOutlined,
-  PlusOutlined, EditOutlined, DeleteOutlined, EllipsisOutlined,
-  CalendarOutlined, ThunderboltOutlined, SearchOutlined, FileTextOutlined,
+  ThunderboltOutlined, SearchOutlined, FileTextOutlined,
   ClockCircleOutlined, ReloadOutlined, RobotOutlined, CommentOutlined,
-  HistoryOutlined, ExpandAltOutlined, ShrinkOutlined, ProjectOutlined,
+  HistoryOutlined, ProjectOutlined,
   DownloadOutlined, AppstoreOutlined, LinkOutlined, FilePdfOutlined,
 } from '@ant-design/icons';
-import type { MenuProps } from 'antd';
 import * as resourceInsightsApi from '../api/resourceInsightsApi';
 import type { InsightEntry, CrossSearchInsight } from '../api/resourceInsightsApi';
 import * as resourceApi from '../api/resourceApi';
@@ -33,578 +31,23 @@ import * as aiApi from '../api/aiApi';
 import type { ResourceRow } from '../types/resource';
 import { useAuth } from '../context/AuthContext';
 import { useConfig } from '../context/ConfigContext';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setResources as setResourcesAction } from '../store/resourcesSlice';
+import { setActiveRequestOptions as setActiveRequestOptionsAction } from '../store/requestsSlice';
+import { mapResourceApiRowToResourceRow } from './resource/resourceRowMappers';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import ResourceOverviewCharts from '../components/ResourceOverviewCharts';
 import { AllocPctTag } from '../utils/allocUtils';
 import { jsPDF } from 'jspdf';
+import { SECTION_META, SectionKey, LABEL_TO_SECTION, resolveCommentSection, STATUS_COLOR, PRIORITY_COLOR, COMMENT_TAG_COLORS, fmtDate, fmtRelative, cleanVal } from './resource-intelligence/resourceIntelligenceTypes';
+import { EntryCard } from './resource-intelligence/EntryCard';
+import { EntryModal } from './resource-intelligence/EntryModal';
+import { CommentMiniCard } from './resource-intelligence/CommentMiniCard';
+import { SectionTab } from './resource-intelligence/SectionTab';
 dayjs.extend(relativeTime);
 
-const { Text, Title } = Typography;
-const { Option } = Select;
-const { TextArea } = Input;
-
-// ── Constants ──────────────────────────────────────────────────────────────
-
-const SECTION_META = {
-  interaction: {
-    label: 'Interactions',
-    icon: <MessageOutlined />,
-    color: '#1677ff',
-    tags: ['Conversation', 'Meeting', 'Call', 'Follow-up', 'Check-in', 'Review'],
-  },
-  escalation: {
-    label: 'Escalations',
-    icon: <WarningOutlined />,
-    color: '#fa541c',
-    tags: ['Client Escalation', 'Internal Escalation', 'Performance Concern', 'Attendance', 'Other'],
-  },
-  career_preference: {
-    label: 'Career',
-    icon: <UserOutlined />,
-    color: '#722ed1',
-    tags: ['Role Preference', 'Location Preference', 'Upskilling Interest', 'Career Goal', 'Notice Period Update', 'Other'],
-  },
-  plan: {
-    label: 'Plans',
-    icon: <BulbOutlined />,
-    color: '#52c41a',
-    tags: ['Deployment Plan', 'Upskilling Plan', 'Retention Plan', 'Transition Plan', 'Bench Strategy', 'Note'],
-  },
-} as const;
-
-type SectionKey = keyof typeof SECTION_META;
-
-// Tab label → section key map (derived from SECTION_META, no hardcoding)
-const LABEL_TO_SECTION: Record<string, SectionKey> = Object.fromEntries(
-  (Object.entries(SECTION_META) as [SectionKey, typeof SECTION_META[SectionKey]][])
-    .map(([key, meta]) => [meta.label.toLowerCase(), key])
-) as Record<string, SectionKey>;
-
-// Tag value must match a section label exactly (case-insensitive). Everything else → general.
-function resolveCommentSection(tag: string): SectionKey | 'general' {
-  if (!tag) return 'general';
-  const t = tag.toLowerCase().trim();
-  return LABEL_TO_SECTION[t] ?? 'general';
-}
-
-const STATUS_COLOR: Record<string, string> = {
-  open: 'orange',
-  resolved: 'green',
-  active: 'blue',
-  completed: 'default',
-  pending: 'purple',
-  closed: 'red',
-  achieved: 'cyan',
-};
-
-const PRIORITY_COLOR: Record<string, string> = {
-  low: 'default',
-  medium: 'blue',
-  high: 'orange',
-  critical: 'red',
-};
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function fmtDate(iso: string) {
-  if (!iso) return '—';
-  return dayjs(iso).format('DD MMM YYYY');
-}
-
-function fmtRelative(iso: string) {
-  if (!iso) return '';
-  return dayjs(iso).fromNow();
-}
-
-// Clean raw DB audit values — strip null strings, parse JSON blobs
-function cleanVal(v: string | null | undefined): string {
-  if (!v || v === 'null' || v === 'undefined') return '—';
-  const s = String(v).trim();
-  if (s === 'null' || s === 'undefined' || s === '') return '—';
-  try {
-    const p = JSON.parse(s);
-    if (typeof p === 'string') return p || '—';
-    if (typeof p === 'number' || typeof p === 'boolean') return String(p);
-    return Object.entries(p as Record<string, unknown>).map(([k, val]) => `${k}: ${val}`).join(', ');
-  } catch { return s; }
-}
-
-// ── Entry Card ─────────────────────────────────────────────────────────────
-
-interface EntryCardProps {
-  entry: InsightEntry;
-  onEdit: (entry: InsightEntry) => void;
-  onDelete: (id: number) => void;
-  canEdit?: boolean;
-}
-
-function EntryCard({ entry, onEdit, onDelete, canEdit = true }: EntryCardProps) {
-  const meta = SECTION_META[entry.section as SectionKey] || SECTION_META.interaction;
-  const menuItems: MenuProps['items'] = [
-    { key: 'edit', label: 'Edit', icon: <EditOutlined /> },
-    { key: 'delete', label: <span style={{ color: '#ff4d4f' }}>Delete</span>, icon: <DeleteOutlined style={{ color: '#ff4d4f' }} /> },
-  ];
-
-  const handleMenuClick: MenuProps['onClick'] = ({ key }) => {
-    if (key === 'edit') onEdit(entry);
-    if (key === 'delete') {
-      Modal.confirm({
-        title: 'Delete this entry?',
-        content: entry.title || 'This action cannot be undone.',
-        okText: 'Delete',
-        okButtonProps: { danger: true },
-        onOk: () => onDelete(entry.id),
-      });
-    }
-  };
-
-  return (
-    <Card
-      size="small"
-      hoverable
-      style={{ marginBottom: 6, borderRadius: 7, border: '1px solid #f0f0f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}
-      bodyStyle={{ padding: '8px 10px' }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-        {/* Section icon */}
-        <Avatar
-          shape="square"
-          size={26}
-          style={{ background: `${meta.color}18`, color: meta.color, flexShrink: 0, borderRadius: 6, fontSize: 12, minWidth: 26 }}
-          icon={meta.icon}
-        />
-
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Line 1: title */}
-          <Text strong style={{ fontSize: 12, display: 'block', lineHeight: '18px' }}>
-            {entry.title || '(No title)'}
-          </Text>
-
-          {/* Line 2: tags + author + time */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', marginTop: 3 }}>
-            {entry.tag && (
-              <Tag bordered={false} color={meta.color} style={{ fontSize: 10, padding: '0 5px', margin: 0, lineHeight: '16px' }}>
-                {entry.tag}
-              </Tag>
-            )}
-            {entry.status && entry.section !== 'interaction' && (
-              <Tag bordered={false} color={STATUS_COLOR[entry.status] || 'default'} style={{ fontSize: 10, padding: '0 5px', margin: 0, lineHeight: '16px' }}>
-                {entry.status}
-              </Tag>
-            )}
-            {(entry.section === 'escalation' || entry.section === 'plan') && entry.priority && (
-              <Tag bordered={false} color={PRIORITY_COLOR[entry.priority] || 'default'} style={{ fontSize: 10, padding: '0 5px', margin: 0, lineHeight: '16px' }}>
-                {entry.priority}
-              </Tag>
-            )}
-            <Text type="secondary" style={{ fontSize: 10 }}>
-              {entry.author || 'Unknown'} · {fmtRelative(entry.created_at)}
-            </Text>
-            {(entry.section === 'escalation' || entry.section === 'plan') && entry.target_date && (
-              <Text type="secondary" style={{ fontSize: 10 }}>
-                · <CalendarOutlined style={{ marginRight: 2 }} />{fmtDate(entry.target_date)}
-              </Text>
-            )}
-          </div>
-
-          {/* Body */}
-          {entry.body && (
-            <Text style={{ fontSize: 11, color: '#595959', display: 'block', marginTop: 4, lineHeight: '16px' }}>
-              {entry.body}
-            </Text>
-          )}
-        </div>
-
-        {/* Actions */}
-        {canEdit && (
-          <Dropdown menu={{ items: menuItems, onClick: handleMenuClick }} trigger={['click']} placement="bottomRight">
-            <Button type="text" size="small" icon={<EllipsisOutlined />} style={{ color: '#bfbfbf', flexShrink: 0, padding: '0 2px', height: 20 }} />
-          </Dropdown>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-// ── Add/Edit Modal ─────────────────────────────────────────────────────────
-
-interface EntryModalProps {
-  open: boolean;
-  section: SectionKey;
-  editing: InsightEntry | null;
-  defaultAuthor: string;
-  onClose: () => void;
-  onSave: (values: Record<string, string>) => Promise<void>;
-}
-
-function EntryModal({ open, section, editing, defaultAuthor, onClose, onSave }: EntryModalProps) {
-  const [form] = Form.useForm();
-  const [saving, setSaving] = useState(false);
-  const meta = SECTION_META[section];
-
-  useEffect(() => {
-    if (open) {
-      if (editing) {
-        form.setFieldsValue({
-          title: editing.title,
-          body: editing.body,
-          tag: editing.tag,
-          status: editing.status,
-          priority: editing.priority,
-          targetDate: editing.target_date || '',
-        });
-      } else {
-        form.resetFields();
-        form.setFieldsValue({ status: 'open', priority: 'medium' });
-      }
-    }
-  }, [open, editing, form]);
-
-  const handleFinish = async (values: Record<string, string>) => {
-    setSaving(true);
-    await onSave(values);
-    setSaving(false);
-  };
-
-  const showPriority = section === 'escalation' || section === 'plan';
-  const showStatus = section !== 'interaction';
-  const showTargetDate = section === 'escalation' || section === 'plan';
-
-  const statusOptions = section === 'career_preference'
-    ? ['active', 'achieved', 'pending']
-    : ['open', 'resolved', 'closed', 'active', 'completed', 'pending'];
-
-  return (
-    <Modal
-      title={
-        <Space>
-          <span style={{ color: meta.color }}>{meta.icon}</span>
-          {editing ? `Edit ${meta.label} Entry` : `Add ${meta.label} Entry`}
-        </Space>
-      }
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={520}
-      destroyOnClose
-    >
-      <Form form={form} layout="vertical" onFinish={handleFinish} style={{ marginTop: 12 }}>
-        <Form.Item name="title" label="Title" rules={[{ required: true, whitespace: true, message: 'Title is required' }]}>
-          <Input placeholder="Brief title or subject" />
-        </Form.Item>
-
-        <Form.Item name="body" label="Details / Notes" rules={[{ required: true, whitespace: true, message: 'Please enter details or notes' }]}>
-          <TextArea rows={3} placeholder="Additional details, context, or notes..." />
-        </Form.Item>
-
-        <Row gutter={12}>
-          <Col span={showPriority ? 12 : 24}>
-            <Form.Item name="tag" label="Tag">
-              <Select placeholder="Select tag" allowClear>
-                {meta.tags.map(t => <Option key={t} value={t}>{t}</Option>)}
-              </Select>
-            </Form.Item>
-          </Col>
-          {showPriority && (
-            <Col span={12}>
-              <Form.Item name="priority" label="Priority">
-                <Select>
-                  <Option value="low">Low</Option>
-                  <Option value="medium">Medium</Option>
-                  <Option value="high">High</Option>
-                  <Option value="critical">Critical</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-          )}
-        </Row>
-
-        <Row gutter={12}>
-          {showStatus && (
-            <Col span={showTargetDate ? 12 : 24}>
-              <Form.Item name="status" label="Status">
-                <Select>
-                  {statusOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
-                </Select>
-              </Form.Item>
-            </Col>
-          )}
-          {showTargetDate && (
-            <Col span={showStatus ? 12 : 24}>
-              <Form.Item name="targetDate" label="Target Date">
-                <Input type="date" />
-              </Form.Item>
-            </Col>
-          )}
-        </Row>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button type="primary" htmlType="submit" loading={saving} style={{ color: '#fff', fontWeight: 600 }}>
-            {editing ? 'Save Changes' : 'Add Entry'}
-          </Button>
-        </div>
-      </Form>
-    </Modal>
-  );
-}
-
-// ── Comment mini-card (for comments mapped into section tabs) ──────────────
-
-const COMMENT_TAG_COLORS: Record<string, string> = {
-  Interactions: 'blue',
-  Escalations:  'red',
-  Career:       'purple',
-  Plans:        'green',
-  General:      'default',
-};
-
-function CommentMiniCard({ comment, currentUser, onDelete }: {
-  comment: ResourceComment;
-  currentUser?: string;
-  onDelete?: (id: number) => void;
-}) {
-  const tagLabel = comment.tag || 'General';
-  const tagColor = COMMENT_TAG_COLORS[tagLabel] ?? 'default';
-  const isOwn = currentUser && comment.author === currentUser;
-  const showStakeholderEscalationMeta =
-    comment.source_module === 'stakeholder_escalation' ||
-    (tagLabel === 'Escalations' && Boolean(comment.reported_by));
-
-  return (
-    <div style={{
-      padding: '8px 12px', borderRadius: 8, background: '#f0f7ff',
-      border: '1px solid #bae0ff', marginBottom: 6,
-      display: 'flex', alignItems: 'flex-start', gap: 8,
-    }}>
-      <Avatar size={22} style={{ background: '#1890ff', fontSize: 10, flexShrink: 0, marginTop: 1 }}>
-        {(comment.author || '?').slice(0, 1).toUpperCase()}
-      </Avatar>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 3, flexWrap: 'wrap', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            {tagLabel && (
-              <Tag bordered={false} color={tagColor} style={{ fontSize: 10, padding: '0 5px' }}>{tagLabel}</Tag>
-            )}
-            <Text strong style={{ fontSize: 11 }}>
-              {showStakeholderEscalationMeta
-                ? `By: ${comment.author || 'Admin'}${comment.reported_by ? ` | Reported by: ${comment.reported_by}` : ''}`
-                : (comment.author || '—')}
-            </Text>
-            <Text type="secondary" style={{ fontSize: 10 }}>{fmtRelative(comment.created_at)}</Text>
-          </div>
-          {isOwn && onDelete && (
-            <Button
-              type="text" size="small" danger
-              icon={<DeleteOutlined />}
-              style={{ fontSize: 10, padding: '0 2px', height: 16 }}
-              onClick={() => onDelete(comment.id)}
-            />
-          )}
-        </div>
-        <Text style={{ fontSize: 12, color: '#262626' }}>{comment.body}</Text>
-      </div>
-    </div>
-  );
-}
-
-// ── Section Tab Content ────────────────────────────────────────────────────
-
-interface SectionTabProps {
-  section: SectionKey;
-  entries: InsightEntry[];
-  linkedComments: ResourceComment[];
-  loading: boolean;
-  currentUser: string;
-  resourceId: number;
-  resourceName?: string;
-  onRefresh: () => void;
-  onDeleteComment?: (id: number) => void;
-  canEdit?: boolean;
-  searchText: string;
-}
-
-function SectionTab({ section, entries, linkedComments, loading, currentUser, resourceId, resourceName = '', onRefresh, onDeleteComment, canEdit = true, searchText }: SectionTabProps) {
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<InsightEntry | null>(null);
-  const [tabExpanded, setTabExpanded] = useState(false);
-  // Escalation-specific filters
-  const [statusFilter, setStatusFilter] = useState<string | null>(null);
-  const [priorityFilter, setPriorityFilter] = useState<string | null>(null);
-  const meta = SECTION_META[section];
-
-  const handleSave = useCallback(async (values: Record<string, string>) => {
-    if (editingEntry) {
-      const ok = await resourceInsightsApi.updateInsight(editingEntry.id, {
-        title: values.title,
-        body: values.body,
-        tag: values.tag,
-        status: section === 'interaction' ? 'open' : values.status,
-        priority: values.priority,
-        targetDate: values.targetDate || undefined,
-        author: editingEntry.author, // preserve original author on edit
-      });
-      if (ok) { message.success('Entry updated'); onRefresh(); setModalOpen(false); setEditingEntry(null); }
-      else message.error('Failed to update');
-    } else {
-      const result = await resourceInsightsApi.addInsight({
-        resourceId, section,
-        title: values.title,
-        body: values.body,
-        tag: values.tag,
-        status: section === 'interaction' ? 'open' : (values.status || 'open'),
-        priority: values.priority,
-        targetDate: values.targetDate || undefined,
-        author: currentUser, // always use logged-in user
-      });
-      if (result.ok) { message.success('Entry added'); onRefresh(); setModalOpen(false); }
-      else message.error('Failed to add entry');
-    }
-  }, [editingEntry, resourceId, section, currentUser, onRefresh]);
-
-  const handleDelete = useCallback(async (id: number) => {
-    const ok = await resourceInsightsApi.deleteInsight(id);
-    if (ok) {
-      message.success('Entry deleted');
-      onRefresh();
-    } else {
-      message.error('Failed to delete');
-    }
-  }, [onRefresh]);
-
-  const handleEdit = useCallback((entry: InsightEntry) => {
-    setEditingEntry(entry);
-    setModalOpen(true);
-  }, []);
-
-  // Filtered entries for display
-  const filteredEntries = useMemo(() => {
-    const q = searchText.toLowerCase().trim();
-    return entries.filter(e => {
-      if (statusFilter && e.status !== statusFilter) return false;
-      if (priorityFilter && e.priority !== priorityFilter) return false;
-      if (!q) return true;
-      return (
-        (e.title || '').toLowerCase().includes(q) ||
-        (e.body || '').toLowerCase().includes(q) ||
-        (e.tag || '').toLowerCase().includes(q) ||
-        (e.author || '').toLowerCase().includes(q)
-      );
-    });
-  }, [entries, searchText, statusFilter, priorityFilter]);
-
-  return (
-    <div>
-      {/* Toolbar */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10, alignItems: 'center' }}>
-        {canEdit && (
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            size="small"
-            style={{ background: meta.color, borderColor: meta.color, color: '#fff', fontWeight: 600, fontSize: 11 }}
-            onClick={() => { setEditingEntry(null); setModalOpen(true); }}
-          >
-            Add
-          </Button>
-        )}
-        {section === 'escalation' && (
-          <Space.Compact size="small">
-            <Select
-              allowClear
-              placeholder="Status"
-              value={statusFilter}
-              onChange={v => setStatusFilter(v ?? null)}
-              style={{ width: 100, fontSize: 11 }}
-              popupClassName="small-select-dropdown"
-              options={[
-                { value: 'open', label: 'Open' },
-                { value: 'resolved', label: 'Resolved' },
-                { value: 'closed', label: 'Closed' },
-                { value: 'active', label: 'Active' },
-                { value: 'pending', label: 'Pending' },
-              ]}
-            />
-            <Select
-              allowClear
-              placeholder="Priority"
-              value={priorityFilter}
-              onChange={v => setPriorityFilter(v ?? null)}
-              style={{ width: 100, fontSize: 11 }}
-              popupClassName="small-select-dropdown"
-              options={[
-                { value: 'low', label: 'Low' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'high', label: 'High' },
-                { value: 'critical', label: 'Critical' },
-              ]}
-            />
-          </Space.Compact>
-        )}
-        {(statusFilter || priorityFilter) && (
-          <Badge count={`${filteredEntries.length}/${entries.length}`} style={{ background: meta.color, fontSize: 10 }} />
-        )}
-        {/* Expand/collapse this tab's content */}
-        <Tooltip title={tabExpanded ? 'Collapse' : 'Expand'}>
-          <Button
-            type="text"
-            size="small"
-            icon={tabExpanded ? <ShrinkOutlined /> : <ExpandAltOutlined />}
-            onClick={() => setTabExpanded(v => !v)}
-            style={{ marginLeft: 'auto', color: '#8c8c8c', fontSize: 11 }}
-          />
-        </Tooltip>
-      </div>
-
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 32 }}><Spin /></div>
-      ) : (
-        <div style={{
-          overflowY: 'auto',
-          maxHeight: tabExpanded ? 680 : 360,
-          paddingRight: 2,
-          transition: 'max-height 0.25s ease',
-        }}>
-          {/* Linked resource comments */}
-          {linkedComments.length > 0 && (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 5, paddingBottom: 4, borderBottom: '1px solid #f0f0f0' }}>
-                <CommentOutlined style={{ color: '#1890ff', fontSize: 11 }} />
-                <Text style={{ fontSize: 11, fontWeight: 600, color: '#1890ff' }}>
-                  Related Comments ({linkedComments.length})
-                </Text>
-              </div>
-              {linkedComments.map(c => <CommentMiniCard key={c.id} comment={c} currentUser={currentUser} onDelete={onDeleteComment} />)}
-              {filteredEntries.length > 0 && <Divider style={{ margin: '8px 0 6px' }} />}
-            </div>
-          )}
-
-          {filteredEntries.length === 0 ? (
-            <Empty
-              description={searchText ? 'No entries match your search' : `No ${meta.label.toLowerCase()} entries yet`}
-              style={{ margin: linkedComments.length > 0 ? '12px 0' : '24px 0' }}
-              imageStyle={{ height: linkedComments.length > 0 ? 28 : 40 }}
-            />
-          ) : (
-            filteredEntries.map(e => (
-              <EntryCard key={e.id} entry={e} onEdit={handleEdit} onDelete={handleDelete} canEdit={canEdit} />
-            ))
-          )}
-        </div>
-      )}
-
-      <EntryModal
-        open={modalOpen}
-        section={section}
-        editing={editingEntry}
-        defaultAuthor={currentUser}
-        onClose={() => { setModalOpen(false); setEditingEntry(null); }}
-        onSave={handleSave}
-      />
-    </div>
-  );
-}
+const { Text } = Typography;
 
 // ── Main Page ──────────────────────────────────────────────────────────────
 
@@ -618,10 +61,16 @@ interface ResourceIntelligenceProps {
 
 export default function ResourceIntelligence({ resources: propResources = [], onNavigate, onNavigateWithFilter, onNavigateToRequest, onNavigateToProcess }: ResourceIntelligenceProps) {
   const { currentUser } = useAuth();
+  const dispatch = useAppDispatch();
+  const reduxResources = useAppSelector((state) => state.resources.items);
+  const activeRequestOptions = useAppSelector((state) => state.requests.activeRequestOptions);
   const defaultAuthor = currentUser?.username || '';
-
-  const [resources, setResources] = useState<ResourceRow[]>(propResources);
+  const resources = propResources.length > 0 ? propResources : reduxResources;
+  const [activeOverviewTab, setActiveOverviewTab] = useState<'individual' | 'all_resources'>('individual');
   const [exportingPdf, setExportingPdf] = useState(false);
+  const publishResources = useCallback((updated: ResourceRow[]) => {
+    dispatch(setResourcesAction(updated));
+  }, [dispatch]);
 
   const handleExportPdf = async () => {
     if (!selectedResource) return;
@@ -796,15 +245,22 @@ export default function ResourceIntelligence({ resources: propResources = [], on
   // Beeline linking state
   const [beelineLinkModal, setBeelineLinkModal] = useState<{ open: boolean; resource: ResourceRow | null }>({ open: false, resource: null });
   const [selectedBeelineId, setSelectedBeelineId] = useState('');
-  const [beelineRequestOptions, setBeelineRequestOptions] = useState<Array<{ value: string; label: string }>>([]);
+  const beelineRequestOptions = useMemo(
+    () => activeRequestOptions.filter(r => r.beelineId).map(r => ({ value: r.beelineId, label: r.beelineId })),
+    [activeRequestOptions],
+  );
   const [beelineSaving, setBeelineSaving] = useState(false);
+  const ensureActiveRequestOptions = useCallback(async () => {
+    if (activeRequestOptions.length > 0) return;
+    const activeReqs = await requestApi.getActiveRequests();
+    dispatch(setActiveRequestOptionsAction(activeReqs));
+  }, [activeRequestOptions.length, dispatch]);
 
   const openBeelineLinkModal = async (resource: ResourceRow) => {
     setSelectedBeelineId(resource.beelineId || '');
     setBeelineLinkModal({ open: true, resource });
     try {
-      const activeReqs = await requestApi.getActiveRequests();
-      setBeelineRequestOptions(activeReqs.filter(r => r.beelineId).map(r => ({ value: r.beelineId, label: r.beelineId })));
+      await ensureActiveRequestOptions();
     } catch (error) {
       console.error('[ResourceIntelligence] Failed to fetch active requests for Beeline linking', error);
       message.warning('Could not load active request list. You can still enter Beeline ID manually.');
@@ -893,32 +349,11 @@ export default function ResourceIntelligence({ resources: propResources = [], on
     resourceApi.getResources().then(({ resources: rows }) => {
       if (rows.length === 0 && propResources.length > 0) {
         // Server offline — use prop data as fallback
-        setResources(propResources);
+        publishResources(propResources);
         return;
       }
-      const mapped: ResourceRow[] = rows.map((r: any, i: number) => ({
-        key: String(r.id || i),
-        id: r.id,
-        isActive: Number(r.is_active ?? r.isActive ?? 1) !== 0,
-        sno: String(r.sno || i + 1),
-        raId: String(r.ra_id || r.raId || ''),
-        empName: String(r.emp_name || r.empName || ''),
-        emailId: String(r.email_id || r.emailId || ''),
-        piwRole: String(r.piw_role || r.piwRole || ''),
-        roleOrDomain: String(r.role_or_domain || r.roleOrDomain || ''),
-        previousWorkex: String(r.previous_workex || r.previousWorkex || ''),
-        doj: String(r.doj || ''),
-        totalWorkex: String(r.total_workex || r.totalWorkex || ''),
-        skills: String(r.skills || ''),
-        engagement: String(r.engagement || ''),
-        allocationStatus: String(r.allocation_status || r.allocationStatus || ''),
-        allocationPercentage: r.allocation_percentage != null ? Number(r.allocation_percentage) : (r.allocationPercentage != null ? Number(r.allocationPercentage) : null),
-        beelineId: String(r.beeline_id || r.beelineId || ''),
-        engagementStartDate: String(r.engagement_start_date || r.engagementStartDate || ''),
-        engagementEndDate: String(r.engagement_end_date || r.engagementEndDate || ''),
-        sowName: String(r.sow_name || r.sowName || ''),
-      }));
-      setResources(mapped);
+      const mapped: ResourceRow[] = rows.map((r: any, i: number) => mapResourceApiRowToResourceRow(r, i));
+      publishResources(mapped);
       // If selected resource was deleted, clear it
       if (selectedResourceId && !mapped.find(r => r.id === selectedResourceId)) {
         setSelectedResourceId(null);
@@ -928,10 +363,10 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       }
     }).catch(() => {
       // Server error — fall back to prop data
-      if (propResources.length > 0) setResources(propResources);
+      if (propResources.length > 0) publishResources(propResources);
     });
   // Re-run when propResources changes (e.g. after a save in ResourceInformation)
-  }, [propResources]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [propResources, publishResources, selectedResourceId]);
 
   const selectedResource = useMemo(
     () => resources.find(r => r.id === selectedResourceId) || null,
@@ -961,23 +396,8 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       if (document.visibilityState !== 'visible') return;
       // Re-fetch resources to catch deletions from other tabs
       const { resources: rows } = await resourceApi.getResources().catch(() => ({ resources: [] }));
-      const mapped: ResourceRow[] = rows.map((r: any, i: number) => ({
-        key: String(r.id || i), id: r.id, sno: String(r.sno || i + 1),
-        isActive: Number(r.is_active ?? r.isActive ?? 1) !== 0,
-        raId: String(r.ra_id || r.raId || ''), empName: String(r.emp_name || r.empName || ''),
-        emailId: String(r.email_id || r.emailId || ''), piwRole: String(r.piw_role || r.piwRole || ''),
-        roleOrDomain: String(r.role_or_domain || r.roleOrDomain || ''),
-        previousWorkex: String(r.previous_workex || r.previousWorkex || ''),
-        doj: String(r.doj || ''), totalWorkex: String(r.total_workex || r.totalWorkex || ''),
-        skills: String(r.skills || ''), engagement: String(r.engagement || ''),
-        allocationStatus: String(r.allocation_status || r.allocationStatus || ''),
-        allocationPercentage: r.allocation_percentage != null ? Number(r.allocation_percentage) : (r.allocationPercentage != null ? Number(r.allocationPercentage) : null),
-        beelineId: String(r.beeline_id || r.beelineId || ''),
-        engagementStartDate: String(r.engagement_start_date || r.engagementStartDate || ''),
-        engagementEndDate: String(r.engagement_end_date || r.engagementEndDate || ''),
-        sowName: String(r.sow_name || r.sowName || ''),
-      }));
-      if (rows.length > 0) setResources(mapped);
+      const mapped: ResourceRow[] = rows.map((r: any, i: number) => mapResourceApiRowToResourceRow(r, i));
+      if (rows.length > 0) publishResources(mapped);
       if (selectedResourceId) {
         const still = mapped.find(r => r.id === selectedResourceId);
         if (!still) {
@@ -993,7 +413,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [selectedResourceId, loadData]);
+  }, [selectedResourceId, loadData, publishResources]);
 
   // Derived counts — combined from insight entries + mapped comments
 
@@ -1317,7 +737,9 @@ export default function ResourceIntelligence({ resources: propResources = [], on
 
       {/* ── Outer Sub-tabs: Individual Resource / All Resources ── */}
       <Tabs
+        activeKey={activeOverviewTab}
         defaultActiveKey="individual"
+        onChange={(key) => setActiveOverviewTab(key as 'individual' | 'all_resources')}
         size="small"
         style={{ background: '#fff', borderRadius: 10, padding: '0 12px', border: '1px solid #e8eaf0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}
         items={[
@@ -1941,10 +1363,12 @@ export default function ResourceIntelligence({ resources: propResources = [], on
             label: <span style={{ fontSize: 12 }}><AppstoreOutlined /> All Resources</span>,
             children: (
               <div style={{ padding: '12px 0 8px' }}>
-                <ResourceOverviewCharts
-                  resources={propResources}
-                  onFilterClick={onNavigateWithFilter ? (type, name) => onNavigateWithFilter(type, name) : undefined}
-                />
+                {activeOverviewTab === 'all_resources' && (
+                  <ResourceOverviewCharts
+                    resources={resources}
+                    onFilterClick={onNavigateWithFilter ? (type, name) => onNavigateWithFilter(type, name) : undefined}
+                  />
+                )}
               </div>
             ),
           },

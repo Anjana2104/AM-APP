@@ -3,6 +3,7 @@ import { Upload, Table, Typography, Space, Button, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { UploadOutlined } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
+import { writeJsonSheetFile } from '../utils/xlsxExport';
 
 const { Title, Text } = Typography;
 
@@ -36,14 +37,12 @@ function downloadTemplate() {
     'Code',
     'Space',
     'Owners',
-    // FY months – exactly like your ZS template
     'Oct', 'Nov', 'Dec',
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep',
     'Oct', 'Nov', 'Dec',
   ];
 
-  // Create 5 empty rows as sample
   const rows = Array.from({ length: 5 }).map((_, i) => {
     const row: any = {};
     headers.forEach(h => (row[h] = ''));
@@ -51,14 +50,7 @@ function downloadTemplate() {
     return row;
   });
 
-  const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: headers,
-  });
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'ZS Revenue 2026');
-
-  XLSX.writeFile(workbook, 'ZS_Revenue_Template_2026.xlsx');
+  writeJsonSheetFile(XLSX, rows, 'ZS Revenue 2026', 'ZS_Revenue_Template_2026.xlsx', { header: headers });
 }
 
 

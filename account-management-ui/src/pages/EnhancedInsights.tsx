@@ -17,7 +17,8 @@ import {
 } from '@ant-design/icons';
 import * as XLSXStyle from 'xlsx-js-style';
 import * as XLSX from 'xlsx';
-import html2canvas from 'html2canvas';
+import { captureElementCanvas } from '../utils/exportChartAsPng';
+import { getCurrentDateStamp } from '../utils/styledExcelExport';
 import { jsPDF } from 'jspdf';
 import dayjs from 'dayjs';
 
@@ -217,7 +218,7 @@ export function EnhancedInsights({
       ws['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 25 }];
       const wb = XLSXStyle.utils.book_new();
       XLSXStyle.utils.book_append_sheet(wb, ws, 'Insights');
-      XLSXStyle.writeFile(wb, `Request_Insights_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSXStyle.writeFile(wb, `Request_Insights_${getCurrentDateStamp()}.xlsx`);
       message.success('Insights exported successfully');
     } catch (error) {
       message.error('Failed to export insights');
@@ -230,7 +231,8 @@ export function EnhancedInsights({
     if (!chartRef.current) return;
     setExporting(true);
     try {
-      const canvas = await html2canvas(chartRef.current, { backgroundColor: '#fff', scale: 2, useCORS: true });
+      const canvas = await captureElementCanvas(chartRef.current);
+      if (!canvas) throw new Error('Canvas capture failed');
       const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({
         orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
@@ -242,7 +244,7 @@ export function EnhancedInsights({
       const imgWidth = pdfWidth - 10;
       const imgHeight = (canvas.height / canvas.width) * imgWidth;
       pdf.addImage(imgData, 'PNG', 5, 5, imgWidth, imgHeight);
-      pdf.save(`Request_Insights_${new Date().toISOString().slice(0, 10)}.pdf`);
+      pdf.save(`Request_Insights_${getCurrentDateStamp()}.pdf`);
       message.success('PDF exported successfully');
     } catch (error) {
       message.error('Failed to export PDF');

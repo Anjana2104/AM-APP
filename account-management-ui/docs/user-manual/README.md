@@ -37,13 +37,25 @@ This user manual provides step-by-step instructions for all screens and features
 
 ---
 
+## For Developers
+
+| Document | Description |
+|----------|-------------|
+| [Developer Guide](../DEVELOPER_GUIDE.md) | Coding standards, Redux patterns, Veracode compliance, error handling, naming conventions |
+| [Architecture](../ARCHITECTURE.md) | System architecture, Redux store structure, frontend/backend layers |
+| [Workflow](../WORKFLOW.md) | End-to-end data flows including Redux caching pattern |
+| [Database Design](../DATABASE_DESIGN.md) | Table schema and relationships |
+| [Deployment Guide](../Deployment.md) | Local → shared dev → production deployment steps |
+
+---
+
 ## Quick Reference
 
-### Export PDF — Where Available
+### Export / Download — Quick Reference
 
 | Module | Location |
 |--------|----------|
-| Finance Summary | PDF icon — top right of Finance Summary tab |
+| Finance Management Insights | PNG export icon in Insights filter row; Excel export icons on Booking trend cards and drilldown drawers |
 | Internal Process | PDF icon — top right of SOW Detail View |
 | Client Requests | PDF icon — top right of Insights tab |
 | Resource Intelligence | Red PDF icon beside Refresh on resource detail panel |

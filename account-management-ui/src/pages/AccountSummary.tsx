@@ -6,7 +6,7 @@
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Spin, Tooltip, Tag, Select } from 'antd';
-import html2canvas from 'html2canvas';
+import { exportChartAsPng } from '../utils/exportChartAsPng';
 import {
   DollarOutlined, TeamOutlined, FileTextOutlined, ArrowUpOutlined, ArrowDownOutlined,
   ArrowRightOutlined, WarningOutlined, CheckCircleOutlined,
@@ -23,6 +23,12 @@ import * as invoiceApi from '../api/invoiceApi';
 import * as resourceApi from '../api/resourceApi';
 import * as requestApi from '../api/requestApi';
 import { useConfig } from '../context/ConfigContext';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setFinanceData, setInvoiceData } from '../store/financeDataSlice';
+import { setResources as setResourcesAction, setResourcesFromServer } from '../store/resourcesSlice';
+import { setRequests as setRequestsAction, setRequestsFromServer as setRequestsFromServerAction } from '../store/requestsSlice';
+import { mapResourceApiRowToResourceRow } from './resource/resourceRowMappers';
+import { mapApiRequestRow } from './client-requests/requestRowMappers';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const MONTH_ORDER = ['Oct', 'Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
@@ -211,17 +217,24 @@ interface AccountSummaryProps {
 }
 
 export function AccountSummary({ onNavigate }: AccountSummaryProps) {
+  const dispatch = useAppDispatch();
   const { getAppValue } = useConfig();
   const utilLowThreshold    = parseInt(getAppValue('UTIL_LOW_THRESHOLD') ?? '70', 10) || 70;
   const openAlertPct        = parseInt(getAppValue('OPEN_REQUESTS_ALERT_PCT') ?? '50', 10) || 50;
 
   const [loading, setLoading] = useState(true);
-  const [revProjects, setRevProjects]   = useState<financeApi.FinanceProject[]>([]);
-  const [revMonths,   setRevMonths]     = useState<string[]>([]);
-  const [invProjects, setInvProjects]   = useState<invoiceApi.InvoiceProject[]>([]);
-  const [invMonths,   setInvMonths]     = useState<string[]>([]);
-  const [resources,   setResources]     = useState<resourceApi.ResourcePayload[]>([]);
-  const [requests,    setRequests]      = useState<requestApi.RequestPayload[]>([]);
+  const revProjects = useAppSelector((state) => state.financeData.financeProjects) as financeApi.FinanceProject[];
+  const revMonths = useAppSelector((state) => state.financeData.financeMonths);
+  const invProjects = useAppSelector((state) => state.financeData.invoiceProjects) as invoiceApi.InvoiceProject[];
+  const invMonths = useAppSelector((state) => state.financeData.invoiceMonths);
+  const financeLoaded = useAppSelector((state) => state.financeData.financeLoaded);
+  const invoiceLoaded = useAppSelector((state) => state.financeData.invoiceLoaded);
+  const reduxResources = useAppSelector((state) => state.resources.items);
+  const resourcesLoaded = useAppSelector((state) => state.resources.loaded);
+  const reduxRequests = useAppSelector((state) => state.requests.items);
+  const requestsLoaded = useAppSelector((state) => state.requests.loaded);
+  const resources = reduxResources as unknown as resourceApi.ResourcePayload[];
+  const requests = reduxRequests as unknown as requestApi.RequestPayload[];
   const [selectedFY,  setSelectedFY]    = useState<number>(getCurrentFY());
   const [selectedMonth, setSelectedMonth] = useState<string>(''); // '' = all months
   const [refreshKey, setRefreshKey] = useState(0);
@@ -232,32 +245,56 @@ export function AccountSummary({ onNavigate }: AccountSummaryProps) {
   const requestCardRef  = useRef<HTMLDivElement>(null);
 
   const exportCard = (ref: React.RefObject<HTMLDivElement | null>, filename: string) => {
-    if (!ref.current) return;
-    html2canvas(ref.current, { backgroundColor: '#fff', scale: 2 }).then(canvas => {
-      const a = document.createElement('a');
-      a.href = canvas.toDataURL('image/png');
-      a.download = `${filename}.png`;
-      a.click();
-    });
+    exportChartAsPng(ref.current, `${filename}.png`).catch(() => {});
   };
 
   useEffect(() => {
+    const needsFinance = !financeLoaded;
+    const needsInvoice = !invoiceLoaded;
+    const needsResources = !resourcesLoaded;
+    const needsRequests = !requestsLoaded;
+
+    if (!needsFinance && !needsInvoice && !needsResources && !needsRequests) {
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
-    Promise.all([
-      financeApi.getProjects().catch(() => ({ projects: [], months: [] })),
-      invoiceApi.getInvoiceProjects().catch(() => ({ projects: [], months: [] })),
-      resourceApi.getResources().catch(() => ({ resources: [], fromServer: false })),
-      requestApi.getRequests().catch(() => ({ requests: [], fromServer: false })),
-    ]).then(([rev, inv, res, req]) => {
-      setRevProjects(rev.projects);
-      setRevMonths(rev.months);
-      setInvProjects(inv.projects);
-      setInvMonths(inv.months);
-      setResources(res.resources);
-      setRequests(req.requests);
+    const fetches: Promise<any>[] = [];
+    if (needsFinance) fetches.push(financeApi.getProjects().catch(() => ({ projects: [], months: [], fromServer: false })));
+    if (needsInvoice) fetches.push(invoiceApi.getInvoiceProjects().catch(() => ({ projects: [], months: [], fromServer: false })));
+    if (needsResources) fetches.push(resourceApi.getResources().catch(() => ({ resources: [], fromServer: false })));
+    if (needsRequests) fetches.push(requestApi.getRequests().catch(() => ({ requests: [], fromServer: false })));
+
+    Promise.all(fetches).then((results) => {
+      let idx = 0;
+      if (needsFinance) {
+        const rev = results[idx++];
+        dispatch(setFinanceData({ projects: rev.projects, months: rev.months, fromServer: rev.fromServer }));
+      }
+      if (needsInvoice) {
+        const inv = results[idx++];
+        dispatch(setInvoiceData({ projects: inv.projects, months: inv.months, fromServer: inv.fromServer }));
+      }
+      if (needsResources) {
+        const res = results[idx++];
+        if (res.fromServer && res.resources.length) {
+          const mapped = res.resources.map((r: any, i: number) => mapResourceApiRowToResourceRow(r, i));
+          dispatch(setResourcesAction(mapped));
+          dispatch(setResourcesFromServer(true));
+        }
+      }
+      if (needsRequests) {
+        const req = results[idx++];
+        if (req.fromServer && req.requests.length) {
+          const mapped = req.requests.map((r: any, i: number) => mapApiRequestRow(r, i));
+          dispatch(setRequestsAction(mapped));
+          dispatch(setRequestsFromServerAction(true));
+        }
+      }
       setLoading(false);
     });
-  }, [refreshKey]);
+  }, [dispatch, financeLoaded, invoiceLoaded, refreshKey, requestsLoaded, resourcesLoaded]);
 
   // ── Available FYs from data (scalable — never hardcoded) ──────────────────
   const availableFYs = useMemo(() => {

@@ -97,7 +97,7 @@ The main table lists all client requests with the following columns:
 
 - The **SOW Name** field in the detail panel is displayed as a **clickable link**.
 - Clicking it:
-  1. Navigates to the **Internal Process** → **Overview tab**.
+  1. Navigates to the **Internal Process** → **Process tab**.
   2. Automatically applies a filter to highlight the linked SOW.
   3. Closes the filter panel for a clean view.
 

@@ -95,7 +95,7 @@ Click any filter to narrow the resource list:
 #### Linked Process / SOW — Clickable Link
 
 - Displayed **below the Beeline ID**, also as a clickable link.
-- Clicking it navigates to **Internal Process → Overview tab** with the linked SOW pre-selected and filters applied.
+- Clicking it navigates to **Internal Process → Process tab** with the linked SOW pre-selected and filters applied.
 - This allows quick cross-module navigation directly from a resource profile.
 
 ---

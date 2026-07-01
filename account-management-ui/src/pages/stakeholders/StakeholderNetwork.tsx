@@ -48,7 +48,7 @@ import {
   ZoomInOutlined,
   ZoomOutOutlined,
 } from '@ant-design/icons';
-import html2canvas from 'html2canvas';
+import { exportChartAsPng } from '../../utils/exportChartAsPng';
 import * as XLSX from 'xlsx';
 import { useAuth } from '../../context/AuthContext';
 import * as stakeholderNetworkApi from '../../api/stakeholderNetworkApi';
@@ -591,11 +591,7 @@ function StakeholderNetworkSection() {
       return;
     }
     try {
-      const canvas = await html2canvas(target, { backgroundColor: '#ffffff', scale: 2, useCORS: true });
-      const link = document.createElement('a');
-      link.href = canvas.toDataURL('image/png');
-      link.download = `${title.replace(/\s+/g, '_')}.png`;
-      link.click();
+      await exportChartAsPng(target, `${title.replace(/\s+/g, '_')}.png`);
       message.success(`${title} exported`);
     } catch (err: any) {
       console.error('[StakeholderNetwork] Failed to export stakeholder diagram', err);

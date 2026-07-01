@@ -16,6 +16,7 @@ import {
   AlertOutlined, CalendarOutlined, BarChartOutlined, FileExcelOutlined,
 } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
+import { writeJsonSheetFile } from '../utils/xlsxExport';
 import dayjs, { Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
 import isBetween from 'dayjs/plugin/isBetween';
@@ -255,13 +256,11 @@ export function ResourceForecasting({ resources = [] }: Props) {
       'Eng. End Date': r.engagementEndDate || '',
       'Allocation %': r.allocationPercentage ?? '',
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Timeline');
-    XLSX.writeFile(wb, `resource-allocation-timeline-${today.format('YYYY-MM-DD')}.xlsx`);
+    writeJsonSheetFile(XLSX, data, 'Timeline', `resource-allocation-timeline-${today.format('YYYY-MM-DD')}.xlsx`);
   };
 
-
+
+
   const handleExportAvailability = () => {
     const data = availableOnDate.map(r => ({
       'Employee Name': r.empName,
@@ -270,10 +269,7 @@ export function ResourceForecasting({ resources = [] }: Props) {
       'Allocation Status': r.allocationStatus || '',
       'Engagement End Date': r.engagementEndDate || '',
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Availability');
-    XLSX.writeFile(wb, `availability-${checkDate.format('YYYY-MM-DD')}.xlsx`);
+    writeJsonSheetFile(XLSX, data, 'Availability', `availability-${checkDate.format('YYYY-MM-DD')}.xlsx`);
   };
 
   const handleExportReleases = () => {
@@ -285,10 +281,7 @@ export function ResourceForecasting({ resources = [] }: Props) {
       'Allocation %': r.allocationPercentage ?? '',
       'Release Date': r.engagementEndDate || '',
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Upcoming Releases');
-    XLSX.writeFile(wb, `upcoming-releases-${today.format('YYYY-MM-DD')}.xlsx`);
+    writeJsonSheetFile(XLSX, data, 'Upcoming Releases', `upcoming-releases-${today.format('YYYY-MM-DD')}.xlsx`);
   };
 
   // ── Stat card config

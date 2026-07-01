@@ -2,6 +2,10 @@
 
 Each row maps a UI feature to its API endpoints and the database tables it reads/writes.
 
+> **Redux Caching Layer:** Several pages skip the API call entirely when their data is already loaded in the Redux store (`loaded` flag). The table below documents the server API — actual runtime behaviour may serve data directly from the Redux store. See `docs/WORKFLOW.md` Section 10 and `docs/ARCHITECTURE.md` State Management for the full Redux data-flow rules.
+>
+> Pages that consume Redux-cached data on first render: `AccountSummary`, `FinanceSummary`, `FinanceManagement`, `InvoiceManagement`, `ResourceHub`, `ClientRequests`, `InternalProcess`.
+
 ---
 
 ## Account Summary
@@ -15,7 +19,7 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 
 ---
 
-## Finance > Revenue Management (`FinanceManagement`)
+## Finance > SOW Project Milestones & Insights (`FinanceManagement`)
 
 | UI Feature | API Endpoint | DB Tables |
 |---|---|---|
@@ -23,10 +27,15 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 | Add project | `POST /api/finance/projects` | `finance_projects` |
 | Edit project | `PUT /api/finance/projects/:id` | `finance_projects` |
 | Delete project | `DELETE /api/finance/projects/:id` | `finance_projects` |
-| Monthly revenue grid | `GET /api/finance/revenue?projectId=` | `finance_revenue` |
-| Save revenue cell | `POST /api/finance/revenue` | `finance_revenue` |
 | Bulk import (Excel) | `POST /api/finance/projects/bulk` | `finance_projects`, `finance_revenue` |
-| Export Excel | `GET /api/finance/export` | `finance_projects`, `finance_revenue` |
+| Milestone type updates | `PUT /api/finance/projects/:id/milestone-types` | `finance_revenue` |
+| Project bookings list | `GET /api/finance/projects/:id/bookings` | `project_bookings` |
+| Add booking | `POST /api/finance/projects/:id/bookings` | `project_bookings` |
+| Update booking | `PUT /api/finance/projects/:id/bookings/:bookingId` | `project_bookings` |
+| Delete booking | `DELETE /api/finance/projects/:id/bookings/:bookingId` | `project_bookings` |
+| Add bookings batch | `POST /api/finance/projects/:id/bookings/batch` | `project_bookings` |
+| Delete all project bookings | `DELETE /api/finance/projects/:id/bookings` | `project_bookings` |
+| Insights export (PNG/Excel) | Client-side (`html2canvas`, `xlsx`) | — |
 
 ---
 

@@ -19,6 +19,8 @@ import { useAuth } from '../context/AuthContext';
 import * as notifApi from '../api/notificationApi';
 import type { UserGroup } from '../api/notificationApi';
 import type { UserRecord, RoleRecord, PagePermission } from '../api/authApi';
+import { useAppDispatch, useAppSelector } from '../store/hooks';
+import { setGroups as setGroupsAction, setRoles as setRolesAction, setUsers as setUsersAction } from '../store/adminDirectorySlice';
 
 const { Text } = Typography;
 
@@ -55,22 +57,11 @@ const FULL_PERMISSIONS = (): Record<string, PagePermission> => {
 
 // ── Users Tab ─────────────────────────────────────────────────────────
 
-function UsersTab({ roles, canEdit, canDelete }: { roles: RoleRecord[]; canEdit?: boolean; canDelete?: boolean }) {
-  const [users, setUsers] = useState<UserRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+function UsersTab({ roles, users, loading, reloadUsers, canEdit, canDelete }: { roles: RoleRecord[]; users: UserRecord[]; loading: boolean; reloadUsers: () => Promise<void>; canEdit?: boolean; canDelete?: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<UserRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [form] = Form.useForm();
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const list = await authApi.getUsers();
-    setUsers(list);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   const openCreate = () => { setEditing(null); form.resetFields(); setModalOpen(true); };
   const openEdit = (u: UserRecord) => {
@@ -93,7 +84,7 @@ function UsersTab({ roles, canEdit, canDelete }: { roles: RoleRecord[]; canEdit?
     if (result.ok) {
       message.success(editing ? 'User updated' : 'User created');
       setModalOpen(false);
-      load();
+      await reloadUsers();
     } else {
       message.error(result.error || 'Save failed');
     }
@@ -101,7 +92,7 @@ function UsersTab({ roles, canEdit, canDelete }: { roles: RoleRecord[]; canEdit?
 
   const handleDelete = async (id: number) => {
     const result = await authApi.deleteUser(id);
-    if (result.ok) { message.success('User deleted'); load(); }
+    if (result.ok) { message.success('User deleted'); await reloadUsers(); }
     else message.error(result.error || 'Delete failed');
   };
 
@@ -204,24 +195,12 @@ function UsersTab({ roles, canEdit, canDelete }: { roles: RoleRecord[]; canEdit?
 
 // ── Roles Tab ─────────────────────────────────────────────────────────
 
-function RolesTab({ onRolesChange, canEdit, canDelete }: { onRolesChange: (roles: RoleRecord[]) => void; canEdit?: boolean; canDelete?: boolean }) {
-  const [roles, setRoles] = useState<RoleRecord[]>([]);
-  const [loading, setLoading] = useState(true);
+function RolesTab({ roles, loading, reloadRoles, canEdit, canDelete }: { roles: RoleRecord[]; loading: boolean; reloadRoles: () => Promise<void>; canEdit?: boolean; canDelete?: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<RoleRecord | null>(null);
   const [saving, setSaving] = useState(false);
   const [permissions, setPermissions] = useState<Record<string, PagePermission>>(EMPTY_PERMISSIONS());
   const [form] = Form.useForm();
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const list = await authApi.getRoles();
-    setRoles(list);
-    onRolesChange(list);
-    setLoading(false);
-  }, [onRolesChange]);
-
-  useEffect(() => { load(); }, [load]);
 
   const openCreate = () => {
     setEditing(null);
@@ -252,7 +231,7 @@ function RolesTab({ onRolesChange, canEdit, canDelete }: { onRolesChange: (roles
     if (result.ok) {
       message.success(editing ? 'Role updated' : 'Role created');
       setModalOpen(false);
-      load();
+      await reloadRoles();
     } else {
       message.error(result.error || 'Save failed');
     }
@@ -260,7 +239,7 @@ function RolesTab({ onRolesChange, canEdit, canDelete }: { onRolesChange: (roles
 
   const handleDelete = async (id: number) => {
     const result = await authApi.deleteRole(id);
-    if (result.ok) { message.success('Role deleted'); load(); }
+    if (result.ok) { message.success('Role deleted'); await reloadRoles(); }
     else message.error(result.error || 'Delete failed');
   };
 
@@ -398,23 +377,12 @@ function RolesTab({ onRolesChange, canEdit, canDelete }: { onRolesChange: (roles
 
 // ── Groups Tab ─────────────────────────────────────────────────────────
 
-function GroupsTab({ users, canEdit, canDelete }: { users: UserRecord[]; canEdit?: boolean; canDelete?: boolean }) {
-  const [groups, setGroups] = useState<UserGroup[]>([]);
-  const [loading, setLoading] = useState(true);
+function GroupsTab({ users, groups, loading, reloadGroups, canEdit, canDelete }: { users: UserRecord[]; groups: UserGroup[]; loading: boolean; reloadGroups: () => Promise<void>; canEdit?: boolean; canDelete?: boolean }) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<UserGroup | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedMemberKeys, setSelectedMemberKeys] = useState<string[]>([]);
   const [form] = Form.useForm();
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const list = await notifApi.getUserGroups();
-    setGroups(list);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
 
   const openCreate = () => {
     setEditing(null);
@@ -468,12 +436,12 @@ function GroupsTab({ users, canEdit, canDelete }: { users: UserRecord[]; canEdit
     setSaving(false);
     message.success(editing ? 'Group updated' : 'Group created');
     setModalOpen(false);
-    load();
+    await reloadGroups();
   };
 
   const handleDelete = async (id: number) => {
     const res = await notifApi.deleteUserGroup(id);
-    if (res.ok) { message.success('Group deleted'); load(); }
+    if (res.ok) { message.success('Group deleted'); await reloadGroups(); }
     else message.error(res.error || 'Delete failed');
   };
 
@@ -589,17 +557,43 @@ function GroupsTab({ users, canEdit, canDelete }: { users: UserRecord[]; canEdit
 // ── Main UserAccessControl page ───────────────────────────────────────
 
 export function UserAccessControl() {
-  const [roles, setRoles] = useState<RoleRecord[]>([]);
-  const [users, setUsers] = useState<UserRecord[]>([]);
+  const dispatch = useAppDispatch();
+  const roles = useAppSelector((state) => state.adminDirectory.roles);
+  const users = useAppSelector((state) => state.adminDirectory.users);
+  const groups = useAppSelector((state) => state.adminDirectory.groups);
+  const rolesLoaded = useAppSelector((state) => state.adminDirectory.rolesLoaded);
+  const usersLoaded = useAppSelector((state) => state.adminDirectory.usersLoaded);
+  const groupsLoaded = useAppSelector((state) => state.adminDirectory.groupsLoaded);
   const { hasPermission } = useAuth();
   const canEdit = hasPermission('user_access_control', 'edit');
   const canDelete = hasPermission('user_access_control', 'delete');
 
-  // Load roles and users on mount
+  const reloadRoles = useCallback(async () => {
+    const list = await authApi.getRoles();
+    dispatch(setRolesAction(list));
+  }, [dispatch]);
+
+  const reloadUsers = useCallback(async () => {
+    const list = await authApi.getUsers();
+    dispatch(setUsersAction(list));
+  }, [dispatch]);
+
+  const reloadGroups = useCallback(async () => {
+    const list = await notifApi.getUserGroups();
+    dispatch(setGroupsAction(list));
+  }, [dispatch]);
+
   useEffect(() => {
-    authApi.getRoles().then(list => setRoles(list));
-    authApi.getUsers().then(list => setUsers(list));
-  }, []);
+    if (!rolesLoaded) {
+      reloadRoles();
+    }
+    if (!usersLoaded) {
+      reloadUsers();
+    }
+    if (!groupsLoaded) {
+      reloadGroups();
+    }
+  }, [groupsLoaded, reloadGroups, reloadRoles, reloadUsers, rolesLoaded, usersLoaded]);
 
   return (
     <div style={{ background: '#f5f7fa', minHeight: '100vh', padding: '16px 20px' }}>
@@ -614,7 +608,7 @@ export function UserAccessControl() {
               label: <span style={{ fontSize: 12 }}><UserOutlined /> Users</span>,
               children: (
                 <div style={{ padding: '12px 0' }}>
-                  <UsersTab roles={roles} canEdit={canEdit} canDelete={canDelete} />
+                <UsersTab roles={roles} users={users} loading={!usersLoaded} reloadUsers={reloadUsers} canEdit={canEdit} canDelete={canDelete} />
                 </div>
               ),
             },
@@ -623,7 +617,7 @@ export function UserAccessControl() {
               label: <span style={{ fontSize: 12 }}><TeamOutlined /> User Groups</span>,
               children: (
                 <div style={{ padding: '12px 0' }}>
-                  <GroupsTab users={users} canEdit={canEdit} canDelete={canDelete} />
+                <GroupsTab users={users} groups={groups} loading={!groupsLoaded} reloadGroups={reloadGroups} canEdit={canEdit} canDelete={canDelete} />
                 </div>
               ),
             },
@@ -632,7 +626,7 @@ export function UserAccessControl() {
               label: <span style={{ fontSize: 12 }}><SafetyCertificateOutlined /> Roles &amp; Permissions</span>,
               children: (
                 <div style={{ padding: '12px 0' }}>
-                  <RolesTab onRolesChange={setRoles} canEdit={canEdit} canDelete={canDelete} />
+                <RolesTab roles={roles} loading={!rolesLoaded} reloadRoles={reloadRoles} canEdit={canEdit} canDelete={canDelete} />
                 </div>
               ),
             },

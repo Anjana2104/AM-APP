@@ -43,7 +43,7 @@ Resource appears in Resource Hub list
 User selects a process → clicks "Upload PIW"
         │
         ▼
-Upload wizard (InternalProcess.tsx)
+Upload wizard (`internal-process/PiwUploadSubTabPanel.tsx`, invoked from `InternalProcess.tsx`)
   Step 1: Upload .xlsm file
         │
         ▼
@@ -60,7 +60,7 @@ POST /api/piwGeneration/upload
               └── Write audit_log (field: "Engagement Start/End Date")
         │
         ▼
-Process overview reflects updated PIW + resource dates
+Process view reflects updated PIW + resource dates (Process tab is the default landing tab)
 ```
 
 ---
@@ -267,3 +267,50 @@ Each page rendered in App.tsx checks:
 Edit/Delete buttons check:
   permissions[page_id]?.edit / .delete
 ```
+
+---
+
+## 10. Redux State Caching & Cross-Page Data Flow
+
+```
+User navigates to any page that needs shared server-backed data
+        │
+        ▼
+Page checks Redux slice `loaded` flag via useAppSelector
+        │
+        ├── loaded = true  → read data directly from Redux store (no API call)
+        │                   → render immediately with zero latency
+        │
+        └── loaded = false → fetch from server API
+                │
+                ▼
+            API response received
+                │
+                ├── dispatch(setSliceData(...))   → updates Redux store + sets loaded=true
+                └── Page renders from Redux selectors
+        │
+        ▼
+User mutates data (create / update / delete / link)
+        │
+        ├── Call server API (POST / PUT / DELETE)
+        │
+        └── On success:
+              dispatch(setSliceData(...))   → Redux refreshed with server response
+              All consumers re-render with consistent data
+```
+
+### Slices and Primary Producers
+
+| Slice | Primary Producer | Primary Consumers |
+|---|---|---|
+| `resources` | `ResourceHub` | `EngagementMapping`, `ResourceIntelligence`, `InternalProcess`, `ClientRequests`, `AccountSummary` |
+| `requests` | `ClientRequests` | `ResourceHub`, `EngagementMapping`, `ResourceIntelligence` |
+| `financeData` | `FinanceManagement`, `InvoiceManagement` | `FinanceSummary`, `AccountSummary` |
+| `appShell` | `App.tsx` | All navigation-aware pages |
+| `adminDirectory` | `UserAccessControl` | `App.tsx` (notification modal) |
+
+### Rules
+
+- Page-level UI state (filters, open/close drawers, form values) stays **local** — never in Redux
+- Server mutations always call the API first; Redux is updated only after server confirms success
+- `useAppSelector` / `useAppDispatch` typed hooks (from `src/store/hooks.ts`) **must** be used — never import `useSelector`/`useDispatch` from `react-redux` directly

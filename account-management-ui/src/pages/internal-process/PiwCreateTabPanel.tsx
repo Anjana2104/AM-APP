@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Button, Card, Dropdown, Form, Input, Select, Space, Steps, Tag, Typography, Upload, message } from 'antd';
+import { Alert, Button, Card, Dropdown, Form, Input, Select, Space, Steps, Table, Tag, Tooltip, Typography, Upload, message } from 'antd';
 import { DownloadOutlined, EllipsisOutlined, FileExcelOutlined, PlusOutlined, ShareAltOutlined, UploadOutlined } from '@ant-design/icons';
 import * as XLSX from 'xlsx';
 import * as templateApi from '../../api/templateApi';
 import * as piwApi from '../../api/piwApi';
 import { useConfig } from '../../context/ConfigContext';
 import type { ResourceRow } from '../../types/resource';
-import { writeJsonSheetFile } from '../../utils/xlsxExport';
+import { writeJsonSheetFile, writeMultiSheetFile } from '../../utils/xlsxExport';
 
 const { Text } = Typography;
 
@@ -24,6 +24,17 @@ function parseWorkexToYears(totalWorkex: string): number {
   const years = yr ? parseFloat(yr[1] ?? yr[2]) : 0;
   const months = mo ? parseFloat(mo[1] ?? mo[2]) : 0;
   return years + months / 12;
+}
+
+function normalizeAllocationPercentage(value: string | number | undefined): number {
+  const numeric = typeof value === 'number' ? value : Number(String(value || '').replace(/[^\d.]/g, ''));
+  if (!Number.isFinite(numeric) || numeric <= 0) return 100;
+  return Math.min(100, Math.max(1, numeric));
+}
+
+function getHoursPerDay(allocationPercentage: string | number | undefined): number {
+  const normalized = normalizeAllocationPercentage(allocationPercentage);
+  return (8 * normalized) / 100;
 }
 
 function lookupDailyRate(totalWorkex: string, skillType: string = 'Commodity', currency: string = 'INR'): number {
@@ -46,6 +57,7 @@ interface PiwResourceEntry {
   piwRole: string;
   totalWorkex: string;
   skillType: string;
+  allocationPercentage: string;
   dailyRate: number;
   manualDailyRate?: string;
   resourceStartDate: string;
@@ -58,6 +70,26 @@ interface PiwCreateTabPanelProps {
   onUpdateProcessRow?: (key: string, updates: Partial<ProcessRow>) => void;
 }
 
+interface GeneratedReviewResource {
+  key: string;
+  raId: string;
+  name: string;
+  resourceType: string;
+  skillType: string;
+  experienceLabel: string;
+  experienceStatus: 'valid' | 'missing' | 'invalid';
+  allocationPercentage: number;
+  hoursPerDay: string;
+  allocationDefaulted: boolean;
+  actualDailyRate: number;
+  consideredDailyRate: number;
+  actualHourlyRate: string;
+  consideredHourlyRate: string;
+  resourceStartDate?: string;
+  resourceEndDate?: string;
+  rateOverridden: boolean;
+}
+
 export default function PiwCreateTabPanel({ resources = [], processRows = [], onUpdateProcessRow }: PiwCreateTabPanelProps) {
   const { getConfigByLink, getAppValue } = useConfig();
   const spUrl = getAppValue('PIW_STORAGE_URL') || '';
@@ -68,10 +100,10 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
   const [currentStep, setCurrentStep] = useState(0);
   const [projectDetails, setProjectDetails] = useState<Record<string, any> | null>(null);
   const [generating, setGenerating] = useState(false);
-  const [generatedData, setGeneratedData] = useState<{ formData: piwApi.PIWFormData; blob: Blob } | null>(null);
+  const [generatedData, setGeneratedData] = useState<{ formData: piwApi.PIWFormData; blob: Blob; reviewResources: GeneratedReviewResource[] } | null>(null);
   const [addCrmVisible, setAddCrmVisible] = useState(false);
   const [resourceRows, setResourceRows] = useState<PiwResourceEntry[]>([
-    { key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, resourceStartDate: '', resourceEndDate: '' },
+    { key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', allocationPercentage: '100', dailyRate: 0, resourceStartDate: '', resourceEndDate: '' },
   ]);
   const [raidErrors, setRaidErrors] = useState<{ notFound: string[]; duplicates: string[]; missing: number[] } | null>(null);
 
@@ -131,7 +163,7 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
   };
 
   const addResourceRow = () =>
-    setResourceRows(prev => [...prev, { key: `r${Date.now()}`, raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
+    setResourceRows(prev => [...prev, { key: `r${Date.now()}`, raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', allocationPercentage: '100', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
   const removeResourceRow = (key: string) => setResourceRows(prev => prev.filter(r => r.key !== key));
 
   const normalizeExcelDate = (val: any): string => {
@@ -168,6 +200,8 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
           const skillType = String(row['Skill Type'] || row['skill_type'] || 'Commodity').trim();
           const normalizedSkill = skillType.toLowerCase().includes('spec') ? 'Specialized' : 'Commodity';
           const rateOverride = String(row['Daily Rate (INR)'] || row['Daily Rate'] || '').replace(/[^\d]/g, '');
+          const allocationRaw = String(row['Allocation %'] || row['Allocation Percentage'] || row['allocation_percentage'] || row['Allocation'] || '').trim();
+          const allocationPercentage = normalizeAllocationPercentage(allocationRaw);
           const rate = lookupDailyRate(res.totalWorkex, normalizedSkill);
           newRows.push({
             key: `r_xl_${Date.now()}_${i}`,
@@ -176,6 +210,7 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
             piwRole: res.piwRole,
             totalWorkex: res.totalWorkex,
             skillType: normalizedSkill,
+            allocationPercentage: allocationRaw ? String(allocationPercentage) : '',
             dailyRate: rate,
             manualDailyRate: rateOverride,
             resourceStartDate: normalizeExcelDate(row['Start Date'] || row['start_date']),
@@ -201,12 +236,12 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
     writeJsonSheetFile(
       XLSX,
       [
-        { RAID: 'RA001', 'Skill Type': 'Commodity', 'Daily Rate (INR)': '', 'Start Date': '2026-07-01', 'End Date': '2026-09-30' },
-        { RAID: 'RA002', 'Skill Type': 'Specialized', 'Daily Rate (INR)': '', 'Start Date': '2026-08-01', 'End Date': '2026-10-31' },
+        { RAID: 'RA001', 'Skill Type': 'Commodity', 'Allocation %': '100', 'Daily Rate (INR)': '', 'Start Date': '2026-07-01', 'End Date': '2026-09-30' },
+        { RAID: 'RA002', 'Skill Type': 'Specialized', 'Allocation %': '50', 'Daily Rate (INR)': '', 'Start Date': '2026-08-01', 'End Date': '2026-10-31' },
       ],
       'PIW Resources',
       'PIW_Resources_Template.xlsx',
-      { columnWidths: [12, 16, 18, 14, 14] },
+      { columnWidths: [12, 16, 14, 18, 14, 14] },
     );
   };
 
@@ -229,6 +264,42 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
 
     const allStarts = valid.map(r => r.resourceStartDate).sort();
     const allEnds = valid.map(r => r.resourceEndDate).sort();
+    const reviewResources: GeneratedReviewResource[] = valid.map((r, index) => {
+      const actualDailyRate = r.dailyRate || 0;
+      const consideredDailyRate = r.manualDailyRate ? Number(r.manualDailyRate) : actualDailyRate;
+      const allocationRaw = String(r.allocationPercentage || '').trim();
+      const allocationDefaulted = !allocationRaw;
+      const allocationPercentage = normalizeAllocationPercentage(allocationRaw);
+      const hoursPerDay = getHoursPerDay(allocationPercentage);
+      const rawExperience = (r.totalWorkex || '').trim();
+      const parsedYears = parseWorkexToYears(rawExperience);
+      const experienceStatus: GeneratedReviewResource['experienceStatus'] =
+        !rawExperience ? 'missing' : parsedYears > 0 ? 'valid' : 'invalid';
+      return {
+        key: `${r.raidId || 'resource'}_${index}`,
+        raId: r.raidId,
+        name: r.empName,
+        resourceType: r.piwRole,
+        skillType: r.skillType,
+        experienceLabel:
+          experienceStatus === 'valid'
+            ? `${parsedYears} year${parsedYears === 1 ? '' : 's'}`
+            : experienceStatus === 'missing'
+              ? 'Experience missing in Resource Hub'
+              : `Experience format invalid in Resource Hub${rawExperience ? ` (${rawExperience})` : ''}`,
+        experienceStatus,
+        allocationPercentage,
+        hoursPerDay: hoursPerDay ? String(hoursPerDay) : '',
+        allocationDefaulted,
+        actualDailyRate,
+        consideredDailyRate,
+        actualHourlyRate: actualDailyRate ? (actualDailyRate / 8).toFixed(2) : '',
+        consideredHourlyRate: consideredDailyRate ? (consideredDailyRate / 8).toFixed(2) : '',
+        resourceStartDate: r.resourceStartDate || undefined,
+        resourceEndDate: r.resourceEndDate || undefined,
+        rateOverridden: Boolean(r.manualDailyRate) && consideredDailyRate !== actualDailyRate,
+      };
+    });
     setGenerating(true);
     try {
       const formData: piwApi.PIWFormData = {
@@ -245,13 +316,14 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
           name: r.empName,
           resourceType: r.piwRole,
           skillType: r.skillType,
+          allocationPercentage: normalizeAllocationPercentage(r.allocationPercentage),
           dailyRate: r.manualDailyRate ? Number(r.manualDailyRate) : r.dailyRate,
           resourceStartDate: r.resourceStartDate || undefined,
           resourceEndDate: r.resourceEndDate || undefined,
         })),
       };
       const blob = await piwApi.generatePIW(formData);
-      setGeneratedData({ formData, blob });
+      setGeneratedData({ formData, blob, reviewResources });
       setCurrentStep(2);
       message.success('PIW generated — review below and download when ready');
     } catch (e: any) {
@@ -269,6 +341,66 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
     message.success('PIW downloaded');
   };
 
+  const getCurrencyPrefix = (currency?: string) => {
+    switch ((currency || 'INR').toUpperCase()) {
+      case 'USD': return '$';
+      case 'EUR': return 'EUR ';
+      case 'GBP': return 'GBP ';
+      case 'INR':
+      default:
+        return '₹';
+    }
+  };
+
+  const formatRate = (value?: number, currency?: string) => {
+    if (!value) return '—';
+    return `${getCurrencyPrefix(currency)}${value.toLocaleString()}`;
+  };
+
+  const getCalculatedHourlyRate = (dailyRate?: number) => {
+    if (!dailyRate) return '';
+    return (dailyRate / 8).toFixed(2);
+  };
+
+  const handleDownloadDetailsExcel = () => {
+    if (!generatedData) return;
+    const { formData } = generatedData;
+    const summaryRows = [
+      { Field: 'Project / Engagement', Value: formData.projectName || '' },
+      { Field: 'SOW Name', Value: formData.sowNumber || '' },
+      { Field: 'CRM Opportunity', Value: formData.crmOpportunityId || '' },
+      { Field: 'Contract Type', Value: formData.contractType || '' },
+      { Field: 'Currency', Value: formData.currency || 'INR' },
+      { Field: 'Overall Start Date', Value: formData.plannedStartDate || '' },
+      { Field: 'Overall End Date', Value: formData.plannedEndDate || '' },
+    ];
+    const resourceRows = generatedData.reviewResources.map((resource, index) => ({
+      'S.No': index + 1,
+      'RAID': resource.raId || '',
+      'Resource Name': resource.name || '',
+      'PIW Role': resource.resourceType || '',
+      'Skill Type': resource.skillType || '',
+      'Allocation %': resource.allocationPercentage || '',
+      'Hours / Day': resource.hoursPerDay || '',
+      'Allocation Note': resource.allocationDefaulted ? 'Defaulted to 100% because allocation was not provided' : 'Provided explicitly',
+      'Actual Daily Rate': resource.actualDailyRate || '',
+      'Considered Daily Rate': resource.consideredDailyRate || '',
+      'Actual Hourly Rate': resource.actualHourlyRate || '',
+      'Considered Hourly Rate': resource.consideredHourlyRate || '',
+      'Hourly Rate Source': resource.consideredDailyRate ? 'Calculated = Considered Daily Rate / 8' : '',
+      'Rate Warning': resource.rateOverridden ? `Actual: ${resource.actualDailyRate} | Considered: ${resource.consideredDailyRate}` : '',
+      'Start Date': resource.resourceStartDate || '',
+      'End Date': resource.resourceEndDate || '',
+    }));
+    const sow = formData.sowNumber || 'PIW';
+    const fileName = `${String(sow).replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'PIW'} - Details.xlsx`;
+    writeMultiSheetFile(XLSX, [
+      { type: 'json', sheetName: 'PIW Summary', rows: summaryRows, options: { columnWidths: [24, 32] } },
+      { type: 'json', sheetName: 'PIW Resources', rows: resourceRows, options: { columnWidths: [8, 12, 24, 18, 12, 12, 16, 18, 18, 20, 32, 28, 14, 14] } },
+    ], fileName);
+    message.success('PIW details exported to Excel');
+  };
+
   const handleReset = () => {
     step1Form.resetFields();
     step1Form.setFieldsValue({ projectName: 'TBD', sowNumber: 'TBD', crmOpportunityId: 'TBD' });
@@ -276,12 +408,13 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
     setProjectDetails(null);
     setGeneratedData(null);
     setAddCrmVisible(false);
-    setResourceRows([{ key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
+    setResourceRows([{ key: 'r0', raidId: '', empName: '', piwRole: '', totalWorkex: '', skillType: 'Commodity', allocationPercentage: '100', dailyRate: 0, manualDailyRate: '', resourceStartDate: '', resourceEndDate: '' }]);
     setRaidErrors(null);
   };
 
   const fl = (txt: string) => <span style={{ fontSize: '11px', fontWeight: 500, color: '#595959' }}>{txt}</span>;
   const sectionTitle = (txt: string) => <Text style={{ fontSize: '12px', fontWeight: 600, color: '#262626', display: 'block', marginBottom: 12 }}>{txt}</Text>;
+  const overriddenReviewResources = generatedData?.reviewResources.filter(resource => resource.rateOverridden) ?? [];
 
   return (
     <div>
@@ -375,6 +508,9 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
           <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 6, padding: '6px 12px', marginBottom: 12, fontSize: '11px', color: '#003eb3' }}>
             <strong>{projectDetails?.projectName}</strong>&nbsp;·&nbsp;{projectDetails?.sowNumber}&nbsp;·&nbsp;{projectDetails?.contractType}&nbsp;·&nbsp;INR
           </div>
+          <div style={{ fontSize: '10px', color: '#8c8c8c', marginBottom: 8 }}>
+            Allocation % drives daily billable hours in PIW calculations: <strong>100% = 8 hrs/day</strong>, <strong>50% = 4 hrs/day</strong>, <strong>25% = 2 hrs/day</strong>. If left blank, it will be <strong>considered as 100%</strong>.
+          </div>
           {resources.length === 0 && <div style={{ background: '#fff1f0', border: '1px solid #ffccc7', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: '11px', color: '#cf1322' }}>⚠️ No resources found. Please add resources in <strong>Resource Hub</strong> first.</div>}
           {raidErrors && (
             <Alert
@@ -399,14 +535,22 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
                   <Input size="small" value={row.piwRole} readOnly placeholder="PIW Role" style={{ background: '#fafafa', color: '#595959', fontSize: '11px' }} />
                   <Button size="small" type="text" danger onClick={() => removeResourceRow(row.key)} style={{ padding: '0 4px', fontSize: '11px' }}>✕</Button>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '120px 95px 75px 1fr 1fr', gap: 6, alignItems: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 95px 75px 1fr 1fr', gap: 6, alignItems: 'center' }}>
                   <Select size="small" value={row.skillType || 'Commodity'} onChange={v => handleSkillTypeChange(v, index)} style={{ fontSize: '11px' }} options={[{ value: 'Commodity', label: 'Commodity' }, { value: 'Specialized', label: 'Specialized' }]} />
+                  <Input
+                    size="small"
+                    value={row.allocationPercentage || '100'}
+                    onChange={e => updateResourceRow(index, 'allocationPercentage', e.target.value.replace(/[^\d.]/g, ''))}
+                    suffix="%"
+                    placeholder="100"
+                    style={{ textAlign: 'right', color: '#595959', fontSize: '11px' }}
+                  />
                   <Input size="small" value={row.manualDailyRate} onChange={e => updateResourceRow(index, 'manualDailyRate', e.target.value.replace(/[^\d]/g, ''))} placeholder={row.dailyRate ? `Auto: ${row.dailyRate.toLocaleString()}` : 'Daily rate'} prefix={<span style={{ fontSize: '10px', color: '#595959' }}>₹</span>} style={{ textAlign: 'right', color: '#595959', fontSize: '11px' }} />
                   <Input size="small" value={(() => { const d = row.manualDailyRate ? Number(row.manualDailyRate) : row.dailyRate; return d ? (d / 8).toFixed(2) : ''; })()} readOnly style={{ background: '#f6ffed', textAlign: 'right', color: '#389e0d', fontWeight: 500, fontSize: '11px' }} />
-                  <input type="date" value={row.resourceStartDate || ''} placeholder="Start Date" onChange={e => updateResourceRow(index, 'resourceStartDate', e.target.value)} style={dateStyle} />
-                  <input type="date" value={row.resourceEndDate || ''} placeholder="End Date" onChange={e => updateResourceRow(index, 'resourceEndDate', e.target.value)} style={dateStyle} />
+                  <input className="light-date-input" type="date" value={row.resourceStartDate || ''} placeholder="Start Date" onChange={e => updateResourceRow(index, 'resourceStartDate', e.target.value)} style={dateStyle} />
+                  <input className="light-date-input" type="date" value={row.resourceEndDate || ''} placeholder="End Date" onChange={e => updateResourceRow(index, 'resourceEndDate', e.target.value)} style={dateStyle} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '120px 95px 75px 1fr 1fr', gap: 6, marginTop: 2 }}>{['Skill Type', 'Daily Rate', 'Hourly Rate', 'Engagement Start', 'Engagement End'].map(h => <span key={h} style={{ fontSize: '10px', color: '#bfbfbf' }}>{h}</span>)}</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '120px 90px 95px 75px 1fr 1fr', gap: 6, marginTop: 2 }}>{['Skill Type', 'Allocation %', 'Daily Rate', 'Hourly Rate', 'Engagement Start', 'Engagement End'].map(h => <span key={h} style={{ fontSize: '10px', color: '#bfbfbf' }}>{h}</span>)}</div>
               </div>
             );
           })}
@@ -427,6 +571,7 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
             {sectionTitle('Generated PIW — Review & Download')}
             <Space>
               <Button size="small" style={{ fontSize: '11px' }} onClick={() => setCurrentStep(1)}>← Back to Resources</Button>
+              <Button size="small" style={{ fontSize: '11px' }} icon={<FileExcelOutlined />} onClick={handleDownloadDetailsExcel}>Download Details (.xlsx)</Button>
               <Button type="primary" size="small" style={{ fontSize: '11px' }} icon={<DownloadOutlined />} onClick={handleDownload}>Download PIW (.xlsm)</Button>
               <Button size="small" style={{ fontSize: '11px' }} onClick={handleReset}>New PIW</Button>
             </Space>
@@ -450,25 +595,148 @@ export default function PiwCreateTabPanel({ resources = [], processRows = [], on
               ))}
             </div>
           </div>
+          {overriddenReviewResources.length > 0 && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 14 }}
+              message={`${overriddenReviewResources.length} resource(s) have a rate override`}
+              description={
+                <div style={{ fontSize: '11px' }}>
+                  {overriddenReviewResources.map(resource => (
+                    <div key={resource.key} style={{ marginBottom: 4 }}>
+                      <Text strong style={{ fontSize: '11px' }}>{resource.name}</Text>
+                      <span style={{ color: '#595959' }}> · Skill Type: </span>
+                      <Tag color={resource.skillType === 'Specialized' ? 'purple' : 'blue'} style={{ fontSize: '10px', marginInlineEnd: 6 }}>
+                        {resource.skillType || '—'}
+                      </Tag>
+                      <span style={{ color: '#595959' }}>Allocation: </span>
+                      <Tag color="cyan" style={{ fontSize: '10px', marginInlineEnd: 6 }}>
+                        {resource.allocationPercentage}% ({resource.hoursPerDay} hrs/day)
+                      </Tag>
+                      <span style={{ color: '#595959' }}>Experience: </span>
+                      <Tag
+                        color={resource.experienceStatus === 'valid' ? 'geekblue' : 'error'}
+                        style={{ fontSize: '10px', marginInlineEnd: 6 }}
+                      >
+                        {resource.experienceLabel}
+                      </Tag>
+                      <span style={{ color: '#595959' }}> — Actual Daily Rate: </span>
+                      <Tag color="gold" style={{ fontSize: '10px', marginInlineEnd: 6 }}>{formatRate(resource.actualDailyRate, generatedData.formData.currency)}</Tag>
+                      <span style={{ color: '#595959' }}>Considered Daily Rate: </span>
+                      <Tag color="green" style={{ fontSize: '10px', margin: 0 }}>{formatRate(resource.consideredDailyRate, generatedData.formData.currency)}</Tag>
+                    </div>
+                  ))}
+                </div>
+              }
+            />
+          )}
           <div style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: '12px 16px' }}>
             <Text style={{ fontSize: '11px', fontWeight: 600, color: '#1890ff', display: 'block', marginBottom: 8 }}>📊 Delivery Workstream ({generatedData.formData.resources.length} resource{generatedData.formData.resources.length !== 1 ? 's' : ''})</Text>
-            <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 100px 90px 70px 95px 95px', gap: 4, marginBottom: 6 }}>{['RAID', 'Resource Name', 'PIW Role', 'Daily Rate', 'Hrly Rate', 'Start Date', 'End Date'].map((h, hi) => <span key={h} style={{ fontSize: '10px', fontWeight: 500, color: '#8c8c8c', textAlign: hi === 3 || hi === 4 ? 'center' : 'left' }}>{h}</span>)}</div>
-            {generatedData.formData.resources.map((r, i) => (
-              <div key={i} style={{ padding: '6px 0', borderTop: '1px solid #f5f5f5' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr 100px 90px 70px 95px 95px', gap: 4, alignItems: 'center' }}>
-                  <span style={{ fontSize: '10px', color: '#8c8c8c', fontFamily: 'monospace' }}>{r.raId || '—'}</span>
-                  <span style={{ fontSize: '11px', color: '#262626', fontWeight: 500 }}>{r.name}</span>
-                  <span style={{ fontSize: '11px', color: '#595959' }}>{r.resourceType}</span>
-                  <span style={{ fontSize: '11px', color: '#595959', textAlign: 'center' }}>₹{r.dailyRate?.toLocaleString()}</span>
-                  <span style={{ fontSize: '11px', color: '#389e0d', textAlign: 'center', fontWeight: 500 }}>{r.dailyRate ? (r.dailyRate / 8).toFixed(2) : '—'}</span>
-                  <span style={{ fontSize: '11px', color: '#595959' }}>{r.resourceStartDate || '—'}</span>
-                  <span style={{ fontSize: '11px', color: '#595959' }}>{r.resourceEndDate || '—'}</span>
-                </div>
-                <div style={{ fontSize: '10px', color: '#8c8c8c', marginTop: 2, paddingLeft: 2 }}>
-                  {r.skillType ? <span style={{ color: r.skillType === 'Specialized' ? '#722ed1' : '#1890ff' }}>{r.skillType}</span> : null}
-                </div>
-              </div>
-            ))}
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="key"
+              dataSource={generatedData.reviewResources}
+              columns={[
+                {
+                  title: <span style={{ fontSize: '10px' }}>RAID</span>,
+                  dataIndex: 'raId',
+                  key: 'raId',
+                  width: 90,
+                  render: (value: string) => <span style={{ fontSize: '10px', color: '#8c8c8c', fontFamily: 'monospace' }}>{value || '—'}</span>,
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>Resource Name</span>,
+                  dataIndex: 'name',
+                  key: 'name',
+                  render: (value: string, record: GeneratedReviewResource) => (
+                    <Space direction="vertical" size={2}>
+                      <Text style={{ fontSize: '11px', color: '#262626', fontWeight: 500 }}>{value}</Text>
+                      {record.skillType ? <Tag color={record.skillType === 'Specialized' ? 'purple' : 'blue'} style={{ fontSize: '10px', width: 'fit-content', margin: 0 }}>{record.skillType}</Tag> : null}
+                    </Space>
+                  ),
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>PIW Role</span>,
+                  dataIndex: 'resourceType',
+                  key: 'resourceType',
+                  width: 120,
+                  render: (value: string) => <span style={{ fontSize: '11px', color: '#595959' }}>{value || '—'}</span>,
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>Allocation</span>,
+                  key: 'allocationPercentage',
+                  width: 120,
+                  render: (_: unknown, record: GeneratedReviewResource) => (
+                    <Space direction="vertical" size={2}>
+                      <Tag color="cyan" style={{ fontSize: '10px', margin: 0 }}>
+                        {record.allocationPercentage}% · {record.hoursPerDay} hrs/day
+                      </Tag>
+                      {record.allocationDefaulted && (
+                        <Tag color="blue" style={{ fontSize: '10px', margin: 0 }}>
+                          Defaulted to 100%
+                        </Tag>
+                      )}
+                    </Space>
+                  ),
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>Daily Rate</span>,
+                  key: 'dailyRate',
+                  width: 180,
+                  render: (_: unknown, record: GeneratedReviewResource) => (
+                    <Space direction="vertical" size={2}>
+                      <Tag color="green" style={{ fontSize: '10px', margin: 0 }}>Used: {formatRate(record.consideredDailyRate, generatedData.formData.currency)}</Tag>
+                      <Tag color={record.rateOverridden ? 'gold' : 'default'} style={{ fontSize: '10px', margin: 0 }}>
+                        Actual: {formatRate(record.actualDailyRate, generatedData.formData.currency)}
+                      </Tag>
+                    </Space>
+                  ),
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>Hourly Rate</span>,
+                  key: 'hourlyRate',
+                  width: 180,
+                  render: (_: unknown, record: GeneratedReviewResource) => (
+                    <Space direction="vertical" size={2}>
+                      <Tooltip title={record.consideredDailyRate ? `Used hourly rate = ${formatRate(record.consideredDailyRate, generatedData.formData.currency)} / 8 = ${getCurrencyPrefix(generatedData.formData.currency)}${record.consideredHourlyRate}` : 'No daily rate available'}>
+                        <Tag color="green" style={{ fontSize: '10px', margin: 0, cursor: record.consideredDailyRate ? 'help' : 'default' }}>
+                          Used: {record.consideredHourlyRate ? `${getCurrencyPrefix(generatedData.formData.currency)}${record.consideredHourlyRate}` : '—'}
+                        </Tag>
+                      </Tooltip>
+                      <Tooltip title={record.actualDailyRate ? `Actual hourly rate = ${formatRate(record.actualDailyRate, generatedData.formData.currency)} / 8 = ${getCurrencyPrefix(generatedData.formData.currency)}${record.actualHourlyRate}` : 'No actual daily rate available'}>
+                        <Tag color={record.rateOverridden ? 'gold' : 'default'} style={{ fontSize: '10px', margin: 0, cursor: record.actualDailyRate ? 'help' : 'default' }}>
+                          Actual: {record.actualHourlyRate ? `${getCurrencyPrefix(generatedData.formData.currency)}${record.actualHourlyRate}` : '—'}
+                        </Tag>
+                      </Tooltip>
+                    </Space>
+                  ),
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>Rate Check</span>,
+                  key: 'rateCheck',
+                  width: 110,
+                  render: (_: unknown, record: GeneratedReviewResource) => record.rateOverridden
+                    ? <Tag color="warning" style={{ fontSize: '10px', margin: 0 }}>Override Used</Tag>
+                    : <Tag color="success" style={{ fontSize: '10px', margin: 0 }}>As Calculated</Tag>,
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>Start Date</span>,
+                  dataIndex: 'resourceStartDate',
+                  key: 'resourceStartDate',
+                  width: 110,
+                  render: (value?: string) => <span style={{ fontSize: '11px', color: '#595959' }}>{value || '—'}</span>,
+                },
+                {
+                  title: <span style={{ fontSize: '10px' }}>End Date</span>,
+                  dataIndex: 'resourceEndDate',
+                  key: 'resourceEndDate',
+                  width: 110,
+                  render: (value?: string) => <span style={{ fontSize: '11px', color: '#595959' }}>{value || '—'}</span>,
+                },
+              ]}
+            />
           </div>
         </Card>
       )}

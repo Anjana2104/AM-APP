@@ -17,7 +17,8 @@ import {
   ExportOutlined,
   RiseOutlined,
 } from '@ant-design/icons';
-import html2canvas from 'html2canvas';
+import { exportChartAsPng } from '../../utils/exportChartAsPng';
+import { getCurrentDateStamp } from '../../utils/styledExcelExport';
 import type { Dayjs } from 'dayjs';
 
 const { Text } = Typography;
@@ -347,21 +348,12 @@ export default function ProcessInsightsPanel({ rows, onNavigate }: ProcessInsigh
   }, [analytics.anchorMap, analytics.total]);
 
   const exportSectionAsPng = async (sectionRef: React.RefObject<HTMLDivElement>, filePrefix: string) => {
-    const target = sectionRef.current;
-    if (!target) {
+    if (!sectionRef.current) {
       message.error('Export section is not ready yet');
       return;
     }
     try {
-      const canvas = await html2canvas(target, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-      });
-      const link = document.createElement('a');
-      link.download = `${filePrefix}_${new Date().toISOString().slice(0, 10)}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      await exportChartAsPng(sectionRef.current, `${filePrefix}_${getCurrentDateStamp()}.png`);
       message.success('PNG exported');
     } catch (e) {
       console.error('[ProcessInsightsPanel] Failed exporting section PNG', e);

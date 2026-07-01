@@ -117,6 +117,21 @@ code {
   }
 }
 
+input.light-date-input[type='date'] {
+  background: #fff;
+  color: #595959;
+  color-scheme: light;
+}
+
+input.light-date-input[type='date']:focus {
+  border-color: #1677ff !important;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12);
+}
+
+input.light-date-input[type='date']::-webkit-calendar-picker-indicator {
+  opacity: 0.7;
+}
+
 .hero {
   position: relative;
 

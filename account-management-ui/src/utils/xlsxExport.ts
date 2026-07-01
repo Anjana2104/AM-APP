@@ -42,3 +42,23 @@ export function writeAoaSheetFile(
   xlsx.utils.book_append_sheet(workbook, worksheet, sheetName);
   xlsx.writeFile(workbook, fileName);
 }
+
+type MultiSheetConfig =
+  | { sheetName: string; type: 'json'; rows: Record<string, any>[]; options?: { header?: string[]; columnWidths?: number[] } }
+  | { sheetName: string; type: 'aoa'; rows: any[][]; options?: { columnWidths?: number[] } };
+
+export function writeMultiSheetFile(
+  xlsx: XlsxBasicLib,
+  sheets: MultiSheetConfig[],
+  fileName: string,
+) {
+  const workbook = xlsx.utils.book_new();
+  sheets.forEach((sheet) => {
+    const worksheet = sheet.type === 'json'
+      ? xlsx.utils.json_to_sheet(sheet.rows, sheet.options?.header ? { header: sheet.options.header } : undefined)
+      : xlsx.utils.aoa_to_sheet(sheet.rows);
+    applyColumnWidths(worksheet, sheet.options?.columnWidths);
+    xlsx.utils.book_append_sheet(workbook, worksheet, sheet.sheetName);
+  });
+  xlsx.writeFile(workbook, fileName);
+}

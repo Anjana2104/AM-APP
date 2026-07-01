@@ -113,7 +113,7 @@ Bulk import allows you to load or update hundreds of resources at once from an E
 
 ### Linked Process / SOW — Clickable Link
 
-- Click the **SOW name** to navigate directly to that SOW in Internal Process (Overview tab), with the SOW pre-filtered.
+- Click the **SOW name** to navigate directly to that SOW in Internal Process (Process tab), with the SOW pre-filtered.
 
 ### Step-by-Step: Editing Resource Fields
 

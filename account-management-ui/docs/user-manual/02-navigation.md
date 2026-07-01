@@ -45,7 +45,7 @@ The left sidebar lists all available modules. Click any icon or label to switch 
 | Icon | Module | Description |
 |------|--------|-------------|
 | 🏠 | Account Summary | High-level account dashboard |
-| 📊 | Finance Management | Revenue and invoice tracking |
+| 📊 | Finance Management | SOW project milestones, booking operations, and insights |
 | 🔄 | Internal Process | SOW and resource management |
 | 👥 | Stakeholders | Stakeholder relationship network and profile views |
 | 📋 | Requests | Beeline staffing requests |

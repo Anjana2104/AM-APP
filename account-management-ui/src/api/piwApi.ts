@@ -19,6 +19,7 @@ export interface PIWFormData {
     name: string;
     resourceType: string;
     skillType?: string;
+    allocationPercentage?: number;
     dailyRate: number;
     resourceStartDate?: string;
     resourceEndDate?: string;
@@ -65,4 +66,3 @@ export const downloadPIW = (piw: Blob, fileName: string): void => {
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
 };
-

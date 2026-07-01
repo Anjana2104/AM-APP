@@ -259,7 +259,9 @@ router.post('/generate', async (req, res) => {
 
         resources.forEach((resource, i) => {
           const row = cfg.dataStartRow + i;
-          const { name = '', resourceType = '', dailyRate = 0, resourceStartDate, resourceEndDate } = resource;
+          const { name = '', resourceType = '', dailyRate = 0, allocationPercentage = 100, resourceStartDate, resourceEndDate } = resource;
+          const normalizedAllocation = Math.max(1, Math.min(100, Number(allocationPercentage) || 100));
+          const hoursPerDay = 8 * (normalizedAllocation / 100);
 
           const resStart = new Date(resourceStartDate || plannedStartDate);
           const resEnd   = new Date(resourceEndDate   || plannedEndDate);
@@ -286,11 +288,11 @@ router.post('/generate', async (req, res) => {
             const overlapEnd   = new Date(Math.min(resEnd.getTime(), weekEnd.getTime()));
 
             // Gross weekdays (Mon-Fri) in this overlap
-            let grossHours = countWeekdays(overlapStart, overlapEnd) * 8;            if (grossHours <= 0) continue;
+            let grossHours = countWeekdays(overlapStart, overlapEnd) * hoursPerDay;            if (grossHours <= 0) continue;
 
             // Deduct RA Bangalore public holidays in this week
             const weekHolidays = getHolidaysActive(overlapStart, overlapEnd);
-            const holidayHours = weekHolidays.length * 8;
+            const holidayHours = weekHolidays.length * hoursPerDay;
 
             // Deduct 1 assumed leave in first active week of each month
             const newMonths = [];
@@ -305,7 +307,7 @@ router.post('/generate', async (req, res) => {
               d.setUTCDate(d.getUTCDate() + 1);
             }
             newMonths.forEach(mk => monthLeaveDeducted.add(mk));
-            const leaveHours = newMonths.length * 8;
+            const leaveHours = newMonths.length * hoursPerDay;
 
             const netHours = Math.max(0, grossHours - holidayHours - leaveHours);
             if (netHours <= 0 && grossHours > 0) continue; // whole week is holiday/leave
@@ -324,7 +326,7 @@ router.post('/generate', async (req, res) => {
               commentLines.push('1 assumed leave');
             }
             if (commentLines.length > 0) {
-              commentLines.unshift(`${grossHours}→${netHours} hrs`);
+              commentLines.unshift(`${grossHours}→${netHours} hrs @ ${normalizedAllocation}% (${hoursPerDay} hrs/day)`);
               try { cell.comment(commentLines.join('\n')); } catch (_) {}
             }
           }
@@ -350,7 +352,9 @@ router.post('/generate', async (req, res) => {
 
       // Build per-resource monthly breakdown (mirrors week-filling logic)
       const calcData = resources.map((resource, idx) => {
-        const { name = '', resourceType = '', dailyRate = 0, skillType = '', raId = '', resourceStartDate, resourceEndDate } = resource;
+        const { name = '', resourceType = '', dailyRate = 0, skillType = '', raId = '', allocationPercentage = 100, resourceStartDate, resourceEndDate } = resource;
+        const normalizedAllocation = Math.max(1, Math.min(100, Number(allocationPercentage) || 100));
+        const hoursPerDay = 8 * (normalizedAllocation / 100);
         const resStart = new Date(resourceStartDate || plannedStartDate);
         const resEnd   = new Date(resourceEndDate   || plannedEndDate);
         const week1Monday = projectMonday || nearestPrecedingMonday(resStart.toISOString());
@@ -389,7 +393,7 @@ router.post('/generate', async (req, res) => {
           months.push({
             label: `${MONTH_NAMES[cur.getUTCMonth()]} ${cur.getUTCFullYear()}`,
             grossDays, holDays, leaveDays, netDays,
-            netHours: netDays * 8,
+            netHours: netDays * hoursPerDay,
             publicHolidays: publicHols,
             leaveWeekLabel,
           });
@@ -397,7 +401,7 @@ router.post('/generate', async (req, res) => {
         }
 
         const totalNetHours = months.reduce((s, m) => s + m.netHours, 0);
-        return { sno: idx + 1, raId, name, resourceType, skillType, dailyRate, hourlyRate: dailyRate / 8,
+        return { sno: idx + 1, raId, name, resourceType, skillType, allocationPercentage: normalizedAllocation, hoursPerDay, dailyRate, hourlyRate: dailyRate / 8,
                  startDate: resStart.toISOString().slice(0,10), endDate: resEnd.toISOString().slice(0,10),
                  months, totalNetHours };
       });
@@ -435,11 +439,11 @@ router.post('/generate', async (req, res) => {
       // ── SECTION 1: Resource Summary ──────────────────────────────────────
       SS(calcSheet.cell(r, 1).value('SECTION 1: RESOURCE SUMMARY'), { bold: true, fontSize: 11 });
       r++;
-      ['#', 'RAID', 'Resource Name', 'PIW Role', 'Skill Type', 'Daily Rate', 'Hourly Rate (÷8)', 'Start Date', 'End Date', 'Total Net Hours'].forEach((h, ci) => SS(calcSheet.cell(r, ci+1).value(h), HDR1));
+      ['#', 'RAID', 'Resource Name', 'PIW Role', 'Skill Type', 'Allocation %', 'Hours / Day', 'Daily Rate', 'Hourly Rate (÷8)', 'Start Date', 'End Date', 'Total Net Hours'].forEach((h, ci) => SS(calcSheet.cell(r, ci+1).value(h), HDR1));
       r++;
       calcData.forEach(res => {
         const vals = [res.sno, res.raId || '—', res.name, res.resourceType, res.skillType,
-                      res.dailyRate, +res.hourlyRate.toFixed(2), fmtDS(res.startDate), fmtDS(res.endDate), res.totalNetHours];
+                      res.allocationPercentage, +res.hoursPerDay.toFixed(2), res.dailyRate, +res.hourlyRate.toFixed(2), fmtDS(res.startDate), fmtDS(res.endDate), res.totalNetHours];
         vals.forEach((v, ci) => SS(calcSheet.cell(r, ci+1).value(v), ci >= 5 ? NUM : DATA));
         r++;
       });
@@ -449,7 +453,7 @@ router.post('/generate', async (req, res) => {
       // ── SECTION 2: Monthly Breakdown with holidays ────────────────────────
       SS(calcSheet.cell(r, 1).value('SECTION 2: MONTHLY BREAKDOWN (Gross → Fixed Holidays → Assumed Leave → Net)'), { bold: true, fontSize: 11 });
       r++;
-      const mbCols = ['#', 'Resource Name', 'Month', 'Gross Days', 'Fixed Holidays', 'Assumed Leave Day', 'Net Working Days', 'Net Billable Hours', 'Assumed Leave Week', 'Comments'];
+      const mbCols = ['#', 'Resource Name', 'Month', 'Allocation %', 'Hours / Day', 'Gross Days', 'Fixed Holidays', 'Assumed Leave Day', 'Net Working Days', 'Net Billable Hours', 'Assumed Leave Week', 'Comments'];
       mbCols.forEach((h, ci) => SS(calcSheet.cell(r, ci+1).value(h), HDR2));
       r++;
 
@@ -459,12 +463,12 @@ router.post('/generate', async (req, res) => {
             ? m.publicHolidays.map(h => `${fmtDS(h.date)}: ${h.name}`).join(', ')
             : '—';
 
-          const vals = [res.sno, res.name, m.label, m.grossDays, m.holDays, m.leaveDays, m.netDays, m.netHours, m.leaveWeekLabel || '—', commentVal];
+          const vals = [res.sno, res.name, m.label, res.allocationPercentage, +res.hoursPerDay.toFixed(2), m.grossDays, m.holDays, m.leaveDays, m.netDays, m.netHours, m.leaveWeekLabel || '—', commentVal];
           vals.forEach((v, ci) => {
             let style = DATA;
-            if (ci === 4 && m.holDays > 0) style = HOLI;
-            else if (ci === 5 && m.leaveDays > 0) style = LEAVE;
-            else if (ci >= 3 && ci <= 7) style = NUM;
+            if (ci === 6 && m.holDays > 0) style = HOLI;
+            else if (ci === 7 && m.leaveDays > 0) style = LEAVE;
+            else if (ci >= 3 && ci <= 9) style = NUM;
             SS(calcSheet.cell(r, ci+1).value(v), style);
           });
           r++;
@@ -532,4 +536,3 @@ router.post('/generate', async (req, res) => {
 });
 
 module.exports = router;
-

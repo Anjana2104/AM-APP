@@ -2,17 +2,43 @@
 
 This document lists the primary modules, key files, and their high-level responsibilities.
 
-## Finance Module
+## Redux State Store
 
 | Module Area | File | High-Level Functionality |
 |---|---|---|
-| Finance main page | `src/pages/FinanceManagement.tsx` | Finance workspace for SOW/revenue/bookings management and orchestration of finance workflows. |
+| Redux store setup | `src/store/index.ts` | Configures the Redux store; exports `RootState` and `AppDispatch` types. |
+| Typed hooks | `src/store/hooks.ts` | Exports `useAppDispatch` and `useAppSelector` typed hooks for use across all components. |
+| Resources slice | `src/store/resourcesSlice.ts` | Shared resource list with `items`, `loaded`, and `fromServer` flags; dispatched by ResourceHub on load/save/upload. |
+| Requests slice | `src/store/requestsSlice.ts` | Shared request list and active Beeline request options with load flags; dispatched by ClientRequests. |
+| Finance data slice | `src/store/financeDataSlice.ts` | Shared finance project + month headers and invoice project + month headers; dispatched by FinanceManagement and InvoiceManagement, consumed by FinanceSummary and AccountSummary. |
+| App shell slice | `src/store/appShellSlice.ts` | Active module/page, sidebar collapsed state, and cross-page navigation filters (resource role/RA-ID filters, request Beeline filters, initial SOW nav). |
+| Admin directory slice | `src/store/adminDirectorySlice.ts` | Shared users, roles, and user groups with per-entity loaded flags; dispatched by UserAccessControl. |
+
+## Finance Module
+
+### Frontend
+
+| Module Area | File | High-Level Functionality |
+|---|---|---|
+| Finance main page | `src/pages/FinanceManagement.tsx` | SOW Project Milestones + Insights workspace (Project/Booking sub-tabs, booking trends, unbooked drilldowns, export actions). |
+| Finance UI-aligned alias | `src/pages/SowManagement.tsx` | Router-facing alias to align file naming with SOW workspace terminology while reusing `FinanceManagement` implementation. |
 | Booking drawer | `src/pages/finance/ProjectBookingDrawer.tsx` | Project-level booking create/edit UI and validations. |
 | Bulk booking drawer | `src/pages/finance/BulkBookingDrawer.tsx` | Bulk booking upload/edit flow with validation and save actions. |
 | Booking upload utilities | `src/pages/finance/bookingUploadUtils.ts` | Booking Excel parsing, normalization, and upload-side validations. |
 | Booking export utilities | `src/pages/finance/bookingExportUtils.ts` | Booking export/template generation for single and bulk flows. |
 | Finance list/table | `src/pages/FinanceProjectTable.tsx` | Finance project tabular presentation and interactions. |
 | Finance summary | `src/pages/FinanceSummary.tsx` | Finance KPI/summary view. |
+
+### Backend API (`server/routes/finance/`)
+
+| Module Area | File | High-Level Functionality |
+|---|---|---|
+| Finance router entry | `server/routes/finance.js` | Thin passthrough — delegates to `finance/index.js`. Required by `server/index.js`. |
+| Finance index | `server/routes/finance/index.js` | Assembles revenue, projects, and bookings sub-routers under `/api/finance`. |
+| Shared helpers | `server/routes/finance/helpers.js` | Month sort key, booking normalisation/validation, `insertBooking`, `formatBookingAuditValue`, `insertFinanceAudit`, `projectRecordName`, `auditProjectFieldChanges` — used by all sub-domain files. |
+| Projects routes | `server/routes/finance/projects.js` | Finance project CRUD (`GET/POST/PUT/DELETE /projects`), bulk upsert upload, milestone-type upsert endpoint. Full audit trail and trigger evaluation. |
+| Revenue routes | `server/routes/finance/revenue.js` | `GET /month-headers` — sorted list of distinct revenue months. |
+| Bookings routes | `server/routes/finance/bookings.js` | Project bookings CRUD — single, batch, update, delete-one, delete-all-for-project, delete-all-global. Full audit trail per operation. |
 
 ## Resource Module
 
@@ -22,7 +48,12 @@ This document lists the primary modules, key files, and their high-level respons
 | Resource resumes tab | `src/pages/resource/ResourceResumesTab.tsx` | Resume upload/list/download helper workflow. |
 | Resource upload utilities | `src/pages/resource/resourceUploadUtils.ts` | Resource Excel parsing, merge logic, and bulk-save payload mapping. |
 | Resource row mappers | `src/pages/resource/resourceRowMappers.ts` | Shared API-to-UI and API payload row normalization for resources. |
-| Resource intelligence | `src/pages/ResourceIntelligence.tsx` | Resource-focused analytics/intelligence visualizations. |
+| Resource intelligence | `src/pages/ResourceIntelligence.tsx` | Resource-focused analytics/intelligence main page (~1350 lines). Imports sub-modules from `resource-intelligence/`. |
+| RI shared constants/types | `src/pages/resource-intelligence/resourceIntelligenceTypes.ts` | SECTION_META, SectionKey, STATUS_COLOR, PRIORITY_COLOR, COMMENT_TAG_COLORS, fmtDate, fmtRelative, cleanVal, resolveCommentSection. Used by all RI sub-components and the main page. |
+| RI entry card | `src/pages/resource-intelligence/EntryCard.tsx` | Card component for a single insight entry — shows tags, status, priority, author, actions. |
+| RI entry modal | `src/pages/resource-intelligence/EntryModal.tsx` | Add/Edit modal for insight entries with section-specific form fields. |
+| RI comment mini card | `src/pages/resource-intelligence/CommentMiniCard.tsx` | Compact card for linked resource comments mapped into section tabs. |
+| RI section tab | `src/pages/resource-intelligence/SectionTab.tsx` | Full section tab (Interactions/Escalations/Career/Plans) with CRUD, filters, and comment linking. |
 | Resource forecasting | `src/pages/ResourceForecasting.tsx` | Allocation/availability forecasting and exports. |
 
 ## Client Requests Module
@@ -48,7 +79,7 @@ This document lists the primary modules, key files, and their high-level respons
 | Process insights panel | `src/pages/internal-process/ProcessInsightsPanel.tsx` | Process KPI/analytics including Process Progress Analysis (date-range filter, stage trend, detail export). |
 | Process detail view panel | `src/pages/internal-process/ProcessDetailViewPanel.tsx` | Detailed process view and related actions. |
 | PIW upload sub-tab | `src/pages/internal-process/PiwUploadSubTabPanel.tsx` | PIW upload workflow and mapping/linking interactions. |
-| PIW create tab | `src/pages/internal-process/PiwCreateTabPanel.tsx` | PIW creation/generation flow and template helpers. |
+| PIW create tab | `src/pages/internal-process/PiwCreateTabPanel.tsx` | PIW creation/generation flow with review warnings, allocation-aware calculations, and detail exports. |
 | Process row mappers | `src/pages/internal-process/processRowMappers.ts` | Shared process row normalization, resequencing, save/export payload builders. |
 
 ## Stakeholders Module
@@ -63,17 +94,22 @@ This document lists the primary modules, key files, and their high-level respons
 
 ## Shared / Cross-Module Utilities
 
+Redux hooks are the preferred integration pattern for cross-page data sharing.
+
 | Module Area | File | High-Level Functionality |
 |---|---|---|
 | Module cleanup API | `src/utils/moduleCleanupApi.ts` | Centralized utility for module-level cleanup operations (audit/comments artifacts). |
-| Styled Excel export utility | `src/utils/styledExcelExport.ts` | Shared styled-sheet generation and date suffix helper for exports. |
-| Generic XLSX export utility | `src/utils/xlsxExport.ts` | Shared plain XLSX write helpers for JSON/AOA template/export generation. |
+| Styled Excel export utility | `src/utils/styledExcelExport.ts` | Shared styled-sheet generation and `getCurrentDateStamp()` date suffix helper for exports. |
+| Generic XLSX export utility | `src/utils/xlsxExport.ts` | Shared plain XLSX write helpers: `writeJsonSheetFile`, `writeAoaSheetFile`, `writeMultiSheetFile` for JSON/AOA template/export generation. |
+| Chart PNG export utility | `src/utils/exportChartAsPng.ts` | Shared html2canvas wrappers: `exportChartAsPng` (direct download), `captureElementAsPng` (data URL for PDF), `captureElementCanvas` (raw canvas for PDF aspect-ratio), `buildPngFilename`. Replaces 11 identical inline boilerplate blocks. |
+| Typed Redux hooks | `src/store/hooks.ts` | `useAppSelector` / `useAppDispatch` — required typed wrappers for all Redux store access. |
 
 ## Other Core Functional Pages
 
 | Module Area | File | High-Level Functionality |
 |---|---|---|
 | App settings | `src/pages/AppSettings.tsx` | Configuration management for app values and linked metadata. |
+| App settings export utils | `src/pages/app-settings/appSettingsExportUtils.ts` | Shared App Settings Excel template/export builders for configuration types and app values. |
 | Engagement mapping | `src/pages/EngagementMapping.tsx` | Engagement-resource mapping and deployment updates. |
 | Invoice management | `src/pages/InvoiceManagement.tsx` | Invoice data management, upload/edit, and exports. |
 | Stakeholder network | `src/pages/stakeholders/StakeholderNetwork.tsx` | Stakeholder structure management and relationship-network operations. |

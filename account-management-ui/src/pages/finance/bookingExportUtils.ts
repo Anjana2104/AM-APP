@@ -1,4 +1,5 @@
 import * as XLSXStyle from 'xlsx-js-style';
+import { getCurrentDateStamp } from '../../utils/styledExcelExport';
 import type { ProjectBooking } from '../../api/financeApi';
 
 export type BookingMilestoneRef = {
@@ -116,7 +117,7 @@ export function exportBookingHistory(
   ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 16 }, { wch: 14 }];
   const wb = XLSXStyle.utils.book_new();
   XLSXStyle.utils.book_append_sheet(wb, ws, 'Booking History');
-  XLSXStyle.writeFile(wb, `Bookings_${(projectCode || projectName || 'export').replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSXStyle.writeFile(wb, `Bookings_${(projectCode || projectName || 'export').replace(/\s+/g, '_')}_${getCurrentDateStamp()}.xlsx`);
 }
 
 export function exportBulkBookingHistory(
@@ -146,7 +147,7 @@ export function exportBulkBookingHistory(
   ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 14 }, { wch: 30 }, { wch: 16 }, { wch: 14 }];
   const wb = XLSXStyle.utils.book_new();
   XLSXStyle.utils.book_append_sheet(wb, ws, 'Booking History');
-  XLSXStyle.writeFile(wb, `Bulk_Bookings_Export_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSXStyle.writeFile(wb, `Bulk_Bookings_Export_${getCurrentDateStamp()}.xlsx`);
 }
 
 export function downloadBulkBookingTemplate(projects: BulkBookingTemplateProject[]) {
@@ -203,5 +204,5 @@ export function downloadBulkBookingTemplate(projects: BulkBookingTemplateProject
   XLSXStyle.utils.book_append_sheet(wb, wsTpl, 'Bulk Booking Template');
   XLSXStyle.utils.book_append_sheet(wb, wsInstr, 'Instructions');
   XLSXStyle.utils.book_append_sheet(wb, wsRef, 'Reference Data');
-  XLSXStyle.writeFile(wb, `Bulk_Booking_Template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSXStyle.writeFile(wb, `Bulk_Booking_Template_${getCurrentDateStamp()}.xlsx`);
 }
