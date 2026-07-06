@@ -85,7 +85,12 @@ export const ResourceCardView: React.FC<ResourceCardViewProps> = ({
                 {resource.allocationPercentage != null && <AllocPctTag pct={resource.allocationPercentage} style={{ fontSize: '10px', margin: 0, lineHeight: '16px', padding: '0 5px' }} />}
               </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {resource.totalWorkex && <Text type="secondary" style={{ fontSize: '10px' }}>{String(resource.totalWorkex)} exp</Text>}
+                {resource.totalWorkex && (() => {
+                    const raw = String(resource.totalWorkex).replace(/[^\d.-]/g, '');
+                    const num = parseFloat(raw);
+                    const display = isNaN(num) ? String(resource.totalWorkex) : `${Math.trunc(num * 100) / 100} years`;
+                    return <Text type="secondary" style={{ fontSize: '10px' }}>{display} exp</Text>;
+                  })()}
                 {resource.engagement && resource.engagement !== 'undefined' && (
                   <Text type="secondary" style={{ fontSize: '10px', borderLeft: resource.totalWorkex ? '1px solid #d9d9d9' : 'none', paddingLeft: resource.totalWorkex ? 8 : 0 }}>
                     {String(resource.engagement)}

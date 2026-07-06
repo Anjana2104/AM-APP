@@ -381,9 +381,9 @@ export function useResourceHubState({
             'Email': 'john.doe@example.com',
             'PIW Role': 'Developer',
             'Role/Domain': 'Full Stack',
-            'Previous Workex': '2 years',
+            'Previous Workex (Yr)': '2.5',
             'DOJ': '2024-01-15',
-            'Total Workex': '5 years',
+            'Total Workex (Yr)': '5.5',
             'Current Engagement': 'Project Alpha',
             'Engagement Start Date': '2024-01-15',
             'Engagement End Date': '2024-12-31',
@@ -399,9 +399,9 @@ export function useResourceHubState({
             'Email': '',
             'PIW Role': '',
             'Role/Domain': '',
-            'Previous Workex': '',
+            'Previous Workex (Yr)': '',
             'DOJ': '',
-            'Total Workex': '',
+            'Total Workex (Yr)': '',
             'Current Engagement': '',
             'Engagement Start Date': '',
             'Engagement End Date': '',
@@ -715,8 +715,8 @@ export function useResourceHubState({
     }
 
     const aoa: any[][] = [[
-      'S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex', 'DOJ',
-      'Total Workex', 'Current Engagement', 'Eng. Start Date', 'Eng. End Date', 'Allocation Status',
+      'S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex (Yr)', 'DOJ',
+      'Total Workex (Yr)', 'Current Engagement', 'Eng. Start Date', 'Eng. End Date', 'Allocation Status',
       'Alloc %', 'Skills', 'Beeline ID', 'Linked SOW',
     ]];
 

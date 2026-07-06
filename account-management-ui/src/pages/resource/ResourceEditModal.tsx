@@ -58,15 +58,15 @@ export const ResourceEditModal: React.FC<ResourceEditModalProps> = ({
       </Form.Item>
 
       <Form.Item
-        label="Previous Experience"
+        label="Previous Workex (Yr)"
         name="previousWorkex"
         rules={[
-          { required: true, message: 'Previous experience is required' },
+          { required: true, message: 'Previous work experience is required' },
           {
             validator(_, value) {
               const num = parseFloat(String(value ?? ''));
               if (value === '' || value == null) return Promise.resolve();
-              if (isNaN(num) || num < 0 || num > 100) return Promise.reject(new Error('Must be between 0 and 100 years'));
+              if (isNaN(num) || num < 0 || num > 100) return Promise.reject(new Error('Must be a number between 0 and 100'));
               return Promise.resolve();
             },
           },
@@ -74,7 +74,7 @@ export const ResourceEditModal: React.FC<ResourceEditModalProps> = ({
         getValueProps={(value) => ({ value: value != null && value !== '' ? parseFloat(String(value).replace(/[^\d.]/g, '')) || 0 : null })}
         getValueFromEvent={(value: number | null) => value != null ? String(value) : ''}
       >
-        <InputNumber min={0} precision={1} addonAfter="years" style={{ width: '100%', fontSize: '12px' }} size="small" />
+        <InputNumber min={0} precision={2} addonAfter="yrs" style={{ width: '100%', fontSize: '12px' }} size="small" />
       </Form.Item>
 
       <Form.Item
@@ -88,15 +88,15 @@ export const ResourceEditModal: React.FC<ResourceEditModalProps> = ({
       </Form.Item>
 
       <Form.Item
-        label="Total Experience"
+        label="Total Workex (Yr)"
         name="totalWorkex"
         rules={[
-          { required: true, message: 'Total experience is required' },
+          { required: true, message: 'Total work experience is required' },
           {
             validator(_, value) {
               const num = parseFloat(String(value ?? ''));
               if (value === '' || value == null) return Promise.resolve();
-              if (isNaN(num) || num < 0 || num > 100) return Promise.reject(new Error('Must be between 0 and 100 years'));
+              if (isNaN(num) || num < 0 || num > 100) return Promise.reject(new Error('Must be a number between 0 and 100'));
               return Promise.resolve();
             },
           },
@@ -104,7 +104,7 @@ export const ResourceEditModal: React.FC<ResourceEditModalProps> = ({
         getValueProps={(value) => ({ value: value != null && value !== '' ? parseFloat(String(value).replace(/[^\d.]/g, '')) || 0 : null })}
         getValueFromEvent={(value: number | null) => value != null ? String(value) : ''}
       >
-        <InputNumber min={0} precision={1} addonAfter="years" style={{ width: '100%', fontSize: '12px' }} size="small" />
+        <InputNumber min={0} precision={2} addonAfter="yrs" style={{ width: '100%', fontSize: '12px' }} size="small" />
       </Form.Item>
 
       <Form.Item label="Current Engagement" name="engagement">

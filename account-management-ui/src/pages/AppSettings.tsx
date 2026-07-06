@@ -10,6 +10,7 @@ import { Tabs } from 'antd';
 import {
   AppstoreOutlined,
   BellOutlined,
+  DatabaseOutlined,
   FileProtectOutlined,
   TableOutlined,
 } from '@ant-design/icons';
@@ -17,6 +18,7 @@ import { TemplatesTab } from '../components/TemplatesTab';
 import { AppConfigsTab } from './app-settings/AppConfigsTab';
 import { AppNotificationsTab } from './app-settings/AppNotificationsTab';
 import { AppValuesTab } from './app-settings/AppValuesTab';
+import { ManageDataTab } from './app-settings/ManageDataTab';
 
 export function AppSettings() {
   return (
@@ -46,6 +48,11 @@ export function AppSettings() {
               key: 'app-values',
               label: <span style={{ fontSize: 12 }}><TableOutlined /> App Values</span>,
               children: <AppValuesTab />,
+            },
+            {
+              key: 'manage-data',
+              label: <span style={{ fontSize: 12 }}><DatabaseOutlined /> Manage Data</span>,
+              children: <ManageDataTab />,
             },
           ]}
         />

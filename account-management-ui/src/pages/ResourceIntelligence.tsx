@@ -40,7 +40,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import ResourceOverviewCharts from '../components/ResourceOverviewCharts';
 import { AllocPctTag } from '../utils/allocUtils';
 import { jsPDF } from 'jspdf';
-import { SECTION_META, SectionKey, LABEL_TO_SECTION, resolveCommentSection, STATUS_COLOR, PRIORITY_COLOR, COMMENT_TAG_COLORS, fmtDate, fmtRelative, cleanVal } from './resource-intelligence/resourceIntelligenceTypes';
+import { SECTION_META, SectionKey, LABEL_TO_SECTION, resolveCommentSection, STATUS_COLOR, PRIORITY_COLOR, COMMENT_TAG_COLORS, fmtDate, fmtRelative, cleanVal, fmtWorkex } from './resource-intelligence/resourceIntelligenceTypes';
 import { EntryCard } from './resource-intelligence/EntryCard';
 import { EntryModal } from './resource-intelligence/EntryModal';
 import { CommentMiniCard } from './resource-intelligence/CommentMiniCard';
@@ -137,7 +137,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       drawRow('RA ID', selectedResource.raId || '—');
       drawRow('Email', selectedResource.emailId || '—');
       drawRow('Role', selectedResource.piwRole || selectedResource.roleOrDomain || '—');
-      drawRow('Experience', selectedResource.totalWorkex || '—');
+      drawRow('Experience', fmtWorkex(selectedResource.totalWorkex));
       drawRow('Date of Joining', selectedResource.doj ? fmtDate(selectedResource.doj) : '—');
       y += 2;
 
@@ -1057,7 +1057,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                   <Text style={{ fontSize: 11, wordBreak: 'break-all' }}>{selectedResource?.emailId || '—'}</Text>
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Experience</Text>}>
-                  <Text style={{ fontSize: 11 }}>{selectedResource?.totalWorkex || '—'}</Text>
+                  <Text style={{ fontSize: 11 }}>{fmtWorkex(selectedResource?.totalWorkex)}</Text>
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>DOJ</Text>}>
                   <Text style={{ fontSize: 11 }}>{selectedResource?.doj ? fmtDate(selectedResource.doj) : '—'}</Text>

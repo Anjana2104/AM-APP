@@ -82,13 +82,21 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
         render: (value) => <Tag color="cyan">{String(value || '')}</Tag>,
       },
       {
-        title: 'Previous Workex',
+        title: 'Previous Workex (Yr)',
         dataIndex: 'previousWorkex',
         key: 'previousWorkex',
-        width: 130,
+        width: 145,
         align: 'center' as const,
-        sorter: (a: ResourceRow, b: ResourceRow) => (a.previousWorkex || '').localeCompare(b.previousWorkex || ''),
-        render: (value) => <span>{String(value || '')}</span>,
+        sorter: (a: ResourceRow, b: ResourceRow) => {
+          const pa = parseFloat(String(a.previousWorkex || '0').replace(/[^\d.-]/g, '')) || 0;
+          const pb = parseFloat(String(b.previousWorkex || '0').replace(/[^\d.-]/g, '')) || 0;
+          return pa - pb;
+        },
+        render: (value) => {
+          const num = parseFloat(String(value || '').replace(/[^\d.-]/g, ''));
+          if (!value || isNaN(num)) return <span style={{ color: '#bfbfbf' }}>—</span>;
+          return <span>{Math.trunc(num * 100) / 100} yrs</span>;
+        },
       },
       {
         title: 'DOJ',
@@ -99,13 +107,21 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
-        title: 'Total Workex',
+        title: 'Total Workex (Yr)',
         dataIndex: 'totalWorkex',
         key: 'totalWorkex',
-        width: 120,
+        width: 130,
         align: 'center' as const,
-        sorter: (a: ResourceRow, b: ResourceRow) => (a.totalWorkex || '').localeCompare(b.totalWorkex || ''),
-        render: (value) => <span>{String(value || '')}</span>,
+        sorter: (a: ResourceRow, b: ResourceRow) => {
+          const pa = parseFloat(String(a.totalWorkex || '0').replace(/[^\d.-]/g, '')) || 0;
+          const pb = parseFloat(String(b.totalWorkex || '0').replace(/[^\d.-]/g, '')) || 0;
+          return pa - pb;
+        },
+        render: (value) => {
+          const num = parseFloat(String(value || '').replace(/[^\d.-]/g, ''));
+          if (!value || isNaN(num)) return <span style={{ color: '#bfbfbf' }}>—</span>;
+          return <span>{Math.trunc(num * 100) / 100} yrs</span>;
+        },
       },
       {
         title: 'Current Engagement',

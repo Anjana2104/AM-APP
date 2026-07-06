@@ -84,7 +84,7 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
     const rowNum = idx + 2;
     const raId = String(row['RA ID'] || row['Ra ID'] || '').trim();
     const empName = String(row['Employee Name'] || row['Emp Name'] || '').trim();
-    const totalWorkexRaw = String(row['Total Workex'] || row['Total Experience'] || '').trim();
+    const totalWorkexRaw = String(row['Total Workex (Yr)'] || row['Total Workex'] || row['Total Experience'] || '').trim();
 
     if (!raId) {
       skippedRows.push({ rowNum, reason: 'Missing RA ID', detail: empName ? `Employee: ${empName}` : undefined });
@@ -113,9 +113,13 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
       emailId: String(row['Email'] || row['Email Id'] || row['Email ID'] || '').trim(),
       piwRole: String(row['PIW Role'] || row['Role'] || '').trim(),
       roleOrDomain: String(row['Role/Domain'] || row['Domain'] || '').trim(),
-      previousWorkex: String(row['Previous Workex'] || row['Prev Workex'] || '').trim(),
+      previousWorkex: (() => {
+        const raw = String(row['Previous Workex (Yr)'] || row['Previous Workex'] || row['Prev Workex'] || '').trim();
+        // strip any trailing "years" text, keep numeric value only
+        return raw.replace(/\s*years?\s*/gi, '').trim();
+      })(),
       doj: normalizeExcelDate(row['DOJ'] ?? row['Date of Joining']),
-      totalWorkex: totalWorkexRaw,
+      totalWorkex: totalWorkexRaw.replace(/\s*years?\s*/gi, '').trim(),
       skills: String(row['Skills'] || '').trim(),
       engagement: String(row['Current Engagement'] || row['Engagement'] || '').trim(),
       engagementStartDate: normalizeExcelDate(row['Engagement Start Date'] ?? row['Eng Start Date']),

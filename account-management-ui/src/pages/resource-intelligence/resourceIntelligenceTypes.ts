@@ -75,6 +75,15 @@ export function fmtDate(iso: string) {
   return dayjs(iso).format('DD MMM YYYY');
 }
 
+/** Truncates workex numeric value to 2 decimal places (no rounding) and appends " years". */
+export function fmtWorkex(val: string | number | undefined | null): string {
+  if (val == null || val === '') return '—';
+  const cleaned = String(val).replace(/\s*years?\s*/gi, '').trim();
+  const num = parseFloat(cleaned);
+  if (isNaN(num)) return cleaned || '—';
+  return `${Math.trunc(num * 100) / 100} years`;
+}
+
 export function fmtRelative(iso: string) {
   if (!iso) return '';
   return dayjs(iso).fromNow();

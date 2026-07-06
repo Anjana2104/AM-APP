@@ -17,7 +17,9 @@ The App Settings module is the administrative control panel for the EAM applicat
 |-----|---------|
 | **App Notifications** | Configure automatic in-app notification rules on field changes |
 | **Templates** | Upload and manage document templates (PIW, SOW, holiday calendar) |
-| **Dropdowns & Values** | Manage selectable dropdown lists and app key-value settings |
+| **Configs** | Manage selectable dropdown lists linked to app modules |
+| **App Values** | App key-value settings (URLs, thresholds, feature flags) |
+| **Manage Data** | Centralised backup and delete-all operations for every module's data |
 
 > Navigate to **App Settings** from the Settings & Configuration (⚙️) menu in the sidebar.
 
@@ -164,6 +166,59 @@ App Values are named key-value settings referenced by specific application featu
 
 - Click the **Edit** (✏️) icon on a value row to modify it.
 - Click the **⋯** menu → **Delete** to remove it.
+
+---
+
+## Manage Data Tab
+
+The **Manage Data** tab provides a centralised control panel for backing up and deleting data across every module in the application.
+
+> ⚠️ **Warning:** All delete operations are **permanent and irreversible**. There is no recycle bin. Always download a backup before deleting.
+
+### How It Works
+
+Each module is shown as a card with two actions:
+
+| Action | Description |
+|--------|-------------|
+| **Backup** | Downloads an Excel file with all current data for that module |
+| **Delete All Data** | Permanently removes all records. Requires typing `DELETE` to confirm |
+
+### Modules Available
+
+| Category | Module Card | What It Deletes |
+|---|---|---|
+| Finance Management | SOW Details (Finance Projects) | All finance project milestones and revenue rows |
+| Finance Management | Finance Bookings | All booking records across all projects |
+| Invoice Management | Invoice Details | All invoice projects and monthly invoice amounts |
+| Resource Information | Resource Records | All resource employee records |
+| Resource Information | Resource Audit History | Audit trail entries for the Resources module |
+| Resource Information | Resource Comments | All comments on resource records |
+| Client Requests | Client Requests | All client request records |
+| Client Requests | Request Audit History | Audit trail for Client Requests |
+| Client Requests | Request Comments | All comments on request records |
+| Internal Process | Internal Process Records (SOW / PIW) | All process records |
+| Internal Process | Process Audit History | Audit trail for Internal Process |
+| Internal Process | Process Comments | All process comments |
+| Stakeholders | Client Stakeholder Hierarchy | All client stakeholder network records |
+| Stakeholders | RA Stakeholder Hierarchy | All RA stakeholder network records |
+| App Settings | App Configurations (Dropdown Types) | All custom dropdown types and their values |
+| App Settings | App Values (Key-Value Store) | All app key-value settings |
+
+### Permissions
+
+- **Backup** is available to all users with view access to the module.
+- **Delete All Data** requires `delete` permission on the module's page ID. If you lack permission, the button is disabled.
+
+### Step-by-Step: Backup Before Delete
+
+1. Navigate to **App Settings** → **Manage Data** tab.
+2. Find the module card you want to manage.
+3. Click **Backup** — an Excel file will download immediately.
+4. Verify the downloaded file contains the expected data.
+5. Click **Delete All Data**.
+6. In the confirmation dialog, type `DELETE` (all caps).
+7. Click **Delete All Data** to proceed.
 
 ---
 

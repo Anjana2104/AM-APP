@@ -108,8 +108,9 @@ Redux hooks are the preferred integration pattern for cross-page data sharing.
 
 | Module Area | File | High-Level Functionality |
 |---|---|---|
-| App settings | `src/pages/AppSettings.tsx` | Configuration management for app values and linked metadata. |
+| App settings | `src/pages/AppSettings.tsx` | Configuration management for app values, notification triggers, templates, and data management. Now contains 5 tabs: App Notifications, Templates, Configs, App Values, **Manage Data**. |
 | App settings export utils | `src/pages/app-settings/appSettingsExportUtils.ts` | Shared App Settings Excel template/export builders for configuration types and app values. |
+| Manage Data tab | `src/pages/app-settings/ManageDataTab.tsx` | Centralised data management hub — page-wise backup (Excel export) and delete-all operations for all modules (Finance, Invoice, Resources, Requests, Process, Stakeholders, App Settings). Uses double-confirm (type DELETE). Permission-gated per page ID. Reuses all existing API clients. |
 | Engagement mapping | `src/pages/EngagementMapping.tsx` | Engagement-resource mapping and deployment updates. |
 | Invoice management | `src/pages/InvoiceManagement.tsx` | Invoice data management, upload/edit, and exports. |
 | Stakeholder network | `src/pages/stakeholders/StakeholderNetwork.tsx` | Stakeholder structure management and relationship-network operations. |

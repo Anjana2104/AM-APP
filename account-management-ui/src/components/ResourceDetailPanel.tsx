@@ -218,14 +218,24 @@ function ResourceDetailPanel({ resource, currentUser, expanded, panelOpen, onNav
     return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
   };
 
+  const fmtWorkex = (val: string | undefined | null): string => {
+    if (!val) return '—';
+    const cleaned = String(val).replace(/\s*years?\s*/gi, '').trim();
+    const num = parseFloat(cleaned);
+    if (isNaN(num)) return cleaned || '—';
+    // Truncate to 2 decimal places without rounding
+    const truncated = Math.trunc(num * 100) / 100;
+    return `${truncated} years`;
+  };
+
   const infoFields: Array<[string, string | React.ReactNode]> = [
     ['RA ID', resource.raId],
     ['Email', resource.emailId],
     ['Resource Status', resource.isActive === false ? 'Inactive' : 'Active'],
     ['Role / Domain', resource.roleOrDomain],
-    ['Prev Experience', resource.previousWorkex],
+    ['Prev Workex (Yr)', fmtWorkex(resource.previousWorkex)],
     ['Date of Joining', fmtDate(resource.doj)],
-    ['Total Experience', resource.totalWorkex],
+    ['Total Workex (Yr)', fmtWorkex(resource.totalWorkex)],
     ['Engagement', resource.engagement || '—'],
     ['Eng. Start Date', fmtDate(resource.engagementStartDate || '')],
     ['Eng. End Date', fmtDate(resource.engagementEndDate || '')],

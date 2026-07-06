@@ -151,7 +151,7 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 
 ## App Settings (`AppSettings`)
 
-Sub-tabs: **App Notifications** | **Templates** | **Dropdowns & Values**
+Sub-tabs: **App Notifications** | **Templates** | **Configs** | **App Values** | **Manage Data**
 
 | UI Feature | API Endpoint | DB Tables |
 |---|---|---|
@@ -170,6 +170,36 @@ Sub-tabs: **App Notifications** | **Templates** | **Dropdowns & Values**
 | Add/Edit trigger | `POST/PUT /api/notification-triggers/:id` | `notification_triggers` |
 | Delete trigger | `DELETE /api/notification-triggers/:id` | `notification_triggers` |
 | Reorder triggers (DnD) | `PUT /api/notification-triggers/:id` (sort_order) | `notification_triggers` |
+
+### Manage Data Tab
+
+| UI Feature | API Endpoint | DB Tables |
+|---|---|---|
+| Backup — SOW Finance Projects | `GET /api/finance/projects` → Excel export | `finance_projects`, `finance_revenue` |
+| Delete All — SOW Finance Projects | `DELETE /api/finance/projects` | `finance_projects`, `finance_revenue`, `project_bookings` |
+| Delete All — Finance Bookings | `DELETE /api/finance/bookings/all` | `project_bookings` |
+| Backup — Invoice Projects | `GET /api/invoice/projects` → Excel export | `invoice_projects`, `invoice_amounts` |
+| Delete All — Invoice Projects | `DELETE /api/invoice/projects` | `invoice_projects`, `invoice_amounts` |
+| Backup — Resource Records | `GET /api/resources` → Excel export | `resources` |
+| Delete All — Resource Records | `DELETE /api/resources` | `resources` |
+| Delete Audit History — Resources | `DELETE /api/resources/all-audit` | `audit_log` (resources) |
+| Delete Comments — Resources | `DELETE /api/resources/all-comments` | `resource_comments` |
+| Backup — Client Requests | `GET /api/requests` → Excel export | `client_requests` |
+| Delete All — Client Requests | `DELETE /api/requests` | `client_requests` |
+| Delete Audit — Requests | `DELETE /api/requests/all-audit` | `audit_log` (requests) |
+| Delete Comments — Requests | `DELETE /api/requests/all-comments` | `request_comments` |
+| Backup — Process Records | `GET /api/process` → Excel export | `ra_process` |
+| Delete All — Process Records | `DELETE /api/process` | `ra_process` |
+| Delete Audit — Process | `DELETE /api/process/all-audit` | `audit_log` (process) |
+| Delete Comments — Process | `DELETE /api/process/all-comments` | `process_comments` |
+| Backup — Client Stakeholders | `GET /api/team-hierarchy?teamType=client` → Excel | `team_hierarchy_entries` |
+| Delete All — Client Stakeholders | `PUT /api/team-hierarchy/client/bulk` (empty array) | `team_hierarchy_entries` |
+| Backup — RA Stakeholders | `GET /api/team-hierarchy?teamType=ra` → Excel | `team_hierarchy_entries` |
+| Delete All — RA Stakeholders | `PUT /api/team-hierarchy/ra/bulk` (empty array) | `team_hierarchy_entries` |
+| Backup — Config Dropdown Types | `GET /api/config/` → Excel export | `app_config_types`, `app_config_items` |
+| Delete All — Config Types | `DELETE /api/config/types` (via ConfigContext) | `app_config_types`, `app_config_items` |
+| Backup — App Values | `GET /api/config/values` → Excel export | `app_values` |
+| Delete All — App Values | `DELETE /api/config/values` (via ConfigContext) | `app_values` |
 
 ---
 
