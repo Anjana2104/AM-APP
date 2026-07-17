@@ -44,7 +44,8 @@ src/
 ├── pages/                     — Full-page components (one per feature)
 │   ├── AccountSummary.tsx     — Executive / Account Summary dashboard
 │   ├── AppSettings.tsx        — Settings > App Settings (dropdowns, app values,
-│   │                            notification triggers, templates, data management)
+│   │                            notification triggers, templates, data management
+│   │                            including notifications history/trigger cleanup)
 │   ├── ClientRequests.tsx     — Client Requests (Beeline requests)
 │   ├── EngagementMapping.tsx  — Resource Engagement Mapping
 │   │                            Tabs: Deployment Pool | Projects |

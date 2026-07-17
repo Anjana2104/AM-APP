@@ -41,10 +41,11 @@ Finance Management manages SOW project milestones, booking operations, and insig
 
 ## Insights Tab
 
-The Insights tab has two sub-tabs:
+The Insights tab has three sub-tabs:
 
 1. **Project Insights**
 2. **Booking Insights**
+3. **Resource Insights**
 
 ### Common filters
 
@@ -102,6 +103,28 @@ Shows compact KPI tiles (single row):
 - Clicking KPI tiles/trend rows opens detail drawers.
 - Drawer headers include icon-only Excel export.
 - Trend cards include icon-only Excel export for overall trend details.
+
+---
+
+## Resource Insights (SOW)
+
+Shows linked resources grouped as:
+
+- **Project -> SOW -> Resource History**
+- SOW-level active/inactive process status
+- Reused resource link/unlink history timeline
+
+### Resource Insights filters
+
+- Project Status quick toggle (**Active** by default, or **All**)
+- Project Name filter
+- SOW text search
+- Resource Name filter (searchable multi-select)
+
+### Resource Insights export
+
+- Project-level icon-only **Export to PNG** (hover tooltip)
+- Export auto-expands collapsed projects before capture
 
 ---
 

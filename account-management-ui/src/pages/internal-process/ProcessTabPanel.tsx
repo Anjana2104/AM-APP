@@ -153,62 +153,94 @@ export function ProcessTabPanel({ rows, setRows, setFromServer, resourceRefreshK
       message.warning('Cannot link resources to an inactive process. Activate it first.');
       return;
     }
+    if (!row.id) {
+      message.error('Save this internal process record first, then link resources.');
+      return;
+    }
     setLinkModal({ open: true, row });
     setLoadingLink(true);
     setLinkChecked(new Set());
     setLinkSearch('');
     setLinkDates({});
-    const { resources: raw, fromServer: online } = await resourceApi.getResources();
-    if (online) {
+    try {
+      const { resources: raw, fromServer: online } = await resourceApi.getResources();
+      if (!online) {
+        message.error('Cannot load resources: server unavailable.');
+        return;
+      }
       dispatch(setResourcesAction(raw.map((resource: any, index: number) => mapResourceApiRowToResourceRow(resource, index))));
       dispatch(setResourcesFromServer(true));
+      const mapped = raw.map(mapProcRes);
+      const initialChecked = new Set(mapped.filter(resource => resource.processId === row.id && resource.id != null).map(resource => resource.id));
+      setLinkChecked(initialChecked);
+      const initialDates: Record<number, { startDate: string; endDate: string }> = {};
+      mapped.filter(resource => resource.processId === row.id).forEach(resource => {
+        initialDates[resource.id] = {
+          startDate: toInputDate(resource.engagementStartDate || ''),
+          endDate: toInputDate(resource.engagementEndDate || ''),
+        };
+      });
+      setLinkDates(initialDates);
+    } catch (error: any) {
+      message.error(error?.message || 'Failed to load resources for linking');
+    } finally {
+      setLoadingLink(false);
     }
-    const mapped = raw.map(mapProcRes);
-    const initialChecked = new Set(mapped.filter(resource => resource.processId === row.id && resource.id != null).map(resource => resource.id));
-    setLinkChecked(initialChecked);
-    const initialDates: Record<number, { startDate: string; endDate: string }> = {};
-    mapped.filter(resource => resource.processId === row.id).forEach(resource => {
-      initialDates[resource.id] = {
-        startDate: toInputDate(resource.engagementStartDate || ''),
-        endDate: toInputDate(resource.engagementEndDate || ''),
-      };
-    });
-    setLinkDates(initialDates);
-    setLoadingLink(false);
   };
 
   const handleSaveLinks = async () => {
-    if (!linkModal.row?.id) return;
+    if (!linkModal.row?.id) {
+      message.error('Process is not saved yet. Save the process record before linking resources.');
+      return;
+    }
     const processId = linkModal.row.id;
     setSavingLink(true);
-    const prevLinked = new Set<number>(allProcResources.filter(resource => resource.processId === processId).map(resource => resource.id));
-    const toLink = [...linkChecked].filter(id => !prevLinked.has(id));
-    const toUnlink = [...prevLinked].filter(id => !linkChecked.has(id));
-    await Promise.all([
-      ...toLink.map(id => resourceApi.setProcessLink(id, processId, currentUser?.username || 'system')),
-      ...toUnlink.map(id => resourceApi.setProcessLink(id, null, currentUser?.username || 'system')),
-    ]);
-    await Promise.all(
-      [...linkChecked].map(id => {
-        const dates = linkDates[id];
-        if (dates !== undefined) {
-          return resourceApi.updateResource(id, {
+    try {
+      const prevLinked = new Set<number>(allProcResources.filter(resource => resource.processId === processId).map(resource => resource.id));
+      const toLink = [...linkChecked].filter(id => !prevLinked.has(id));
+      const toUnlink = [...prevLinked].filter(id => !linkChecked.has(id));
+
+      const linkResults = await Promise.all([
+        ...toLink.map(async id => ({ id, op: 'link' as const, ...(await resourceApi.setProcessLinkDetailed(id, processId, currentUser?.username || 'system')) })),
+        ...toUnlink.map(async id => ({ id, op: 'unlink' as const, ...(await resourceApi.setProcessLinkDetailed(id, null, currentUser?.username || 'system')) })),
+      ]);
+
+      const dateResults = await Promise.all(
+        [...linkChecked].map(async id => {
+          const dates = linkDates[id];
+          if (dates === undefined) return { id, ok: true };
+          const result = await resourceApi.updateResourceDetailed(id, {
             engagementStartDate: dates.startDate,
             engagementEndDate: dates.endDate,
             changedBy: currentUser?.username || 'system',
           });
-        }
-        return Promise.resolve();
-      }),
-    );
-    const { resources: raw, fromServer: online } = await resourceApi.getResources();
-    if (online) {
-      dispatch(setResourcesAction(raw.map((resource: any, index: number) => mapResourceApiRowToResourceRow(resource, index))));
+          return { id, ...result };
+        }),
+      );
+
+      const failed = [
+        ...linkResults.filter(result => !result.ok).map(result => `${result.op}#${result.id}: ${result.error || 'failed'}`),
+        ...dateResults.filter(result => !result.ok).map(result => `dates#${result.id}: ${result.error || 'failed'}`),
+      ];
+
+      if (failed.length > 0) {
+        message.error(`Failed to save some resource links (${failed.length}). ${failed[0]}`);
+        return;
+      }
+
+      const { resources: raw, fromServer: online } = await resourceApi.getResources();
+      if (online) {
+        dispatch(setResourcesAction(raw.map((resource: any, index: number) => mapResourceApiRowToResourceRow(resource, index))));
+      }
+
+      message.success('Resource links updated');
+      setLinkModal({ open: false, row: null });
+      setLinkDates({});
+    } catch (error: any) {
+      message.error(error?.message || 'Failed to save resource links');
+    } finally {
+      setSavingLink(false);
     }
-    setSavingLink(false);
-    message.success('Resource links updated');
-    setLinkModal({ open: false, row: null });
-    setLinkDates({});
   };
 
   const handleUpload = async (file: File) => {

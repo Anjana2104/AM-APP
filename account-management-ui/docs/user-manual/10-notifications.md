@@ -101,6 +101,17 @@ The Processing Status of "Beeline-1234" changed from "In Review" to "Approved" b
 
 ---
 
+## Admin Data Management (App Settings)
+
+Administrators can manage notification data from **App Settings → Manage Data**:
+
+- **Notifications History**: backup and delete notifications visible in current user scope.
+- **Notification Triggers**: backup and delete configured trigger rules.
+
+> ⚠️ Delete operations are irreversible. Always take backup before delete-all actions.
+
+---
+
 ## Notification Snooze (User Settings)
 
 You can configure **snooze rules** to temporarily mute specific notifications for a defined period. Only notifications that are relevant to your account (based on your role and group memberships) appear in the snooze selector.

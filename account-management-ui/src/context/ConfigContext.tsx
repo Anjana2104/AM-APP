@@ -14,7 +14,7 @@ const VALUES_STORAGE_KEY = 'eam_app_values';
 const DEFAULT_APP_VALUES: AppValue[] = [
   {
     key: 'SOW_STORAGE_URL',
-    value: 'https://rockwellautomation-my.sharepoint.com/:f:/r/personal/anjana_sharma_rockwellautomation_com/Documents/Anjana%20Sharma%20-%20All%20Important%20Documents/1.%20My%20work/RA%20Work/New%20folder?csf=1&web=1&e=Mchxcf',
+    value: '',
     description: 'SharePoint folder URL where SOW documents are stored',
   },
   {
@@ -164,13 +164,13 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     configApi.getConfigTypes().then(({ configTypes, fromServer }) => {
       if (fromServer && configTypes.length > 0) {
-        const mapped: ConfigType[] = configTypes.map((t: any) => ({
+        const mapped: ConfigType[] = configTypes.map((t) => ({
           id: t.typeId,
           name: t.name,
           description: t.description || '',
           builtIn: !!t.builtIn,
           linkedTo: t.linkedTo || [],
-          items: (t.items || []).map((i: any) => ({
+          items: (t.items || []).map((i) => ({
             value: i.itemValue,
             label: i.label,
             color: i.color || 'default',
@@ -183,7 +183,7 @@ export function ConfigProvider({ children }: { children: React.ReactNode }) {
 
     configApi.getValues().then(({ values, fromServer }) => {
       if (fromServer && values.length > 0) {
-        const mapped: AppValue[] = values.map((v: any) => ({
+        const mapped: AppValue[] = values.map((v) => ({
           key: v.key,
           value: v.value || '',
           description: v.description || '',

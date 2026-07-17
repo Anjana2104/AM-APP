@@ -75,22 +75,8 @@ export function KanbanTile({ resource, isSelected, onToggleSelect, onViewDetails
         </div>
       </div>
       <div style={{ fontSize: '9px', color: '#8c8c8c', lineHeight: 1.5, marginBottom: 3 }}>
-        {[resource.raId, expDisplay, resource.roleOrDomain || resource.piwRole].filter(Boolean).join('  ·  ')}
+        {[resource.raId, expDisplay, resource.roleOrDomain || resource.piwRole].filter(Boolean).join(' | ')}
       </div>
-      {resource.engagement && resource.engagement !== 'Bench' && resource.engagement !== 'No Value' && (
-        <div style={{ marginBottom: 2 }}>
-          <span style={{ fontSize: '8px', padding: '0 5px', lineHeight: '14px', borderRadius: 3, background: '#f9f0ff', color: '#722ed1', border: '1px solid #d3adf7' }}>
-            {resource.engagement}
-          </span>
-        </div>
-      )}
-      {(resource.engagementStartDate || resource.engagementEndDate) && (
-        <div style={{ fontSize: '8px', color: '#8c8c8c', marginBottom: 2 }}>
-          {resource.engagementStartDate && <span>{resource.engagementStartDate}</span>}
-          {resource.engagementStartDate && resource.engagementEndDate && <span> → </span>}
-          {resource.engagementEndDate && <span>{resource.engagementEndDate}</span>}
-        </div>
-      )}
       {resource.beelineId && (
         <div style={{ marginTop: 2 }}>
           <span style={{ fontSize: '8px', padding: '0 5px', lineHeight: '14px', borderRadius: 3, background: '#e6f4ff', color: '#1677ff', border: '1px solid #91caff', display: 'inline-flex', alignItems: 'center', gap: 2 }}>

@@ -7,6 +7,33 @@
 
 const BASE = '/api/config';
 
+// ── Domain types ──────────────────────────────────────────────────────
+
+export interface ConfigItem {
+  itemValue: string;
+  label: string;
+  color?: string;
+  order?: number;
+}
+
+export interface ConfigType {
+  typeId: string;
+  name: string;
+  description?: string;
+  builtIn?: boolean;
+  linkedTo?: string[];
+  items?: ConfigItem[];
+}
+
+export interface AppValue {
+  key: string;
+  value: string;
+  description?: string;
+}
+
+type ApiOk = { ok: boolean; error?: string };
+type ReorderItem = Pick<ConfigItem, 'itemValue' | 'order'>;
+
 let _serverAvailable: boolean | null = null;
 
 async function isServerAvailable(): Promise<boolean> {
@@ -26,7 +53,7 @@ export function resetServerCache() {
 
 // ── Config Types ──────────────────────────────────────────────────────
 
-export async function getConfigTypes(): Promise<{ configTypes: any[]; fromServer: boolean }> {
+export async function getConfigTypes(): Promise<{ configTypes: ConfigType[]; fromServer: boolean }> {
   const online = await isServerAvailable();
   if (online) {
     try {
@@ -46,7 +73,7 @@ export async function createType(data: {
   description?: string;
   builtIn?: boolean;
   linkedTo?: string[];
-}): Promise<any> {
+}): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/types`, {
@@ -60,7 +87,7 @@ export async function createType(data: {
 export async function updateType(
   typeId: string,
   data: { name?: string; description?: string; linkedTo?: string[] }
-): Promise<any> {
+): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/types/${encodeURIComponent(typeId)}`, {
@@ -71,14 +98,14 @@ export async function updateType(
   return res.json();
 }
 
-export async function deleteType(typeId: string): Promise<any> {
+export async function deleteType(typeId: string): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/types/${encodeURIComponent(typeId)}`, { method: 'DELETE' });
   return res.json();
 }
 
-export async function deleteAllTypes(): Promise<any> {
+export async function deleteAllTypes(): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/types`, { method: 'DELETE' });
@@ -90,7 +117,7 @@ export async function deleteAllTypes(): Promise<any> {
 export async function addItem(
   typeId: string,
   item: { itemValue: string; label: string; color?: string }
-): Promise<any> {
+): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/types/${encodeURIComponent(typeId)}/items`, {
@@ -105,7 +132,7 @@ export async function updateItem(
   typeId: string,
   itemValue: string,
   data: { label?: string; color?: string }
-): Promise<any> {
+): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(
@@ -119,7 +146,7 @@ export async function updateItem(
   return res.json();
 }
 
-export async function deleteItem(typeId: string, itemValue: string): Promise<any> {
+export async function deleteItem(typeId: string, itemValue: string): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(
@@ -129,7 +156,7 @@ export async function deleteItem(typeId: string, itemValue: string): Promise<any
   return res.json();
 }
 
-export async function reorderItems(typeId: string, items: any[]): Promise<any> {
+export async function reorderItems(typeId: string, items: ReorderItem[]): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/types/${encodeURIComponent(typeId)}/items`, {
@@ -142,7 +169,7 @@ export async function reorderItems(typeId: string, items: any[]): Promise<any> {
 
 export async function bulkImport(
   entries: Array<{ name: string; values: string[] }>
-): Promise<any> {
+): Promise<ApiOk & { created?: number; added?: number }> {
   const online = await isServerAvailable();
   if (!online) return { ok: false, created: 0, added: 0 };
   const res = await fetch(`${BASE}/bulk`, {
@@ -155,7 +182,7 @@ export async function bulkImport(
 
 // ── App Values ────────────────────────────────────────────────────────
 
-export async function getValues(): Promise<{ values: any[]; fromServer: boolean }> {
+export async function getValues(): Promise<{ values: AppValue[]; fromServer: boolean }> {
   const online = await isServerAvailable();
   if (online) {
     try {
@@ -169,7 +196,7 @@ export async function getValues(): Promise<{ values: any[]; fromServer: boolean 
   return { values: [], fromServer: false };
 }
 
-export async function upsertValue(key: string, value: string, description?: string): Promise<any> {
+export async function upsertValue(key: string, value: string, description?: string): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/values`, {
@@ -180,14 +207,14 @@ export async function upsertValue(key: string, value: string, description?: stri
   return res.json();
 }
 
-export async function deleteValue(key: string): Promise<any> {
+export async function deleteValue(key: string): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/values/${encodeURIComponent(key)}`, { method: 'DELETE' });
   return res.json();
 }
 
-export async function deleteAllValues(): Promise<any> {
+export async function deleteAllValues(): Promise<ApiOk> {
   const online = await isServerAvailable();
   if (!online) return { ok: false };
   const res = await fetch(`${BASE}/values`, { method: 'DELETE' });

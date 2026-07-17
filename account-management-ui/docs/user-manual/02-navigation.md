@@ -60,7 +60,7 @@ Clicking the ⚙️ gear icon in the sidebar opens a popover with:
 | Item | Description |
 |------|-------------|
 | **User Access Control** | Users, roles, permissions, user groups |
-| **App Settings** | Dropdown values, notification triggers, templates, app values |
+| **App Settings** | App Notifications, Templates, Configs, App Values, and Manage Data controls |
 | **User Settings** | Column visibility preferences, notification snooze rules |
 | **Information** | Client rate card and client process |
 

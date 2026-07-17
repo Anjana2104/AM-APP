@@ -53,16 +53,25 @@ export interface RoleRecord {
 
 export async function login(username: string, password: string): Promise<LoginResult> {
   try {
-    const res = await fetch(`${BASE_AUTH}/login`, {
+    const url = `${BASE_AUTH}/login`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await res.json();
-    if (!res.ok) return { ok: false, error: data.error || 'Login failed' };
-    return { ok: true, user: data.user };
-  } catch {
-    return { ok: false, error: 'Cannot connect to server' };
+    // If server returned HTML (e.g. ingress 404 page), res.json() will throw
+    const text = await res.text();
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { ok: false, error: `Server returned non-JSON (status ${res.status}). URL: ${url}. Body: ${text.slice(0, 200)}` };
+    }
+    if (!res.ok) return { ok: false, error: (data.error as string) || 'Login failed' };
+    return { ok: true, user: data.user as UserSession };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `Network error — ${msg}` };
   }
 }
 

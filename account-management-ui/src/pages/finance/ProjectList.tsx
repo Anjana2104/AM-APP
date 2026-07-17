@@ -8,7 +8,7 @@ import {
   UploadOutlined, DownloadOutlined, ColumnHeightOutlined, FilterOutlined,
   FileExcelOutlined, CloudServerOutlined, SaveOutlined, DeleteOutlined,
   EditOutlined, CalendarOutlined, PlusOutlined, StopOutlined, CheckCircleOutlined,
-  WarningOutlined, EllipsisOutlined, DollarOutlined,
+  WarningOutlined, EllipsisOutlined, DollarOutlined, ApartmentOutlined,
   EyeOutlined, ClockCircleOutlined, MessageOutlined, FullscreenOutlined, FullscreenExitOutlined,
   ExclamationCircleOutlined, SearchOutlined,
 } from '@ant-design/icons';
@@ -21,6 +21,7 @@ import type { AuditEntry } from '../../api/auditApi';
 import { validateAndGroupBulkBookings } from './bookingUploadUtils';
 import ProjectBookingDrawer from './ProjectBookingDrawer';
 import BulkBookingDrawer from './BulkBookingDrawer';
+import LinkedProcessesPanel from './LinkedProcessesPanel';
 import { useConfig } from '../../context/ConfigContext';
 import { useAuth } from '../../context/AuthContext';
 import { useUserPreferences } from '../../context/UserPreferencesContext';
@@ -28,6 +29,12 @@ import { getLinkedConfigLabelOptions } from '../../utils/configOptions';
 import { getCurrentDateStamp } from '../../utils/styledExcelExport';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setFinanceData, setInvoiceData } from '../../store/financeDataSlice';
+import {
+  addExpandedSection,
+  setActiveModule as setActiveModuleAction,
+  setActivePage as setActivePageAction,
+  setInitialProcessSow as setInitialProcessSowAction,
+} from '../../store/appShellSlice';
 
 const { Text } = Typography;
 
@@ -323,6 +330,9 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
 
   // More Actions modal
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+
+  // Row-level "Link Processes" modal state
+  const [linkProcessesRow, setLinkProcessesRow] = useState<Row | null>(null);
 
   // Row selection for bulk operations (managed inside More Actions, not via table checkboxes)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
@@ -1053,6 +1063,14 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
     if (r.id) loadAuditLog(r.id);
   };
 
+  const navigateToInternalProcess = (sow: string) => {
+    dispatch(setInitialProcessSowAction(sow));
+    dispatch(setActivePageAction('clientmgmt_connects'));
+    dispatch(setActiveModuleAction('eam'));
+    dispatch(addExpandedSection('clientmgmt'));
+    window.history.pushState({ module: 'eam', page: 'clientmgmt_connects' }, '', '#/eam/clientmgmt_connects');
+  };
+
   /** Append a new prefixed comment entry and save */
   const handleAddComment = async () => {
     if (!newComment.trim() || !selectedDetailRow) return;
@@ -1236,6 +1254,12 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
                     icon: <CalendarOutlined style={{ color: '#52c41a' }} />,
                     label: <span style={{ fontSize: '12px' }}>Manage Bookings</span>,
                     onClick: () => openBookingPanel(r),
+                  },
+                  {
+                    key: 'link-processes',
+                    icon: <ApartmentOutlined style={{ color: '#1890ff' }} />,
+                    label: <span style={{ fontSize: '12px' }}>Link Processes</span>,
+                    onClick: () => setLinkProcessesRow(r),
                   },
                   ...(canDelete ? [{
                     key: 'delete',
@@ -1922,13 +1946,23 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
                         onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleAddComment(); } }}
                       />
                       <Button size="small" onClick={handleAddComment} disabled={!newComment.trim()}
-                        style={{ whiteSpace: 'nowrap', background: newComment.trim() ? '#d9d9d9' : '#f0f0f0', color: newComment.trim() ? '#262626' : '#bfbfbf', border: '1px solid #d9d9d9', cursor: newComment.trim() ? 'pointer' : 'not-allowed' }}>
+                        style={{ whiteSpace: 'nowrap', fontSize: '11px', background: newComment.trim() ? '#d9d9d9' : '#f0f0f0', color: newComment.trim() ? '#262626' : '#bfbfbf', border: '1px solid #d9d9d9', cursor: newComment.trim() ? 'pointer' : 'not-allowed' }}>
                         Add
                       </Button>
                     </div>
                   )}
                 </div>
               </Space>
+
+              {/* Linked Internal Processes */}
+              {selectedDetailRow.id && (
+                <LinkedProcessesPanel
+                  financeProjectId={selectedDetailRow.id}
+                  sowStatus={selectedDetailRow.status}
+                  changedBy={currentUser?.username}
+                  onNavigateToProcess={navigateToInternalProcess}
+                />
+              )}
 
               {/* Right column (or bottom when collapsed): Audit Trail */}
               <div style={{ background: '#f5f5f5', padding: 16, borderRadius: 8, minHeight: 120 }}>
@@ -1989,14 +2023,19 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
                     pagination={{ pageSize: detailDrawerExpanded ? 10 : 5, size: 'small', showSizeChanger: false }}
                     columns={[
                       { title: 'Field', dataIndex: 'field', key: 'field', width: 80,
+                        onHeaderCell: () => ({ style: { fontSize: '11px' } }),
                         render: (v: string) => <Text style={{ fontSize: '11px', textTransform: 'capitalize' }}>{v}</Text> },
                       { title: 'From', dataIndex: 'old_value', key: 'old_value', ellipsis: true, width: 90,
+                        onHeaderCell: () => ({ style: { fontSize: '11px' } }),
                         render: (v: string) => <Tooltip title={v}><Text style={{ fontSize: '11px' }}>{v || '—'}</Text></Tooltip> },
                       { title: 'To', dataIndex: 'new_value', key: 'new_value', ellipsis: true, width: 90,
+                        onHeaderCell: () => ({ style: { fontSize: '11px' } }),
                         render: (v: string) => <Tooltip title={v}><Text style={{ fontSize: '11px', color: '#1890ff' }}>{v || '—'}</Text></Tooltip> },
                       { title: 'By', dataIndex: 'changed_by', key: 'changed_by', width: 70,
+                        onHeaderCell: () => ({ style: { fontSize: '11px' } }),
                         render: (v: string) => <Text style={{ fontSize: '11px' }}>{v || '—'}</Text> },
                       { title: 'When', dataIndex: 'changed_at', key: 'changed_at', width: 110,
+                        onHeaderCell: () => ({ style: { fontSize: '11px' } }),
                         render: (v: string) => <Text style={{ fontSize: '11px' }}>{v ? new Date(v).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</Text> },
                     ]}
                   />
@@ -2295,6 +2334,19 @@ export function ProjectList({ onDataChange, onMonthsChange }: ProjectListProps) 
         refreshToken={bulkRefreshToken}
         onClose={() => setBulkBookingOpen(false)}
       />
+
+      {/* Row-level Link Processes — renders only the manage modal directly, no wrapper */}
+      {linkProcessesRow?.id && (
+        <LinkedProcessesPanel
+          hidePanel
+          financeProjectId={linkProcessesRow.id}
+          sowStatus={linkProcessesRow.status}
+          changedBy={currentUser?.username}
+          onNavigateToProcess={navigateToInternalProcess}
+          manageOpen={!!linkProcessesRow}
+          onManageOpenChange={(open) => { if (!open) setLinkProcessesRow(null); }}
+        />
+      )}
 
     </div>
   );

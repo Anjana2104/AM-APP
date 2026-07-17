@@ -23,7 +23,9 @@ export type ResourceRow = {
   engagement?: string;
   allocationStatus?: string;
   allocationPercentage?: number | null;
+  allocationEntries?: ResourceAllocationEntry[];
   beelineId?: string;
+  processId?: number | null;         // Linked internal process id
   allocationRequests?: Array<{
     id: string;
     clientName: string;
@@ -32,4 +34,13 @@ export type ResourceRow = {
     createdDate: string;
     notes?: string;
   }>;
+};
+
+export type ResourceAllocationEntry = {
+  engagementName: string;
+  allocationPercentage: number;
+  engagementStartDate?: string;
+  engagementEndDate?: string;
+  allocationStatus?: string;
+  beelineId?: string;
 };

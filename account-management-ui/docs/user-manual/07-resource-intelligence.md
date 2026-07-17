@@ -7,7 +7,7 @@
 
 ## Overview
 
-Resource Intelligence provides deep per-resource analytics — engagement history, skills breakdown, field-level audit logs, and a one-click PDF export of the full resource profile. It is the go-to module for understanding individual resource utilisation and history.
+Resource Intelligence provides deep per-resource analytics — engagement history, multi-project allocation visibility, skills breakdown, field-level audit logs, and a one-click PDF export of the full resource profile. It is the go-to module for understanding individual resource utilisation and history.
 
 ---
 
@@ -56,6 +56,12 @@ Click any filter to narrow the resource list:
 
 - Click the **🔄 Refresh** icon (top right, beside the PDF export icon) to reload the latest resource data from the server.
 - Useful after another user has made updates.
+
+### All Resources Insights (Roles/Domains behavior)
+
+- In **All Resources → Resources by Roles/Domains**, `Roles/Domains` values are split by comma and counted per individual domain.
+- Domain aggregation is case-insensitive (for example, `DevOps`, `devops`, and `DEVOPS` are treated as the same domain bucket).
+- Blank `Roles/Domains` values are shown as **Unassigned** (not Unknown) for consistent cross-module filtering.
 
 ---
 
@@ -110,14 +116,16 @@ Click any filter to narrow the resource list:
 
 ---
 
-#### Current Engagement
+#### Project Allocations
 
 | Field | Description |
 |-------|-------------|
-| Current SOW | SOW the resource is currently assigned to |
-| Engagement Start | Start date of current engagement |
-| Engagement End | Expected end date |
-| PIW Role | Role within the current SOW |
+| Allocations | Each project/engagement assigned to the resource with its own allocation % |
+| Combined Allocation % | Sum of all active project allocations |
+| Primary Start / End | Summary dates shown for the primary allocation |
+| PIW Role | Role within the current SOW / engagement mix |
+
+> ⚠️ **Utilization rule:** A resource is **Overutilized** when combined allocation is **more than 100%** and **Underutilized** when combined allocation is **less than 100%**.
 
 ---
 
@@ -168,7 +176,7 @@ The PDF export generates a complete, formatted profile document for the selected
 | Section | Included |
 |---------|---------|
 | Basic Info (name, RA ID, email, status) | ✅ Yes |
-| Current Engagement (SOW, dates, PIW role) | ✅ Yes |
+| Project Allocations (all allocations + combined utilization) | ✅ Yes |
 | Skills (primary, secondary, certifications) | ✅ Yes |
 | Audit Log (full field-change history) | ✅ Yes |
 | Insights Summary charts | ❌ No — excluded by design |

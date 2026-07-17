@@ -8,7 +8,7 @@
   'previousWorkex',
   'doj',
   'totalWorkex',
-  'engagement',
+  'projectAllocations',
   'allocationStatus',
   'allocationPercentage',
   'resourceStatus',
@@ -22,11 +22,11 @@ export const RESOURCE_COLUMN_LABELS: Record<string, string> = {
   empName: 'Employee Name',
   emailId: 'Email Id',
   piwRole: 'PIW Role',
-  roleOrDomain: 'Role/Domain',
+  roleOrDomain: 'Roles/Domains',
   previousWorkex: 'Previous Workex (Yr)',
   doj: 'DOJ',
   totalWorkex: 'Total Workex (Yr)',
-  engagement: 'Current Engagement',
+  projectAllocations: 'Project Allocations',
   allocationStatus: 'Allocation Status',
   allocationPercentage: 'Alloc %',
   resourceStatus: 'Resource Status',
@@ -51,3 +51,4 @@ export const CARD_ALLOCATION_STATUS_COLOR_MAP: Record<string, string> = {
   Released: '#ff4d4f',
   Resigned: '#ff4d4f',
 };
+

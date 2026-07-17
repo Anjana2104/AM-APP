@@ -2,6 +2,8 @@
  * Resource Hub API client
  */
 
+import type { ResourceAllocationEntry } from '../types/resource';
+
 const BASE = '/api/resources';
 
 export interface ResourcePayload {
@@ -20,6 +22,7 @@ export interface ResourcePayload {
   skills: string;
   allocationStatus?: string;
   allocationPercentage?: number | null;
+  allocationEntries?: ResourceAllocationEntry[];
   beelineId?: string;
   processId?: number | null;
   engagementStartDate?: string;
@@ -69,15 +72,30 @@ export async function bulkSave(resources: ResourcePayload[], changedBy?: string)
 
 // Update one resource
 export async function updateResource(id: number, payload: Partial<ResourcePayload> & { changedBy?: string }): Promise<boolean> {
+  const result = await updateResourceDetailed(id, payload);
+  return result.ok;
+}
+
+export async function updateResourceDetailed(
+  id: number,
+  payload: Partial<ResourcePayload> & { changedBy?: string },
+): Promise<{ ok: boolean; error?: string }> {
   const online = await isServerAvailable();
-  if (!online) return false;
-  const res = await fetch(`${BASE}/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  return data.ok === true;
+  if (!online) return { ok: false, error: 'Server unavailable' };
+  try {
+    const res = await fetch(`${BASE}/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok !== true) {
+      return { ok: false, error: data.error || 'Failed to update resource' };
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Request failed' };
+  }
 }
 
 // Delete one resource
@@ -175,15 +193,31 @@ export async function deleteResourceComment(resourceId: number, commentId: numbe
 }
 
 export async function setProcessLink(resourceId: number, processId: number | null, changedBy?: string): Promise<boolean> {
+  const result = await setProcessLinkDetailed(resourceId, processId, changedBy);
+  return result.ok;
+}
+
+export async function setProcessLinkDetailed(
+  resourceId: number,
+  processId: number | null,
+  changedBy?: string,
+): Promise<{ ok: boolean; error?: string }> {
   const online = await isServerAvailable();
-  if (!online) return false;
-  const res = await fetch(`${BASE}/${resourceId}/process-link`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ processId, changedBy: changedBy || 'system' }),
-  });
-  const data = await res.json();
-  return data.ok === true;
+  if (!online) return { ok: false, error: 'Server unavailable' };
+  try {
+    const res = await fetch(`${BASE}/${resourceId}/process-link`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processId, changedBy: changedBy || 'system' }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok !== true) {
+      return { ok: false, error: data.error || 'Failed to update process link' };
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Request failed' };
+  }
 }
 
 // ── Beeline Link ─────────────────────────────────────────────────────────────
@@ -205,7 +239,7 @@ export async function getBeelineLinks(): Promise<{ id: number; raId: string; emp
   if (!online) return [];
   const res = await fetch(`${BASE}/beeline-links`);
   const data = await res.json();
-  return (data.links || []).map((r: any) => ({
+  return (data.links || []).map((r: { id: number; ra_id: string; emp_name: string; beeline_id: string }) => ({
     id: r.id, raId: r.ra_id, empName: r.emp_name, beelineId: r.beeline_id,
   }));
 }

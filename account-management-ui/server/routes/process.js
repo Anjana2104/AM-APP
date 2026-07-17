@@ -22,7 +22,7 @@ const { getDb } = require('../db/connection');
 const { evaluateTriggers } = require('../utils/triggerEvaluator');
 const logger = require('../utils/logger');
 
-// Ensure all ra_process columns exist (idempotent â€” safe to call on every request)
+// Ensure all ra_process columns exist (idempotent — safe to call on every request)
 function ensureProcessColumns(db) {
   // Check existing columns first to avoid ALTER TABLE errors
   const cols = db.all(`PRAGMA table_info(ra_process)`).map(r => r.name);
@@ -40,6 +40,9 @@ function ensureProcessColumns(db) {
   }
   if (!cols.includes('updated_at')) {
     try { db.run(`ALTER TABLE ra_process ADD COLUMN updated_at TEXT`); } catch (e) { logger.warn('Failed to ensure updated_at column', { err: e.message }); }
+  }
+  if (!cols.includes('finance_project_id')) {
+    try { db.run(`ALTER TABLE ra_process ADD COLUMN finance_project_id INTEGER DEFAULT NULL`); } catch (e) { logger.warn('Failed to ensure finance_project_id column', { err: e.message }); }
   }
   try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (e) { logger.warn('Failed to backfill process identifiers', { err: e.message }); }
   // Unique partial index for PIW (non-empty)
@@ -232,14 +235,172 @@ router.delete('/all-audit', async (req, res) => {
   }
 });
 
+// GET /api/process/resource-insights
+// Flat dataset for Finance → SOW Insights → Resource Insights (project > sow > linked resources)
+router.get('/resource-insights', async (_req, res) => {
+  try {
+    const db = await getDb();
+    ensureProcessColumns(db);
+    const rows = db.all(
+      `SELECT
+         fp.id AS project_id,
+         fp.project AS project_name,
+         fp.code AS project_code,
+         CASE
+           WHEN LOWER(TRIM(COALESCE(fp.status, ''))) IN ('active', 'yes', 'true', '1') THEN 'Active'
+           WHEN LOWER(TRIM(COALESCE(fp.status, ''))) IN ('inactive', 'no', 'false', '0') THEN 'Inactive'
+           WHEN COALESCE(fp.active, 1) = 1 THEN 'Active'
+           ELSE 'Inactive'
+         END AS project_status,
+         p.id AS sow_id,
+         p.sow,
+         p.process_id,
+         CASE
+           WHEN LOWER(TRIM(COALESCE(p.active, ''))) IN ('yes', 'active', 'true', '1') THEN 'Yes'
+           ELSE 'No'
+         END AS process_active,
+         r.id AS resource_id,
+         r.ra_id,
+         r.emp_name,
+         r.piw_role,
+         r.engagement_start_date,
+         r.engagement_end_date
+       FROM finance_projects fp
+       JOIN ra_process p ON p.finance_project_id = fp.id
+       JOIN resources r ON r.process_id = p.id
+       ORDER BY fp.project COLLATE NOCASE, p.sow COLLATE NOCASE, r.emp_name COLLATE NOCASE`
+    );
+    res.json({ rows });
+  } catch (err) {
+    logger.error('Failed to fetch process resource insights', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/process/by-sow/:financeProjectId — all processes linked to a SOW details record
+router.get('/by-sow/:financeProjectId', async (req, res) => {
+  const fpId = parseInt(req.params.financeProjectId, 10);
+  if (isNaN(fpId)) return res.status(400).json({ error: 'Invalid financeProjectId' });
+  try {
+    const db = await getDb();
+    ensureProcessColumns(db);
+    const rows = db.all(
+      `SELECT
+         p.id,
+         p.process_id,
+         p.sow,
+         p.active,
+         p.finance_project_id,
+         COUNT(r.id) AS linked_resource_count,
+         GROUP_CONCAT(
+           CASE
+             WHEN TRIM(COALESCE(r.emp_name, '')) != '' AND TRIM(COALESCE(r.ra_id, '')) != ''
+               THEN TRIM(r.emp_name) || ' (' || TRIM(r.ra_id) || ')'
+             WHEN TRIM(COALESCE(r.emp_name, '')) != ''
+               THEN TRIM(r.emp_name)
+             ELSE TRIM(COALESCE(r.ra_id, ''))
+           END,
+           ', '
+         ) AS linked_resources
+       FROM ra_process p
+       LEFT JOIN resources r ON r.process_id = p.id
+       WHERE p.finance_project_id = ?
+       GROUP BY p.id
+       ORDER BY p.sno, p.id`,
+      [fpId]
+    );
+    res.json({ rows });
+  } catch (err) {
+    logger.error('Failed to fetch processes by SOW', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/process/:id/sow-link — link or unlink an internal process to a SOW details record
+// Body: { financeProjectId: number | null, changedBy?: string }
+// Constraint: only active processes (active='Yes') can be linked; only active SOW records
+router.put('/:id/sow-link', async (req, res) => {
+  const processId = parseInt(req.params.id, 10);
+  const { financeProjectId, changedBy = 'system' } = req.body;
+  if (isNaN(processId)) return res.status(400).json({ error: 'Invalid process id' });
+
+  try {
+    const db = await getDb();
+    ensureProcessColumns(db);
+
+    const process = db.get('SELECT * FROM ra_process WHERE id=?', [processId]);
+    if (!process) return res.status(404).json({ error: 'Process not found' });
+
+    const fpId = financeProjectId != null ? parseInt(String(financeProjectId), 10) : null;
+
+    if (fpId !== null) {
+      // Validate the finance project exists and is active
+      const fp = db.get('SELECT id, project, status FROM finance_projects WHERE id=?', [fpId]);
+      if (!fp) return res.status(404).json({ error: 'SOW details record not found' });
+      if (fp.status === 'Inactive') return res.status(400).json({ error: 'Cannot link to an inactive SOW record' });
+      // Validate the process is active
+      if (process.active !== 'Yes') return res.status(400).json({ error: 'Only active internal processes can be linked' });
+    }
+
+    const oldVal = process.finance_project_id != null ? String(process.finance_project_id) : '';
+    const newVal = fpId != null ? String(fpId) : '';
+    const now = new Date().toISOString();
+
+    // Resolve human-readable names for cleaner audit entries
+    const oldFp = process.finance_project_id != null
+      ? db.get('SELECT project FROM finance_projects WHERE id=?', [process.finance_project_id])
+      : null;
+    const newFp = fpId != null
+      ? db.get('SELECT project FROM finance_projects WHERE id=?', [fpId])
+      : null;
+    const oldFpName = oldFp?.project || oldVal || '—';
+    const newFpName = newFp?.project || newVal || '—';
+
+    db.run('UPDATE ra_process SET finance_project_id=?, updated_at=? WHERE id=?', [fpId, now, processId]);
+
+    // Log to ra_process audit: which SOW record this process was linked/unlinked from
+    try {
+      db.run(
+        `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at)
+         VALUES (?,?,?,?,?,?,?,?)`,
+        ['ra_process', processId, process.sow || String(processId), 'SOW Link', oldFpName, newFpName, changedBy, now]
+      );
+    } catch (e) { logger.warn('Failed to write SOW link audit log (ra_process)', { err: e.message }); }
+
+    // Also log to finance_projects audit so it appears in the SOW detail drawer's audit trail
+    const affectedFpId = fpId ?? process.finance_project_id;
+    if (affectedFpId != null) {
+      try {
+        const action = fpId != null ? 'Process Linked' : 'Process Unlinked';
+        const processLabel = process.sow || `Process #${processId}`;
+        db.run(
+          `INSERT INTO audit_log (module, record_id, record_name, field, old_value, new_value, changed_by, changed_at)
+           VALUES (?,?,?,?,?,?,?,?)`,
+          ['finance', affectedFpId, newFp?.project || oldFp?.project || String(affectedFpId), action,
+           fpId != null ? '—' : processLabel,
+           fpId != null ? processLabel : '—',
+           changedBy, now]
+        );
+      } catch (e) { logger.warn('Failed to write SOW link audit log (finance)', { err: e.message }); }
+    }
+
+    res.json({ ok: true, financeProjectId: fpId });
+  } catch (err) {
+    logger.error('Failed to update SOW link', { err: err.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/process
 router.get('/', async (req, res) => {
   try {
     const db = await getDb();
     ensureProcessColumns(db);
     const rows = db.all(
-      `SELECT * FROM ra_process
-       ORDER BY COALESCE(NULLIF(updated_at, ''), NULLIF(created_at, '')) DESC, id DESC`
+      `SELECT p.*, fp.project AS finance_project_name, fp.code AS finance_project_code
+       FROM ra_process p
+       LEFT JOIN finance_projects fp ON fp.id = p.finance_project_id
+       ORDER BY COALESCE(NULLIF(p.updated_at, ''), NULLIF(p.created_at, '')) DESC, p.id DESC`
     );
     res.json({ rows });
   } catch (err) {

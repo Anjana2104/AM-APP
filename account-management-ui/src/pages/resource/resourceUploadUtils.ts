@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import type { WorkSheet } from 'xlsx';
 import type { ResourceRow } from '../../types/resource';
+import { deriveAllocationStatus, ensureAllocationEntries, totalAllocationPercentage } from '../../utils/resourceAllocationUtils';
 
 type ExcelRow = Record<string, string | undefined>;
 
@@ -60,25 +61,10 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
     throw new Error('No data found in file');
   }
 
-  const headerRow: string[] = ((XLSX.utils.sheet_to_json(worksheet, { header: 1 })[0] as string[]) || [])
-    .map((value) => String(value || '').trim());
-  const hasEngagementStartDateColumn = ['Engagement Start Date', 'Eng Start Date'].some((header) => headerRow.includes(header));
-  const hasEngagementEndDateColumn = ['Engagement End Date', 'Eng End Date'].some((header) => headerRow.includes(header));
-
   const totalRows = jsonData.length;
   const skippedRows: UploadSkippedRow[] = [];
-  const raIdCountInFile = new Map<string, number[]>();
-
-  jsonData.forEach((row, idx) => {
-    const raId = String(row['RA ID'] || row['Ra ID'] || '').trim().toLowerCase();
-    if (!raId) return;
-    const arr = raIdCountInFile.get(raId) || [];
-    arr.push(idx + 2);
-    raIdCountInFile.set(raId, arr);
-  });
 
   const uploaded: ResourceRow[] = [];
-  const seenRaIds = new Set<string>();
 
   jsonData.forEach((row, idx) => {
     const rowNum = idx + 2;
@@ -90,12 +76,6 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
       skippedRows.push({ rowNum, reason: 'Missing RA ID', detail: empName ? `Employee: ${empName}` : undefined });
       return;
     }
-    if (seenRaIds.has(raId.toLowerCase())) {
-      const dupeRows = raIdCountInFile.get(raId.toLowerCase()) || [];
-      skippedRows.push({ rowNum, reason: 'Duplicate RA ID in file', detail: `RA ID: ${raId} — also appears at row(s): ${dupeRows.filter(r => r !== rowNum).join(', ')}` });
-      return;
-    }
-    seenRaIds.add(raId.toLowerCase());
 
     if (totalWorkexRaw) {
       const parsed = parseFloat(totalWorkexRaw.replace(/[^\d.-]/g, ''));
@@ -105,14 +85,32 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
       }
     }
 
-    uploaded.push({
+    const engagementName = String(row['Current Engagement'] || row['Engagement'] || '').trim();
+    const explicitStatus = String(row['Allocation Status'] || '').trim();
+    const entryAllocationPct = (() => {
+      const raw = String(row['Allocation %'] || row['Allocation Percentage'] || '').trim().replace('%', '');
+      if (!raw) return null;
+      const n = parseFloat(raw);
+      return isNaN(n) ? null : Math.min(200, Math.max(0, n));
+    })();
+    const rowAllocationEntries = (engagementName || entryAllocationPct != null)
+      ? [{
+          engagementName,
+          allocationPercentage: entryAllocationPct ?? 0,
+          engagementStartDate: '',
+          engagementEndDate: '',
+          allocationStatus: explicitStatus,
+        }]
+      : [];
+
+    const parsedRow: ResourceRow = {
       key: String(raId),
       sno: String(row['S.NO'] || idx + 1),
       raId,
       empName,
       emailId: String(row['Email'] || row['Email Id'] || row['Email ID'] || '').trim(),
       piwRole: String(row['PIW Role'] || row['Role'] || '').trim(),
-      roleOrDomain: String(row['Role/Domain'] || row['Domain'] || '').trim(),
+      roleOrDomain: String(row['Roles/Domains'] || row['Role/Domain'] || row['Domain'] || '').trim(),
       previousWorkex: (() => {
         const raw = String(row['Previous Workex (Yr)'] || row['Previous Workex'] || row['Prev Workex'] || '').trim();
         // strip any trailing "years" text, keep numeric value only
@@ -121,24 +119,56 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
       doj: normalizeExcelDate(row['DOJ'] ?? row['Date of Joining']),
       totalWorkex: totalWorkexRaw.replace(/\s*years?\s*/gi, '').trim(),
       skills: String(row['Skills'] || '').trim(),
-      engagement: String(row['Current Engagement'] || row['Engagement'] || '').trim(),
-      engagementStartDate: normalizeExcelDate(row['Engagement Start Date'] ?? row['Eng Start Date']),
-      engagementEndDate: normalizeExcelDate(row['Engagement End Date'] ?? row['Eng End Date']),
-      allocationPercentage: (() => {
-        const raw = String(row['Allocation %'] || row['Allocation Percentage'] || '').trim().replace('%', '');
-        if (!raw) return null;
-        const n = parseFloat(raw);
-        return isNaN(n) ? null : Math.min(200, Math.max(0, n));
-      })(),
-      allocationStatus: (() => {
-        const eng = String(row['Current Engagement'] || row['Engagement'] || '').trim();
-        if (eng.toLowerCase() === 'bench') return 'Available';
-        const explicitStatus = String(row['Allocation Status'] || '').trim();
-        if (explicitStatus) return explicitStatus;
-        if (eng) return 'Joined';
-        return 'Available';
-      })(),
+      engagement: '',
+      engagementStartDate: '',
+      engagementEndDate: '',
+      allocationPercentage: rowAllocationEntries.length > 0 ? totalAllocationPercentage(rowAllocationEntries) : null,
+      allocationStatus: explicitStatus, // only set if upload row had explicit Allocation Status column
+      allocationEntries: rowAllocationEntries,
+    };
+
+    const existingUploadedIndex = uploaded.findIndex((item) => item.raId.toLowerCase() === raId.toLowerCase());
+    if (existingUploadedIndex === -1) {
+      uploaded.push(parsedRow);
+      return;
+    }
+
+    const existingUploaded = uploaded[existingUploadedIndex];
+    const mergedSkills = Array.from(new Set([
+      ...(existingUploaded.skills ? existingUploaded.skills.split(',').map((value) => value.trim()).filter(Boolean) : []),
+      ...(parsedRow.skills ? parsedRow.skills.split(',').map((value) => value.trim()).filter(Boolean) : []),
+    ])).join(', ');
+    const mergedDomains = Array.from(new Set([
+      ...(existingUploaded.roleOrDomain ? existingUploaded.roleOrDomain.split(',').map((value) => value.trim()).filter(Boolean) : []),
+      ...(parsedRow.roleOrDomain ? parsedRow.roleOrDomain.split(',').map((value) => value.trim()).filter(Boolean) : []),
+    ])).join(', ');
+    const mergedEntries = ensureAllocationEntries({
+      ...existingUploaded,
+      allocationEntries: [
+        ...(existingUploaded.allocationEntries || []),
+        ...(parsedRow.allocationEntries || []),
+      ],
     });
+
+    uploaded[existingUploadedIndex] = {
+      ...existingUploaded,
+      empName: parsedRow.empName || existingUploaded.empName,
+      emailId: parsedRow.emailId || existingUploaded.emailId,
+      piwRole: parsedRow.piwRole || existingUploaded.piwRole,
+      previousWorkex: parsedRow.previousWorkex || existingUploaded.previousWorkex,
+      doj: parsedRow.doj || existingUploaded.doj,
+      totalWorkex: parsedRow.totalWorkex || existingUploaded.totalWorkex,
+      skills: mergedSkills,
+      roleOrDomain: mergedDomains,
+      engagement: '',
+      engagementStartDate: '',
+      engagementEndDate: '',
+      allocationStatus: parsedRow.allocationStatus || deriveAllocationStatus(mergedEntries, existingUploaded.allocationStatus),
+      allocationEntries: mergedEntries,
+      allocationPercentage: mergedEntries.length > 0
+        ? totalAllocationPercentage(mergedEntries)
+        : (parsedRow.allocationPercentage ?? existingUploaded.allocationPercentage ?? null),
+    };
   });
 
   const existingMap = new Map(currentResources.map(r => [r.raId.toLowerCase(), r]));
@@ -153,34 +183,50 @@ export function processResourceUploadWorksheet(worksheet: WorkSheet, currentReso
       if (u.empName) patch.empName = u.empName;
       if (u.emailId) patch.emailId = u.emailId;
       if (u.piwRole) patch.piwRole = u.piwRole;
-      if (u.roleOrDomain) patch.roleOrDomain = u.roleOrDomain;
-      if (u.previousWorkex) patch.previousWorkex = u.previousWorkex;
-      if (u.doj) patch.doj = u.doj;
-      if (u.totalWorkex) patch.totalWorkex = u.totalWorkex;
-      if (u.engagement !== undefined && u.engagement !== '') patch.engagement = u.engagement;
-      if (hasEngagementStartDateColumn) patch.engagementStartDate = u.engagementStartDate || '';
-      if (hasEngagementEndDateColumn) patch.engagementEndDate = u.engagementEndDate || '';
-      if (u.allocationPercentage != null) patch.allocationPercentage = u.allocationPercentage;
+    if (u.previousWorkex) patch.previousWorkex = u.previousWorkex;
+    if (u.doj) patch.doj = u.doj;
+    if (u.totalWorkex) patch.totalWorkex = u.totalWorkex;
+    if (u.allocationPercentage != null) patch.allocationPercentage = u.allocationPercentage;
+    if (u.allocationEntries) {
+      const mergedEntries = ensureAllocationEntries({
+        ...existing,
+        allocationEntries: [
+          ...(existing.allocationEntries || []),
+          ...u.allocationEntries,
+        ],
+      });
+      patch.allocationEntries = mergedEntries;
+      patch.allocationPercentage = totalAllocationPercentage(mergedEntries);
+    }
 
-      if (u.engagement.toLowerCase() === 'bench') {
-        patch.allocationStatus = 'Available';
-      } else if (u.allocationStatus && u.allocationStatus !== 'Available') {
-        patch.allocationStatus = u.allocationStatus;
-      } else if (u.allocationStatus === 'Available' && u.engagement.toLowerCase() === 'bench') {
-        patch.allocationStatus = 'Available';
-      }
+    const mergedForStatus = patch.allocationEntries || existing.allocationEntries || [];
+    patch.allocationStatus = u.allocationStatus || deriveAllocationStatus(mergedForStatus, existing.allocationStatus);
 
+    // Append skills (merge with existing)
       if (u.skills) {
         const existingSkills = existing.skills ? existing.skills.split(',').map((s: string) => s.trim()).filter(Boolean) : [];
         const toAdd = u.skills.split(',').map((s: string) => s.trim()).filter(Boolean);
         patch.skills = Array.from(new Set([...existingSkills, ...toAdd])).join(', ');
       }
-      existingMap.set(key, { ...existing, ...patch });
-      updCount++;
-    } else {
-      existingMap.set(key, u);
-      newCount++;
+
+    // Append roles/domains (merge with existing) ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â like skills, supports multiple
+    if (u.roleOrDomain) {
+      const existingDomains = existing.roleOrDomain
+        ? existing.roleOrDomain.split(',').map((d: string) => d.trim()).filter(Boolean)
+        : [];
+      const toAdd = u.roleOrDomain.split(',').map((d: string) => d.trim()).filter(Boolean);
+      patch.roleOrDomain = Array.from(new Set([...existingDomains, ...toAdd])).join(', ');
     }
+
+    existingMap.set(key, { ...existing, ...patch });
+    updCount++;
+  } else {
+    existingMap.set(key, {
+      ...u,
+      allocationStatus: u.allocationStatus || deriveAllocationStatus(u.allocationEntries || []),
+    });
+    newCount++;
+  }
   });
 
   const mergedRows = Array.from(existingMap.values()).map((r, i) => ({ ...r, sno: String(i + 1) }));
@@ -198,11 +244,12 @@ export function toBulkSavePayload(rows: ResourceRow[]) {
     previousWorkex: r.previousWorkex,
     doj: r.doj,
     totalWorkex: r.totalWorkex,
-    engagement: r.engagement || '',
+    engagement: '',
     skills: r.skills,
     allocationStatus: r.allocationStatus || '',
-    engagementStartDate: r.engagementStartDate || '',
-    engagementEndDate: r.engagementEndDate || '',
+    engagementStartDate: '',
+    engagementEndDate: '',
     allocationPercentage: r.allocationPercentage != null ? r.allocationPercentage : null,
+    allocationEntries: r.allocationEntries || [],
   }));
 }

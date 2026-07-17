@@ -32,6 +32,7 @@ export const DEFAULT_UNIFIED_FILTERS: UnifiedFilterState = {
 
 export interface AllocationFormState {
   engagementName: string;
+  allocationPercentage: string;
   beelineId: string;
   notes: string;
   engagementStartDate: string;

@@ -14,6 +14,7 @@ import * as resourceInsightsApi from '../api/resourceInsightsApi';
 import type { InsightEntry } from '../api/resourceInsightsApi';
 import type { ResourceRow } from '../types/resource';
 import { AllocPctTag } from '../utils/allocUtils';
+import { ensureAllocationEntries, totalAllocationPercentage } from '../utils/resourceAllocationUtils';
 
 const { Text, Title } = Typography;
 
@@ -228,19 +229,45 @@ function ResourceDetailPanel({ resource, currentUser, expanded, panelOpen, onNav
     return `${truncated} years`;
   };
 
+  const domainsList = resource.roleOrDomain
+    ? String(resource.roleOrDomain).split(/[,;|]/).map(d => d.trim()).filter(Boolean)
+    : [];
+  const allocationEntries = ensureAllocationEntries(resource);
+  const totalAllocationPct = allocationEntries.length > 0
+    ? totalAllocationPercentage(allocationEntries)
+    : (resource.allocationPercentage ?? null);
+
   const infoFields: Array<[string, string | React.ReactNode]> = [
     ['RA ID', resource.raId],
     ['Email', resource.emailId],
     ['Resource Status', resource.isActive === false ? 'Inactive' : 'Active'],
-    ['Role / Domain', resource.roleOrDomain],
+    ['Roles / Domains', domainsList.length > 0 
+      ? <Space size={4} wrap><>{domainsList.map((d, i) => <Tag key={i} color="blue" style={{ fontSize: 10 }}>{d}</Tag>)}</> </Space>
+      : '—'
+    ],
     ['Prev Workex (Yr)', fmtWorkex(resource.previousWorkex)],
     ['Date of Joining', fmtDate(resource.doj)],
     ['Total Workex (Yr)', fmtWorkex(resource.totalWorkex)],
-    ['Engagement', resource.engagement || '—'],
-    ['Eng. Start Date', fmtDate(resource.engagementStartDate || '')],
-    ['Eng. End Date', fmtDate(resource.engagementEndDate || '')],
+    ['Project Allocations', allocationEntries.length > 0
+      ? (
+        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+          {allocationEntries.map((entry, i) => (
+            <div key={`alloc-${i}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>
+                {entry.engagementName || 'Unassigned'}
+              </Tag>
+              <AllocPctTag pct={entry.allocationPercentage} />
+              <Tag style={{ fontSize: 10, margin: 0 }}>
+                {fmtDate(entry.engagementStartDate || '')} to {fmtDate(entry.engagementEndDate || '')}
+              </Tag>
+            </div>
+          ))}
+        </Space>
+      )
+      : '—'
+    ],
     ['Allocation Status', resource.allocationStatus || '—'],
-    ['Allocation %', resource.allocationPercentage != null ? <AllocPctTag pct={resource.allocationPercentage} /> : '—'],
+    ['Allocation %', totalAllocationPct != null ? <AllocPctTag pct={totalAllocationPct} /> : '—'],
     ...(resource.beelineId ? [['Beeline ID', <Tag icon={<LinkOutlined />} color="blue" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onNavigateToRequest?.(resource.beelineId!)}>{resource.beelineId}</Tag>] as [string, React.ReactNode]] : []),
     ...(resource.sowName ? [['Linked SOW', <Tag icon={<LinkOutlined />} color="green" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => onNavigateToProcess?.(resource.sowName!)}>{resource.sowName}</Tag>] as [string, React.ReactNode]] : []),
   ];

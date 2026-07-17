@@ -1,4 +1,4 @@
-# Module, File, and High-Level Functionality Overview
+﻿# Module, File, and High-Level Functionality Overview
 
 This document lists the primary modules, key files, and their high-level responsibilities.
 
@@ -24,6 +24,7 @@ This document lists the primary modules, key files, and their high-level respons
 | Finance UI-aligned alias | `src/pages/SowManagement.tsx` | Router-facing alias to align file naming with SOW workspace terminology while reusing `FinanceManagement` implementation. |
 | Booking drawer | `src/pages/finance/ProjectBookingDrawer.tsx` | Project-level booking create/edit UI and validations. |
 | Bulk booking drawer | `src/pages/finance/BulkBookingDrawer.tsx` | Bulk booking upload/edit flow with validation and save actions. |
+| SOW Resource Insights tab | `src/pages/finance/FinanceSowResourceInsightsTab.tsx` | SOW-level Resource Insights view (project/sow grouping, active/inactive status filtering, resource-name filtering, project-level PNG export, and shared resource-history timeline reuse). |
 | Booking upload utilities | `src/pages/finance/bookingUploadUtils.ts` | Booking Excel parsing, normalization, and upload-side validations. |
 | Booking export utilities | `src/pages/finance/bookingExportUtils.ts` | Booking export/template generation for single and bulk flows. |
 | Finance list/table | `src/pages/FinanceProjectTable.tsx` | Finance project tabular presentation and interactions. |
@@ -33,12 +34,12 @@ This document lists the primary modules, key files, and their high-level respons
 
 | Module Area | File | High-Level Functionality |
 |---|---|---|
-| Finance router entry | `server/routes/finance.js` | Thin passthrough — delegates to `finance/index.js`. Required by `server/index.js`. |
+| Finance router entry | `server/routes/finance.js` | Thin passthrough â€” delegates to `finance/index.js`. Required by `server/index.js`. |
 | Finance index | `server/routes/finance/index.js` | Assembles revenue, projects, and bookings sub-routers under `/api/finance`. |
-| Shared helpers | `server/routes/finance/helpers.js` | Month sort key, booking normalisation/validation, `insertBooking`, `formatBookingAuditValue`, `insertFinanceAudit`, `projectRecordName`, `auditProjectFieldChanges` — used by all sub-domain files. |
+| Shared helpers | `server/routes/finance/helpers.js` | Month sort key, booking normalisation/validation, `insertBooking`, `formatBookingAuditValue`, `insertFinanceAudit`, `projectRecordName`, `auditProjectFieldChanges` â€” used by all sub-domain files. |
 | Projects routes | `server/routes/finance/projects.js` | Finance project CRUD (`GET/POST/PUT/DELETE /projects`), bulk upsert upload, milestone-type upsert endpoint. Full audit trail and trigger evaluation. |
-| Revenue routes | `server/routes/finance/revenue.js` | `GET /month-headers` — sorted list of distinct revenue months. |
-| Bookings routes | `server/routes/finance/bookings.js` | Project bookings CRUD — single, batch, update, delete-one, delete-all-for-project, delete-all-global. Full audit trail per operation. |
+| Revenue routes | `server/routes/finance/revenue.js` | `GET /month-headers` â€” sorted list of distinct revenue months. |
+| Bookings routes | `server/routes/finance/bookings.js` | Project bookings CRUD â€” single, batch, update, delete-one, delete-all-for-project, delete-all-global. Full audit trail per operation. |
 
 ## Resource Module
 
@@ -46,15 +47,17 @@ This document lists the primary modules, key files, and their high-level respons
 |---|---|---|
 | Resource main page | `src/pages/ResourceHub.tsx` | End-to-end resource management (CRUD, filters, upload, exports, beeline links, insights integration). |
 | Resource resumes tab | `src/pages/resource/ResourceResumesTab.tsx` | Resume upload/list/download helper workflow. |
-| Resource upload utilities | `src/pages/resource/resourceUploadUtils.ts` | Resource Excel parsing, merge logic, and bulk-save payload mapping. |
-| Resource row mappers | `src/pages/resource/resourceRowMappers.ts` | Shared API-to-UI and API payload row normalization for resources. |
-| Resource intelligence | `src/pages/ResourceIntelligence.tsx` | Resource-focused analytics/intelligence main page (~1350 lines). Imports sub-modules from `resource-intelligence/`. |
+| Resource verification tab | `src/pages/resource/ResourceVerificationTab.tsx` | Resource verification grid for RA ID/name/workex validation against DOJ-derived computed workex and fixed experience buckets (`0-3`, `3-5`, `5-8`, `8-10`, `10+`), with mismatch highlighting. |
+| Resource upload utilities | `src/pages/resource/resourceUploadUtils.ts` | Resource Excel parsing, merge logic, and bulk-save payload mapping. Supports repeated RA IDs in one upload to load multiple project allocations for the same resource, merges allocation rows, preserves 0â€“200% per-project allocation values, and keeps imported resources in **Available** status unless an explicit pipeline/project status is supplied. **Implements append logic for multi-domain support**: during bulk update (upsert), new domains/roles are appended to existing ones (like skills) instead of replacing them; duplicates removed via Set. |
+| Resource row mappers | `src/pages/resource/resourceRowMappers.ts` | Shared API-to-UI and API payload row normalization for resources, including parsing stored `allocation_entries` JSON into combined allocation totals, deduplicating repeated engagement names case-insensitively (space-insensitive), and deriving legacy summary fields from multi-allocation data. |
+| Resource verification utilities | `src/pages/resource/resourceVerificationUtils.ts` | Shared workex parsing/truncation (no rounding), DOJ-to-years computation, and fixed experience-bucket resolution helpers for verification flows. |
+| Resource intelligence | `src/pages/ResourceIntelligence.tsx` | Resource-focused analytics/intelligence main page (~1350 lines). Imports sub-modules from `resource-intelligence/` and reuses `components/ResourceOverviewCharts.tsx` for All Resources charts (including comma-split, case-insensitive Roles/Domains aggregation and `Unassigned` fallback for blank values). Displays multi-project allocation breakdown and combined utilization per resource. |
 | RI shared constants/types | `src/pages/resource-intelligence/resourceIntelligenceTypes.ts` | SECTION_META, SectionKey, STATUS_COLOR, PRIORITY_COLOR, COMMENT_TAG_COLORS, fmtDate, fmtRelative, cleanVal, resolveCommentSection. Used by all RI sub-components and the main page. |
-| RI entry card | `src/pages/resource-intelligence/EntryCard.tsx` | Card component for a single insight entry — shows tags, status, priority, author, actions. |
+| RI entry card | `src/pages/resource-intelligence/EntryCard.tsx` | Card component for a single insight entry â€” shows tags, status, priority, author, actions. |
 | RI entry modal | `src/pages/resource-intelligence/EntryModal.tsx` | Add/Edit modal for insight entries with section-specific form fields. |
 | RI comment mini card | `src/pages/resource-intelligence/CommentMiniCard.tsx` | Compact card for linked resource comments mapped into section tabs. |
 | RI section tab | `src/pages/resource-intelligence/SectionTab.tsx` | Full section tab (Interactions/Escalations/Career/Plans) with CRUD, filters, and comment linking. |
-| Resource forecasting | `src/pages/ResourceForecasting.tsx` | Allocation/availability forecasting and exports. |
+| Resource forecasting | `src/pages/ResourceForecasting.tsx` | Allocation/availability forecasting and exports. Uses combined multi-project allocation totals per resource; classifies resources as **Overutilized** when total allocation >100%, **Fully Allocated** at 100%, and **Underutilized** below 100%. |
 
 ## Client Requests Module
 
@@ -102,15 +105,31 @@ Redux hooks are the preferred integration pattern for cross-page data sharing.
 | Styled Excel export utility | `src/utils/styledExcelExport.ts` | Shared styled-sheet generation and `getCurrentDateStamp()` date suffix helper for exports. |
 | Generic XLSX export utility | `src/utils/xlsxExport.ts` | Shared plain XLSX write helpers: `writeJsonSheetFile`, `writeAoaSheetFile`, `writeMultiSheetFile` for JSON/AOA template/export generation. |
 | Chart PNG export utility | `src/utils/exportChartAsPng.ts` | Shared html2canvas wrappers: `exportChartAsPng` (direct download), `captureElementAsPng` (data URL for PDF), `captureElementCanvas` (raw canvas for PDF aspect-ratio), `buildPngFilename`. Replaces 11 identical inline boilerplate blocks. |
-| Typed Redux hooks | `src/store/hooks.ts` | `useAppSelector` / `useAppDispatch` — required typed wrappers for all Redux store access. |
+| Typed Redux hooks | `src/store/hooks.ts` | `useAppSelector` / `useAppDispatch` â€” required typed wrappers for all Redux store access. |
 
-## Other Core Functional Pages
+## API Layer
+
+| Module Area | File | High-Level Functionality |
+|---|---|---|
+| Resource API | `src/api/resourceApi.ts` | All resource CRUD, bulk save, comments, Beeline links, process links. Uses relative `/api/resources` base path. Typed with `ResourcePayload` interface; all catch blocks use `catch (e: unknown)`. |
+| Config API | `src/api/configApi.ts` | Config types and items CRUD, app values CRUD. Exports `ConfigType`, `ConfigItem`, `AppValue`, `ApiOk` interfaces. All functions are fully typed â€” no `any` return types. |
+| Template API | `src/api/templateApi.ts` | Template upload/download/delete with SQLite-primary, localStorage-fallback dual mode. Uses relative `/api/templates` path (no hardcoded localhost). Exports `Template` interface; all functions typed. |
+| PIW API | `src/api/piwApi.ts` | PIW Excel generation via server-side ExcelJS. Uses relative `/api/piwGeneration/generate` (no hardcoded localhost). Clean async/await with typed error handling. |
+| SOW API | `src/api/sowApi.ts` | SOW document generation via server. Uses relative `/api/sowGeneration/generate` (no hardcoded localhost). Response error typed as `{ error?: string }`. |
+| Auth API | `src/api/authApi.ts` | Login, logout, and user list operations against `/api/auth`. |
+| Notification API | `src/api/notificationApi.ts` | Notification read/unread/history management. |
+| Notification Rules API | `src/api/notificationRulesApi.ts` | Notification rules CRUD. |
+| Process API | `src/api/processApi.ts` | Internal process (SOW/PIW tracking) server operations. |
+| Request API | `src/api/requestApi.ts` | Client request CRUD and status updates. |
+
+> **Security note:** All API files use relative paths (`/api/...`). The Vite dev server proxy (`vite.config.ts`) forwards these to `http://localhost:3001`. In production, serve both frontend and backend from the same origin, or configure a reverse proxy.
+
 
 | Module Area | File | High-Level Functionality |
 |---|---|---|
 | App settings | `src/pages/AppSettings.tsx` | Configuration management for app values, notification triggers, templates, and data management. Now contains 5 tabs: App Notifications, Templates, Configs, App Values, **Manage Data**. |
 | App settings export utils | `src/pages/app-settings/appSettingsExportUtils.ts` | Shared App Settings Excel template/export builders for configuration types and app values. |
-| Manage Data tab | `src/pages/app-settings/ManageDataTab.tsx` | Centralised data management hub — page-wise backup (Excel export) and delete-all operations for all modules (Finance, Invoice, Resources, Requests, Process, Stakeholders, App Settings). Uses double-confirm (type DELETE). Permission-gated per page ID. Reuses all existing API clients. |
+| Manage Data tab | `src/pages/app-settings/ManageDataTab.tsx` | Centralised data management hub â€” page-wise backup (Excel export) and delete-all operations for all modules (Finance, Invoice, Resources, Requests, Process, Stakeholders, App Settings, Notifications). Uses double-confirm (type DELETE). Permission-gated per page ID. Reuses all existing API clients. |
 | Engagement mapping | `src/pages/EngagementMapping.tsx` | Engagement-resource mapping and deployment updates. |
 | Invoice management | `src/pages/InvoiceManagement.tsx` | Invoice data management, upload/edit, and exports. |
 | Stakeholder network | `src/pages/stakeholders/StakeholderNetwork.tsx` | Stakeholder structure management and relationship-network operations. |
@@ -120,3 +139,4 @@ Redux hooks are the preferred integration pattern for cross-page data sharing.
 | Account summary | `src/pages/AccountSummary.tsx` | Account-level summary dashboard. |
 | Login page | `src/pages/LoginPage.tsx` | Application authentication entry UI. |
 | Rate card | `src/pages/RateCard.tsx` | Rate band/reference management and display. |
+

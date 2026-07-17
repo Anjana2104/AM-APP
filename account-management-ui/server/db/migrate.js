@@ -93,6 +93,8 @@ async function migrate() {
       engagement       TEXT DEFAULT "",
       skills           TEXT DEFAULT "",
       allocation_status TEXT DEFAULT "",
+      allocation_percentage REAL DEFAULT NULL,
+      allocation_entries TEXT DEFAULT "[]",
       created_at       TEXT,
       updated_at       TEXT
     )
@@ -106,6 +108,8 @@ async function migrate() {
   try { db.run(`ALTER TABLE resources ADD COLUMN engagement_end_date TEXT DEFAULT ''`); } catch (_) {}
   // Add process_id to link a resource to a process (idempotent)
   try { db.run(`ALTER TABLE resources ADD COLUMN process_id INTEGER DEFAULT NULL`); } catch (_) {}
+  try { db.run(`ALTER TABLE resources ADD COLUMN allocation_percentage REAL DEFAULT NULL`); } catch (_) {}
+  try { db.run(`ALTER TABLE resources ADD COLUMN allocation_entries TEXT DEFAULT '[]'`); } catch (_) {}
   // Backfill: active resources → 'Joined', bench → 'Available'
   db.run(`UPDATE resources SET allocation_status = 'Joined' WHERE (allocation_status IS NULL OR allocation_status = '') AND LOWER(TRIM(engagement)) != 'bench' AND engagement != ''`);
   db.run(`UPDATE resources SET allocation_status = 'Available' WHERE (allocation_status IS NULL OR allocation_status = '') AND (LOWER(TRIM(engagement)) = 'bench' OR engagement = '')`);
@@ -141,6 +145,8 @@ async function migrate() {
   try { db.run(`ALTER TABLE ra_process ADD COLUMN step_completed_at TEXT DEFAULT '{}'`); } catch (_) {}
   // Unique partial index for PIW name (non-empty) — prevents duplicate PIW names
   try { db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ra_process_piw_unique ON ra_process(piw) WHERE piw != '' AND piw IS NOT NULL`); } catch (_) {}
+  // Link internal process to a SOW details record (finance_projects) — idempotent
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN finance_project_id INTEGER DEFAULT NULL`); } catch (_) {}
 
   db.run(`
     CREATE TABLE IF NOT EXISTS app_config_types (

@@ -40,6 +40,17 @@ export async function getProcessResourceHistory(processId: number): Promise<Audi
   }
 }
 
+export async function getProcessCombinedHistory(processId: number): Promise<AuditEntry[]> {
+  try {
+    const res = await fetch(`${BASE}/process-combined/${processId}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.entries || [];
+  } catch {
+    return [];
+  }
+}
+
 export async function addAuditLog(entry: {
   module: string;
   record_id: number;

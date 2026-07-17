@@ -7,7 +7,7 @@
 
 ## Overview
 
-The App Settings module is the administrative control panel for the EAM application. It manages all app-wide settings: dropdown option lists, app key-value settings, notification trigger rules, and document templates used across every other module.
+The App Settings module is the administrative control panel for the EAM application. It manages all app-wide settings: notification trigger rules, document templates, config dropdown lists, app key-value settings, and centralized module backup/delete operations in Manage Data.
 
 ---
 
@@ -112,21 +112,21 @@ Document templates (PIW workbooks, SOW Word documents, holiday calendars) are st
 
 ---
 
-## Dropdowns & Values Tab
+## Configs Tab
 
-This combined tab has two sub-views toggled by the **Segmented control** at the top: **Dropdown Types** and **App Values**.
+The **Configs** tab is used to manage dropdown types and their selectable options used across modules.
 
 ---
 
-### Dropdown Types
+### Dropdown Types (inside Configs)
 
-> **Screenshot:** Dropdowns & Values — Dropdown Types view with expandable type list
+> **Screenshot:** Configs tab — Dropdown Types view with expandable type list
 
 Dropdown Types control what options appear in filter dropdowns, form selects, and status pickers across all modules.
 
 #### Step-by-Step: Adding a New Option
 
-1. Select **Dropdown Types** in the segmented control.
+1. Open the **Configs** tab.
 2. Click on a type row in the left panel to select it.
 3. Click **+ Add** in the right panel (option list).
 4. Enter the option label, value, and colour.
@@ -134,7 +134,7 @@ Dropdown Types control what options appear in filter dropdowns, form selects, an
 
 #### Step-by-Step: Reordering Options
 
-1. Select the type in the left panel.
+1. Open the **Configs** tab and select the type in the left panel.
 2. Drag any option row using the **drag handle** (⠿) on the left.
 3. Drop it in the desired position — order is saved automatically.
 
@@ -151,18 +151,18 @@ Types marked as **Built-in** cannot be deleted. Their options can still be edite
 
 ---
 
-### App Values
+## App Values Tab
 
-App Values are named key-value settings referenced by specific application features (e.g., fiscal year start, default rate).
+The **App Values** tab manages named key-value settings referenced by application features.
 
-#### Step-by-Step: Adding an App Value
+### Step-by-Step: Adding an App Value
 
-1. Select **App Values** in the segmented control.
+1. Click the **App Values** tab.
 2. Click **+ New** (top right).
 3. Fill in the **Key**, **Value**, and optional **Description** in the popup.
 4. Click **Save**.
 
-#### Step-by-Step: Editing or Deleting an App Value
+### Step-by-Step: Editing or Deleting an App Value
 
 - Click the **Edit** (✏️) icon on a value row to modify it.
 - Click the **⋯** menu → **Delete** to remove it.
@@ -202,6 +202,8 @@ Each module is shown as a card with two actions:
 | Internal Process | Process Comments | All process comments |
 | Stakeholders | Client Stakeholder Hierarchy | All client stakeholder network records |
 | Stakeholders | RA Stakeholder Hierarchy | All RA stakeholder network records |
+| App Notifications | Notifications History | Notifications visible to current user session |
+| App Notifications | Notification Triggers | All configured notification automation triggers |
 | App Settings | App Configurations (Dropdown Types) | All custom dropdown types and their values |
 | App Settings | App Values (Key-Value Store) | All app key-value settings |
 

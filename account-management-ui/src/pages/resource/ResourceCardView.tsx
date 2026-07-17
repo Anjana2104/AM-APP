@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { Button, Dropdown, Tag, Typography } from 'antd';
 import { CheckCircleOutlined, EditOutlined, EyeOutlined, LinkOutlined, MoreOutlined, StopOutlined } from '@ant-design/icons';
 import type { ResourceRow } from '../../types/resource';
@@ -36,7 +36,7 @@ export const ResourceCardView: React.FC<ResourceCardViewProps> = ({
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
         {filteredResources.map((resource) => {
           if (!resource) return null;
-          const isBench = resource.engagement === 'Bench';
+          const isAvailable = !resource.allocationStatus || resource.allocationStatus === 'Available';
           const isInactive = resource.isActive === false;
           const statusColor = resource.allocationStatus ? (CARD_ALLOCATION_STATUS_COLOR_MAP[resource.allocationStatus] || '#8c8c8c') : '#8c8c8c';
 
@@ -49,7 +49,7 @@ export const ResourceCardView: React.FC<ResourceCardViewProps> = ({
                 padding: '10px 10px 8px',
                 boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
                 border: isInactive ? '1px solid #ffccc7' : '1px solid #f0f0f0',
-                borderLeft: isInactive ? '3px solid #ff4d4f' : (isBench ? '3px solid #faad14' : '3px solid #e8eaf0'),
+                borderLeft: isInactive ? '3px solid #ff4d4f' : (isAvailable ? '3px solid #faad14' : '3px solid #e8eaf0'),
                 cursor: 'pointer',
               }}
               onClick={(event) => {
@@ -91,11 +91,6 @@ export const ResourceCardView: React.FC<ResourceCardViewProps> = ({
                     const display = isNaN(num) ? String(resource.totalWorkex) : `${Math.trunc(num * 100) / 100} years`;
                     return <Text type="secondary" style={{ fontSize: '10px' }}>{display} exp</Text>;
                   })()}
-                {resource.engagement && resource.engagement !== 'undefined' && (
-                  <Text type="secondary" style={{ fontSize: '10px', borderLeft: resource.totalWorkex ? '1px solid #d9d9d9' : 'none', paddingLeft: resource.totalWorkex ? 8 : 0 }}>
-                    {String(resource.engagement)}
-                  </Text>
-                )}
               </div>
               {resource.beelineId && (
                 <div style={{ marginTop: 4 }}>
@@ -124,3 +119,5 @@ export const ResourceCardView: React.FC<ResourceCardViewProps> = ({
     </div>
   </div>
 );
+
+

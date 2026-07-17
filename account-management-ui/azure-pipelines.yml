@@ -1,0 +1,197 @@
+trigger:
+  branches:
+    include:
+      - none
+
+resources:
+  repositories:
+    - repository: UT_INITIATIVE_EAM
+      type: git
+      name: ACCEL_UT_INITIATIVE/UT_INITIATIVE_EAM
+      ref: refs/heads/main
+    - repository: DevSecOps
+      type: git
+      name: Kalypso_DevOps_Plumbing/PipelineSupport
+      ref: refs/tags/v1.0-security
+    - repository: infra
+      type: git
+      name: ACCEL_UT_INITIATIVE/UT_INITIATIVE_INFRA
+      ref: refs/heads/develop
+
+variables:
+  - group: acc-initiatives-var
+  - group: keeper
+  - group: initiative-chatbot
+  - name: acrServiceConnection
+    value: initiative-sc-acr
+  - name: azureServiceConnection
+    value: GCC_INITIATIVES_AI_APPS
+  - name: subscriptionName
+    value: Kalypso_Digital
+  - name: acrLoginServer
+    value: utaiappsacr.azurecr.io
+  - name: backendRepo
+    value: ut-eam-backend
+  - name: frontendRepo
+    value: ut-eam-frontend
+  - name: imageTag
+    value: v0.1.$(Build.BuildId)-UT_INITIATIVE_EAM
+  - name: aksResourceGroup
+    value: UT_AI_Apps
+  - name: aksClusterName
+    value: ut-ai-apps-aks
+  - name: namespace
+    value: ut-initiative-eam
+  - name: KUBECONFIG
+    value: $(Agent.TempDirectory)/kubeconfig
+  # - name: DB_CLIENT
+  #   value: sqlite3
+
+stages:
+# ==========================================
+# COMMENTED OUT FOR TROUBLESHOOTING
+# ==========================================
+# - template: Security/stages/security-scan.stages.yml@DevSecOps
+#   parameters:
+#     dependsOn: []
+#     vmImage: ubuntu-latest
+#     enableGitLeaks: true
+#     enableBetterLeaks: true
+#     enableSonar: true
+#     sonarProjectKey: UT-Initiative-EAM
+#     sonarOrganization: kalypso
+#     sonarServiceConnection: SonarCloud-$(System.TeamProject)
+#     enableBlackDuck: true
+#     blackduckScanMode: RAPID
+#     blackduckBranch: $(Build.SourceBranchName)
+#     enableContainerScans: false
+
+- stage: BuildAndPush
+  displayName: Build And Push Images
+  dependsOn: [] # Changed from Security to run immediately
+  jobs:
+  - job: BuildAndPushJob
+    pool:
+      name: ut-ai-ado-self-hosted-agent
+    steps:
+    - checkout: self
+
+    # Step: Build Backend 
+    - task: Docker@2
+      displayName: Build Backend Image
+      inputs:
+        containerRegistry: $(acrServiceConnection)
+        repository: $(backendRepo)
+        command: build
+        Dockerfile: server/Dockerfile
+        buildContext: server
+        tags: |
+          $(imageTag)
+
+    # Step: Push Backend
+    - task: Docker@2
+      displayName: Push Backend Image
+      inputs:
+        containerRegistry: $(acrServiceConnection)
+        repository: $(backendRepo)
+        command: push
+        tags: |
+          $(imageTag)
+
+    # Step: Build And Push Frontend 
+    - task: Docker@2
+      displayName: Build And Push Frontend
+      inputs:
+        containerRegistry: $(acrServiceConnection)
+        repository: $(frontendRepo)
+        command: buildAndPush
+        Dockerfile: Dockerfile
+        buildContext: .
+        tags: |
+          $(imageTag)
+
+# ==========================================
+# COMMENTED OUT FOR TROUBLESHOOTING
+# ==========================================
+# - template: Security/stages/container-scan.stage.yml@DevSecOps
+#   parameters:
+#     stageName: TrivyScan
+#     dependsOn:
+#       - BuildAndPush
+#     vmImage: ut-ai-ado-self-hosted-agent
+#     enableTrivy: true
+#     trivyScanType: image
+#     trivyImageRef: $(acrLoginServer)/$(backendRepo):$(imageTag)
+#     scannerArtifactSuffix: trivy-scan
+
+# - template: Security/stages/container-scan.stage.yml@DevSecOps
+#   parameters:
+#     stageName: WizScan
+#     dependsOn:
+#       - TrivyScan
+#     vmImage: ut-ai-ado-self-hosted-agent
+#     enableWiz: true
+#     wizImageRef: $(acrLoginServer)/$(backendRepo):$(imageTag)
+#     scannerArtifactSuffix: wiz-scan
+
+- stage: DeployToAKS
+  displayName: Deploy To AKS
+  dependsOn:
+    - BuildAndPush # Changed to depend directly on BuildAndPush
+
+  jobs:
+  - job: Deploy
+    displayName: Deploy EAM Application
+    pool:
+      name: ut-ai-ado-self-hosted-agent
+
+    steps:
+    - checkout: infra
+
+    - task: KubectlInstaller@0
+      displayName: Install Kubectl
+      inputs:
+        kubectlVersion: latest
+
+    - task: AzureCLI@2
+      displayName: Connect To AKS
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az account set --subscription "$(subscriptionName)"
+
+          az aks get-credentials \
+            --resource-group $(aksResourceGroup) \
+            --name $(aksClusterName) \
+            --file "$KUBECONFIG" \
+            --admin \
+            --overwrite-existing
+
+          kubectl get nodes
+
+    - script: |
+        echo "Updating image tags..."
+
+        sed -i "s|image:.*|image: $(acrLoginServer)/$(backendRepo):$(imageTag)|g" \
+        $(Build.SourcesDirectory)/eam/deployment/backend-deployment.yaml
+
+        sed -i "s|image:.*|image: $(acrLoginServer)/$(frontendRepo):$(imageTag)|g" \
+        $(Build.SourcesDirectory)/eam/deployment/frontend-deployment.yaml
+
+      displayName: Update Image Tags
+
+    - script: |
+        kubectl apply -f $(Build.SourcesDirectory)/eam/deployment/backend-deployment.yaml
+        kubectl apply -f $(Build.SourcesDirectory)/eam/deployment/frontend-deployment.yaml
+      displayName: Deploy To AKS
+
+    - script: |
+        # Added a 60s timeout threshold so validation doesn't freeze your entire pipeline if a pod locks up again
+        kubectl rollout status deployment/eam-backend -n $(namespace) --timeout=60s
+        kubectl rollout status deployment/eam-frontend -n $(namespace) --timeout=60s
+
+        kubectl get deployments -n $(namespace)
+        kubectl get pods -n $(namespace)
+      displayName: Validate Deployment

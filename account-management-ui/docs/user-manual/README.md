@@ -31,7 +31,7 @@ This user manual provides step-by-step instructions for all screens and features
 | 6 | [Client Requests](./05-client-requests.md) | Beeline requests, filters, insights, detail panel |
 | 7 | [Resource Hub](./06-resource-hub.md) | Master resource list, bulk import, detail drawer |
 | 8 | [Resource Intelligence](./07-resource-intelligence.md) | Per-resource analytics, PDF export |
-| 9 | [App Settings](./08-configuration.md) | Dropdown values, notification triggers, templates, app values |
+| 9 | [App Settings](./08-configuration.md) | App Notifications, Templates, Configs, App Values, and Manage Data backup/delete controls (including notifications) |
 | 10 | [User Access Control](./09-user-access-control.md) | Users, roles, permissions, user groups |
 | 11 | [Notifications](./10-notifications.md) | Bell icon, notification triggers, notification snooze |
 

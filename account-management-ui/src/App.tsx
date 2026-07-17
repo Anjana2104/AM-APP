@@ -28,6 +28,7 @@ import {
 } from '@ant-design/icons';
 import type { ResourceRow } from './pages/ResourceHub';
 import * as resourceApi from './api/resourceApi';
+import type { ResourcePayload } from './api/resourceApi';
 import { mapResourceApiRowToResourceRow } from './pages/resource/resourceRowMappers';
 import { useAppDispatch, useAppSelector } from './store/hooks';
 import { setResources as setResourcesAction } from './store/resourcesSlice';
@@ -115,7 +116,7 @@ export default function App() {
   // Load resources on mount so EngagementMapping and ResourceInsights work without visiting Resource Hub first
   useEffect(() => {
     resourceApi.getResources().then(({ resources: rows }) => {
-      const mapped: ResourceRow[] = rows.map((r: any, i: number) => mapResourceApiRowToResourceRow(r, i));
+      const mapped: ResourceRow[] = rows.map((r: ResourcePayload, i: number) => mapResourceApiRowToResourceRow(r, i));
       dispatch(setResourcesAction(mapped));
     }).catch(() => { /* graceful fallback */ });
   }, [dispatch]);
@@ -212,7 +213,7 @@ export default function App() {
         case 'resources_info':        return <ResourceInformation onResourcesChange={(updatedResources) => dispatch(setResourcesAction(updatedResources))} initialRoleFilter={resourceInfoRoleFilter} initialRaIdFilter={resourceInfoRaIdFilter} initialFilterType={resourceInfoFilterType} initialFilterValue={resourceInfoFilterValue} onFilterApplied={() => { dispatch(clearResourceInfoFilters()); }} onNavigateToRequest={(beelineId) => { dispatch(setRequestsBeelineFilterAction(beelineId)); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} onNavigateToProcess={(sow) => { dispatch(setInitialProcessSowAction(sow)); navigateTo('clientmgmt_connects', 'clientmgmt'); }} />;
         case 'resources_utilization': return <EngagementMapping onNavigate={(page, roleFilter) => { dispatch(setResourceInfoRoleFilterAction(roleFilter)); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateToRequest={(beelineId) => { dispatch(setRequestsBeelineFilterAction(beelineId)); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToInsights={() => navigateTo('resources_insights', PAGE_SECTION_MAP['resources_insights'])} />;
         case 'resources_insights':    return <ResourceInsights onNavigate={(page, raId) => { if (raId) dispatch(setResourceInfoRaIdFilterAction(raId)); navigateTo(page as EAMPage, PAGE_SECTION_MAP[page as EAMPage]); }} onNavigateWithFilter={(type, value) => { dispatch(setResourceInfoFilterTypeAction(type)); dispatch(setResourceInfoFilterValueAction(value)); navigateTo('resources_info', PAGE_SECTION_MAP['resources_info']); }} onNavigateToRequest={(beelineId) => { dispatch(setRequestsBeelineFilterAction(beelineId)); navigateTo('clientmgmt_requests', 'clientmgmt'); }} onNavigateToProcess={(sow) => { dispatch(setInitialProcessSowAction(sow)); navigateTo('clientmgmt_connects', 'clientmgmt'); }} />;
-        case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} initialFilters={requestsInitialFilters as Record<string, any> | undefined} onFilterApplied={() => { dispatch(clearRequestsNavigation()); }} />;
+        case 'clientmgmt_requests':   return <RequestManagement initialBeelineFilter={requestsBeelineFilter} initialFilters={requestsInitialFilters as Record<string, string> | undefined} onFilterApplied={() => { dispatch(clearRequestsNavigation()); }} />;
         case 'clientmgmt_connects':   return <InternalProcess initialSow={initialProcessSow} />;
         case 'information_ratecard':      return <RateCard />;
         case 'information_teamhierarchy': return <StakeholderNetwork />;

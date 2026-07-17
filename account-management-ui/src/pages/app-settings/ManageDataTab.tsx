@@ -36,6 +36,8 @@ import * as resourceApi from '../../api/resourceApi';
 import * as requestApi from '../../api/requestApi';
 import * as processApi from '../../api/processApi';
 import * as configApi from '../../api/configApi';
+import * as notificationApi from '../../api/notificationApi';
+import * as notificationTriggerApi from '../../api/notificationTriggerApi';
 import * as stakeholderApi from '../../api/stakeholderNetworkApi';
 import { clearModuleArtifact } from '../../utils/moduleCleanupApi';
 import { writeJsonSheetFile } from '../../utils/xlsxExport';
@@ -157,6 +159,24 @@ export function ManageDataTab() {
   });
 
   const changedBy = currentUser?.username ?? 'system';
+
+  const fetchAllNotificationsForCurrentUser = async () => {
+    const userId = currentUser?.id;
+    if (!userId) {
+      throw new Error('Current user session is missing. Please re-login and retry notifications backup.');
+    }
+    const pageSize = 100;
+    let offset = 0;
+    const allRows: Record<string, unknown>[] = [];
+    while (true) {
+      const page = await notificationApi.getNotifications(userId, { limit: pageSize, offset, unreadOnly: false });
+      const rows = (page.notifications || []) as unknown as Record<string, unknown>[];
+      allRows.push(...rows);
+      if (!page.has_more || rows.length === 0) break;
+      offset += pageSize;
+    }
+    return allRows;
+  };
 
   // ── Section definitions ────────────────────────────────────────────────────
 
@@ -336,6 +356,54 @@ export function ManageDataTab() {
       },
     },
     {
+      key: 'notifications-history',
+      category: 'App Notifications',
+      categoryColor: 'magenta',
+      label: 'Notifications History',
+      description: 'All notifications visible to the current user session',
+      pageId: 'configuration',
+      fetchForBackup: fetchAllNotificationsForCurrentUser,
+      onDelete: async () => {
+        const userId = currentUser?.id;
+        if (!userId) throw new Error('Current user session is missing. Please re-login and retry.');
+        const rows = await fetchAllNotificationsForCurrentUser();
+        for (const row of rows) {
+          const id = Number(row.id || 0);
+          if (!id) continue;
+          const result = await notificationApi.deleteNotification(id);
+          if (!result.ok) {
+            console.error('[ManageDataTab] Failed to delete notification', { id, error: result.error });
+            return false;
+          }
+        }
+        return true;
+      },
+      deleteLabel: 'Delete Visible Notifications',
+    },
+    {
+      key: 'notifications-triggers',
+      category: 'App Notifications',
+      categoryColor: 'magenta',
+      label: 'Notification Triggers',
+      description: 'All configured notification automation triggers',
+      pageId: 'configuration',
+      fetchForBackup: async () => {
+        const triggers = await notificationTriggerApi.getNotificationTriggers();
+        return triggers as unknown as Record<string, unknown>[];
+      },
+      onDelete: async () => {
+        const triggers = await notificationTriggerApi.getNotificationTriggers();
+        for (const trigger of triggers) {
+          const result = await notificationTriggerApi.deleteNotificationTrigger(trigger.id);
+          if (!result.ok) {
+            console.error('[ManageDataTab] Failed to delete notification trigger', { id: trigger.id, error: result.error });
+            return false;
+          }
+        }
+        return true;
+      },
+    },
+    {
       key: 'config-types',
       category: 'App Settings',
       categoryColor: 'default',
@@ -374,14 +442,12 @@ export function ManageDataTab() {
   const handleBackup = async (section: DataSection) => {
     const key = `backup-${section.key}`;
     setLoadingKey(key);
-    console.info(`[ManageDataTab] Starting backup for: ${section.label}`);
     try {
       const rows = await section.fetchForBackup();
       const safeRows = rows.length > 0 ? rows : [{ note: 'No data found' }];
       const fileName = `backup_${section.key}_${new Date().toISOString().slice(0, 10)}.xlsx`;
       writeJsonSheetFile(XLSX, safeRows, section.label.slice(0, 31), fileName);
       message.success(`Backup downloaded: ${fileName}`);
-      console.info(`[ManageDataTab] Backup complete for: ${section.label}, rows: ${rows.length}`);
     } catch (error) {
       console.error(`[ManageDataTab] Backup failed for: ${section.label}`, error);
       message.error(`Backup failed for "${section.label}". Check the console for details.`);
@@ -403,12 +469,10 @@ export function ManageDataTab() {
     if (!section) return;
     const key = `delete-${section.key}`;
     setLoadingKey(key);
-    console.info(`[ManageDataTab] Starting delete for: ${section.label}, by: ${changedBy}`);
     try {
       const ok = await section.onDelete(changedBy);
       if (ok) {
         message.success(`All "${section.label}" data deleted successfully`);
-        console.info(`[ManageDataTab] Delete complete for: ${section.label}`);
       } else {
         message.error(`Failed to delete "${section.label}" data. Server returned failure.`);
         console.error(`[ManageDataTab] Delete returned false for: ${section.label}`);

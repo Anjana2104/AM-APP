@@ -1,7 +1,7 @@
 # Code Guide (Retired from UI)
 
 **Status:** Removed from active UI navigation  
-**Current management path:** App Settings → Dropdown Values (`type_id = code_guide`)
+**Current management path:** App Settings → Configs (`type_id = code_guide`)
 
 ---
 

@@ -4,7 +4,7 @@ const express = require("express");
 const router = express.Router();
 const { getDb } = require("../../db/connection");
 const logger = require("../../utils/logger");
-const { updateOneWithAudit } = require("./helpers");
+const { inferAllocationEntries, totalAllocationFromEntries, resolveAllocationStatus, updateOneWithAudit } = require("./helpers");
 
 // GET /api/resources
 router.get("/", async (req, res) => {
@@ -41,32 +41,27 @@ router.post("/bulk", async (req, res) => {
       const existing = db.get("SELECT * FROM resources WHERE LOWER(ra_id) = LOWER(?)", [raId]);
 
       if (existing) {
-        const newEng = (r.engagement || "").toLowerCase().trim();
-        let allocStatus;
-        if (r.allocationStatus !== undefined) {
-          allocStatus = r.allocationStatus;
-        } else if (newEng === "bench") {
-          allocStatus = "Available";
-        } else {
-          allocStatus = existing.allocation_status || "";
-        }
+        const allocationEntries = inferAllocationEntries(r, existing);
+        const totalAllocation = totalAllocationFromEntries(
+          allocationEntries,
+          r.allocationPercentage !== undefined ? r.allocationPercentage : existing.allocation_percentage,
+        );
+        const allocStatus = resolveAllocationStatus(r, existing.allocation_status || '');
         db.run(
           `UPDATE resources SET sno=?, emp_name=?, email_id=?, piw_role=?, role_or_domain=?,
            previous_workex=?, doj=?, total_workex=?, engagement=?, skills=?, allocation_status=?,
-           skill_type=?, engagement_start_date=?, engagement_end_date=?, allocation_percentage=?,
+           skill_type=?, engagement_start_date=?, engagement_end_date=?, allocation_percentage=?, allocation_entries=?,
            updated_at=? WHERE id=?`,
           [r.sno || existing.sno, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
            r.totalWorkex || "", r.engagement || "", r.skills || "",
            allocStatus, r.skillType || "", r.engagementStartDate || "", r.engagementEndDate || "",
-           r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : (existing.allocation_percentage ?? null),
+           totalAllocation, JSON.stringify(allocationEntries),
            ts, existing.id]
         );
         // Audit: log changed fields
         const recordName = `${raId} - ${r.empName || existing.emp_name}`;
-        const newAllocPct = r.allocationPercentage !== undefined
-          ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage))
-          : (existing.allocation_percentage ?? null);
+        const newAllocPct = totalAllocation;
         const trackFields = {
           'Employee Name':        [existing.emp_name || '', r.empName || ''],
           'Email':                [existing.email_id || '', r.emailId || ''],
@@ -84,6 +79,7 @@ router.post("/bulk", async (req, res) => {
             existing.allocation_percentage != null ? String(existing.allocation_percentage) : '',
             newAllocPct != null ? String(newAllocPct) : '',
           ],
+          'Allocation Entries':   [existing.allocation_entries || '[]', JSON.stringify(allocationEntries)],
         };
         for (const [label, [oldVal, newVal]] of Object.entries(trackFields)) {
           if (String(oldVal) !== String(newVal)) {
@@ -98,18 +94,18 @@ router.post("/bulk", async (req, res) => {
       } else {
         const maxRow = db.get("SELECT MAX(sno) as m FROM resources");
         const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
-        const engLower = (r.engagement || "").toLowerCase().trim();
-        const defaultAllocStatus = r.allocationStatus !== undefined ? r.allocationStatus
-          : (engLower === 'bench' || engLower === '' ? 'Available' : 'Joined');
+        const allocationEntries = inferAllocationEntries(r, null);
+        const totalAllocation = totalAllocationFromEntries(allocationEntries, r.allocationPercentage);
+        const defaultAllocStatus = resolveAllocationStatus(r, '');
         db.run(
           `INSERT INTO resources (sno, ra_id, emp_name, email_id, piw_role, role_or_domain,
            previous_workex, doj, total_workex, engagement, skills, allocation_status,
-           skill_type, engagement_start_date, engagement_end_date, allocation_percentage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           skill_type, engagement_start_date, engagement_end_date, allocation_percentage, allocation_entries) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [r.sno || sno, raId, r.empName || "", r.emailId || "", r.piwRole || "",
            r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
            r.totalWorkex || "", r.engagement || "", r.skills || "", defaultAllocStatus,
            r.skillType || "", r.engagementStartDate || "", r.engagementEndDate || "",
-           r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : null]
+           totalAllocation, JSON.stringify(allocationEntries)]
         );
         const newId = db.lastId ? db.lastId() : null;
         const recordName = `${raId} - ${r.empName || ''}`;
@@ -139,18 +135,18 @@ router.post("/", async (req, res) => {
     const db = await getDb();
     const maxRow = db.get("SELECT MAX(sno) as m FROM resources");
     const sno = (maxRow && maxRow.m ? maxRow.m : 0) + 1;
-    const engLower = (r.engagement || "").toLowerCase().trim();
-    const allocStatus = r.allocationStatus !== undefined ? r.allocationStatus
-      : (engLower === 'bench' || engLower === '' ? 'Available' : 'Joined');
+    const allocationEntries = inferAllocationEntries(r, null);
+    const totalAllocation = totalAllocationFromEntries(allocationEntries, r.allocationPercentage);
+    const allocStatus = resolveAllocationStatus(r, '');
     db.run(
       `INSERT INTO resources (sno, ra_id, emp_name, email_id, piw_role, role_or_domain,
        previous_workex, doj, total_workex, engagement, skills, allocation_status,
-       skill_type, engagement_start_date, engagement_end_date, allocation_percentage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       skill_type, engagement_start_date, engagement_end_date, allocation_percentage, allocation_entries) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [sno, r.raId || "", r.empName || "", r.emailId || "", r.piwRole || "",
        r.roleOrDomain || "", r.previousWorkex || "", r.doj || "",
        r.totalWorkex || "", r.engagement || "", r.skills || "", allocStatus,
        r.skillType || "", r.engagementStartDate || "", r.engagementEndDate || "",
-       r.allocationPercentage !== undefined ? (r.allocationPercentage === null ? null : Number(r.allocationPercentage)) : null]
+       totalAllocation, JSON.stringify(allocationEntries)]
     );
     const newId = db.lastId ? db.lastId() : null;
     if (newId) {

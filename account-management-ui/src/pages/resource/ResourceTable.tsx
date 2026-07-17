@@ -4,6 +4,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { CheckCircleOutlined, EditOutlined, StopOutlined } from '@ant-design/icons';
 import type { ResourceRow } from '../../types/resource';
 import { AllocPctTag } from '../../utils/allocUtils';
+import { ensureAllocationEntries } from '../../utils/resourceAllocationUtils';
 import { TABLE_ALLOCATION_STATUS_COLOR_MAP } from './resourceConstants';
 
 export interface ResourceTableProps {
@@ -74,12 +75,19 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
         render: (value) => <span>{String(value || '')}</span>,
       },
       {
-        title: 'Role/Domain',
+        title: 'Roles/Domains',
         dataIndex: 'roleOrDomain',
         key: 'roleOrDomain',
-        width: 150,
+        width: 200,
         sorter: (a: ResourceRow, b: ResourceRow) => (a.roleOrDomain || '').localeCompare(b.roleOrDomain || ''),
-        render: (value) => <Tag color="cyan">{String(value || '')}</Tag>,
+        render: (value) => {
+          const domains = value
+            ? String(value).split(/[,;|]/).map((d: string) => d.trim()).filter(Boolean)
+            : [];
+          return domains.length > 0
+            ? <Space size={4} wrap>{domains.map((d, i) => <Tag key={i} color="cyan" style={{ fontSize: '11px' }}>{d}</Tag>)}</Space>
+            : <span style={{ color: '#bfbfbf' }}>—</span>;
+        },
       },
       {
         title: 'Previous Workex (Yr)',
@@ -124,12 +132,28 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
         },
       },
       {
-        title: 'Current Engagement',
-        dataIndex: 'engagement',
-        key: 'engagement',
-        width: 120,
-        sorter: (a: ResourceRow, b: ResourceRow) => (a.engagement || '').localeCompare(b.engagement || ''),
-        render: (value) => <span>{String(value || '')}</span>,
+        title: 'Project Allocations',
+        key: 'projectAllocations',
+        width: 280,
+        render: (_value, record) => {
+          const entries = ensureAllocationEntries(record);
+          if (!entries.length) return <span style={{ color: '#bfbfbf' }}>—</span>;
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {entries.map((entry, index) => (
+                <div key={`${record.key}-${index}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  <Tag color="purple" style={{ fontSize: '10px', margin: 0 }}>
+                    {entry.engagementName || 'Unassigned'}
+                  </Tag>
+                  <AllocPctTag pct={entry.allocationPercentage} style={{ fontSize: '10px', margin: 0 }} />
+                  <Tag style={{ fontSize: '10px', margin: 0 }}>
+                    {entry.engagementStartDate || '—'} to {entry.engagementEndDate || '—'}
+                  </Tag>
+                </div>
+              ))}
+            </div>
+          );
+        },
       },
       {
         title: 'Allocation Status',
@@ -244,3 +268,4 @@ export const ResourceTable: React.FC<ResourceTableProps> = ({
     </div>
   );
 };
+

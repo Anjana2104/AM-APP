@@ -1,8 +1,8 @@
 /**
  * piwApi.ts
- * 
- * PIW (Project Implementation Workplan) generation service
- * Delegates to server-side generation for proper XLSM handling with ExcelJS
+ *
+ * PIW (Project Implementation Workplan) generation service.
+ * Delegates to server-side ExcelJS for proper XLSM handling.
  */
 
 export interface PIWFormData {
@@ -27,35 +27,25 @@ export interface PIWFormData {
 }
 
 /**
- * Generate PIW using server-side ExcelJS for proper XLSM handling
- * Server loads template, updates it, and streams back the file
+ * Generate PIW using server-side ExcelJS for proper XLSM handling.
+ * Server loads template, populates it, and streams back the file.
  */
 export const generatePIW = async (data: PIWFormData): Promise<Blob> => {
-  try {
-    
-    const response = await fetch('http://localhost:3001/api/piwGeneration/generate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(data)
-    });
+  const response = await fetch('/api/piwGeneration/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error || 'Failed to generate PIW');
-    }
-
-    const blob = await response.blob();
-    return blob;
-  } catch (e: any) {
-    throw e;
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(errorData.error || 'Failed to generate PIW');
   }
+
+  return response.blob();
 };
 
-/**
- * Download PIW blob as file
- */
+/** Trigger a browser download for the given PIW blob. */
 export const downloadPIW = (piw: Blob, fileName: string): void => {
   const url = URL.createObjectURL(piw);
   const link = document.createElement('a');

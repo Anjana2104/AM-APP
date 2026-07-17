@@ -118,7 +118,7 @@ RA resource / employee records.
 | emp_name | TEXT | Full name |
 | email_id | TEXT | Work email |
 | piw_role | TEXT | Role from PIW file |
-| role_or_domain | TEXT | Domain / practice area |
+| role_or_domain | TEXT | **Comma-separated roles/domains** (e.g., "Backend, DevOps, Cloud") — supports multiple values like skills. Append new domains during bulk uploads via merge operation. |
 | previous_workex | TEXT | Prior experience |
 | doj | TEXT | Date of joining (`YYYY-MM-DD`) |
 | total_workex | TEXT | Total work experience |

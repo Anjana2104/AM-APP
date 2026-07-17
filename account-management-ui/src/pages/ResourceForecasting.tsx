@@ -21,6 +21,7 @@ import dayjs, { Dayjs } from 'dayjs';
 import isoWeek from 'dayjs/plugin/isoWeek';
 import isBetween from 'dayjs/plugin/isBetween';
 import type { ResourceRow } from '../types/resource';
+import { ensureAllocationEntries, totalAllocationPercentage } from '../utils/resourceAllocationUtils';
 
 dayjs.extend(isoWeek);
 dayjs.extend(isBetween);
@@ -64,42 +65,42 @@ function buildWeeks(startDate: Dayjs, count = 12) {
   });
 }
 
-// Compute merged colspan bar segments for one person across weeks
-function getPersonWeekBars(
-  engagements: ResourceRow[],
+// Stable color index derived from project name (consistent across rows)
+function projectColorIdx(name: string) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) & 0xffffffff;
+  return Math.abs(h) % PROJECT_COLORS.length;
+}
+
+// Compute merged colspan bar cells for a SINGLE allocation entry across weeks
+function getEntryWeekCells(
+  entry: ResourceRow,
   weeks: Array<{ key: string; start: Dayjs; end: Dayjs }>
 ) {
-  const colorMap = new Map<string, number>();
-  let cIdx = 0;
+  const entryName = entry.engagement || '';
+  const entryPct = entry.allocationPercentage;
+  const s = entry.engagementStartDate ? dayjs(entry.engagementStartDate) : null;
+  const e = entry.engagementEndDate ? dayjs(entry.engagementEndDate) : null;
+  const isAvailable = !entryName && (entry.allocationStatus === 'Available' || !entry.allocationStatus);
 
   const cells = weeks.map(w => {
-    for (const eng of engagements) {
-      const s = eng.engagementStartDate ? dayjs(eng.engagementStartDate) : null;
-      const e = eng.engagementEndDate ? dayjs(eng.engagementEndDate) : null;
-      if (s?.isValid() && e?.isValid() && s.isBefore(w.end, 'day') && e.isAfter(w.start, 'day')) {
-        const key = eng.engagement || eng.beelineId || eng.raId || 'eng';
-        if (!colorMap.has(key)) { colorMap.set(key, cIdx % PROJECT_COLORS.length); cIdx++; }
-        return { type: 'engaged' as const, engKey: key, colorIdx: colorMap.get(key)!, label: eng.engagement || '', pct: eng.allocationPercentage };
-      }
+    if (isAvailable) return { type: 'available' as const };
+    if (s?.isValid() && e?.isValid()) {
+      if (s.isBefore(w.end, 'day') && e.isAfter(w.start, 'day'))
+        return { type: 'engaged' as const, label: entryName, pct: entryPct };
+      if (e.isBefore(w.start, 'day')) return { type: 'available' as const };
+      return { type: 'empty' as const };
     }
-    const allEnded = engagements.length > 0 && engagements.every(eng => {
-      if (eng.allocationStatus === 'Available') return true;
-      const e = eng.engagementEndDate ? dayjs(eng.engagementEndDate) : null;
-      return e?.isValid() && e.isBefore(w.start);
-    });
-    return allEnded ? { type: 'available' as const } : { type: 'empty' as const };
+    // No valid dates — if there is an engagement name show it spanning all weeks
+    if (entryName) return { type: 'engaged' as const, label: entryName, pct: entryPct };
+    return { type: 'empty' as const };
   });
 
-  // Merge consecutive identical cells → single colspan
-  const merged: Array<{ type: 'engaged' | 'available' | 'empty'; span: number; engKey?: string; colorIdx?: number; label?: string; pct?: number | null }> = [];
+  const merged: Array<{ type: 'engaged' | 'available' | 'empty'; span: number; label?: string; pct?: number | null }> = [];
   for (let i = 0; i < cells.length;) {
     const curr = cells[i] as any;
     let span = 1;
-    while (i + span < cells.length) {
-      const next = cells[i + span] as any;
-      if (curr.type !== next.type || (curr.type === 'engaged' && curr.engKey !== next.engKey)) break;
-      span++;
-    }
+    while (i + span < cells.length && cells[i + span].type === curr.type) span++;
     merged.push({ ...curr, span });
     i += span;
   }
@@ -124,25 +125,44 @@ export function ResourceForecasting({ resources = [] }: Props) {
   const [releaseWindow, setReleaseWindow] = useState<7 | 15 | 30>(7);
   const timelineScrollRef = useRef<HTMLDivElement>(null);
 
+  const getTotalAllocation = useCallback((resource: ResourceRow) => (
+    totalAllocationPercentage(ensureAllocationEntries(resource))
+  ), []);
+
   // ── All valid resources
   const filtered = useMemo(() => resources.filter(r => r && r.empName), [resources]);
 
-  // ── Stats — allocation % drives Fully/Partially Allocated
+  // ── Stats — collective allocation across engagements drives utilization buckets
   const stats = useMemo(() => {
     const total = filtered.length || 1;
-    const available = filtered.filter(r => r.allocationStatus === 'Available').length;
-    const fullyAllocated = filtered.filter(r => (r.allocationPercentage ?? 0) >= 100).length;
-    const partiallyAllocated = filtered.filter(r => {
-      const pct = r.allocationPercentage ?? 0;
-      return pct > 0 && pct < 100;
+    const available = filtered.filter(r => {
+      const totalPct = getTotalAllocation(r);
+      return r.allocationStatus === 'Available' || totalPct <= 0;
     }).length;
+    const overUtilized = filtered.filter(r => getTotalAllocation(r) > 100).length;
+    const fullyAllocated = filtered.filter(r => getTotalAllocation(r) === 100).length;
+    const underUtilized = filtered.filter(r => getTotalAllocation(r) < 100).length;
     const countReleasing = (days: number) => filtered.filter(r => {
-      if (!r.engagementEndDate) return false;
-      const end = dayjs(r.engagementEndDate);
-      return end.isValid() && end.isAfter(today) && end.isBefore(today.add(days + 1, 'day'));
+      const entries = ensureAllocationEntries(r);
+      const endDates: string[] = entries.length > 0
+        ? entries.map(e => e.engagementEndDate || '').filter(Boolean)
+        : [r.engagementEndDate || ''].filter(Boolean);
+      return endDates.some(ed => {
+        const end = dayjs(ed);
+        return end.isValid() && end.isAfter(today) && end.isBefore(today.add(days + 1, 'day'));
+      });
     }).length;
-    return { available, fullyAllocated, partiallyAllocated, total, releasing7: countReleasing(7), releasing15: countReleasing(15), releasing30: countReleasing(30) };
-  }, [filtered, today]);
+    return {
+      available,
+      overUtilized,
+      fullyAllocated,
+      underUtilized,
+      total,
+      releasing7: countReleasing(7),
+      releasing15: countReleasing(15),
+      releasing30: countReleasing(30),
+    };
+  }, [filtered, getTotalAllocation, today]);
 
   // ── Timeline — exactly 60 days (9 weeks) from selected start
   const WEEK_COUNT = 9; // 9 × 7 = 63 days covers the 60-day window
@@ -163,16 +183,33 @@ export function ResourceForecasting({ resources = [] }: Props) {
     return groups;
   }, [weeks]);
 
+  const expandedResources = useMemo(() => (
+    filtered.flatMap((resource) => {
+      const entries = ensureAllocationEntries(resource);
+      if (entries.length === 0) return [resource];
+      return entries.map((entry, index) => ({
+        ...resource,
+        key: `${resource.key}-alloc-${index}`,
+        engagement: entry.engagementName,
+        allocationPercentage: entry.allocationPercentage,
+        allocationStatus: entry.allocationStatus || resource.allocationStatus,
+        engagementStartDate: entry.engagementStartDate || resource.engagementStartDate,
+        engagementEndDate: entry.engagementEndDate || resource.engagementEndDate,
+        beelineId: entry.beelineId || resource.beelineId,
+      }));
+    })
+  ), [filtered]);
+
   // Group rows by person (raId or empName) for merged timeline rows
   const groupedResources = useMemo(() => {
     const map = new Map<string, ResourceRow[]>();
-    for (const r of filtered) {
+    for (const r of expandedResources) {
       const key = r.raId || r.empName;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(r);
     }
     return Array.from(map.values());
-  }, [filtered]);
+  }, [expandedResources]);
 
   // ── Search-filtered resources + tile filter + lazy visible slice
   const searchedResources = useMemo(() => {
@@ -182,20 +219,18 @@ export function ResourceForecasting({ resources = [] }: Props) {
     if (activeTile) {
       base = base.filter(group => {
         const rep = group[0];
-        if (activeTile === 'Available Now') return rep.allocationStatus === 'Available';
-        if (activeTile === 'Fully Allocated') return (rep.allocationPercentage ?? 0) >= 100;
-        if (activeTile === 'Partially Allocated') { const p = rep.allocationPercentage ?? 0; return p > 0 && p < 100; }
+        if (activeTile === 'Available Now') return rep.allocationStatus === 'Available' || getTotalAllocation(rep) <= 0;
+        if (activeTile === 'Overutilized') return getTotalAllocation(rep) > 100;
+        if (activeTile === 'Fully Allocated') return getTotalAllocation(rep) === 100;
+        if (activeTile === 'Underutilized') return getTotalAllocation(rep) < 100;
         if (activeTile === 'Releasing (7 days)') {
-          const e = rep.engagementEndDate ? dayjs(rep.engagementEndDate) : null;
-          return e?.isValid() && e.isAfter(today) && e.isBefore(today.add(8, 'day'));
+          return group.some(r => { const e = r.engagementEndDate ? dayjs(r.engagementEndDate) : null; return e?.isValid() && e.isAfter(today) && e.isBefore(today.add(8, 'day')); });
         }
         if (activeTile === 'Releasing (15 days)') {
-          const e = rep.engagementEndDate ? dayjs(rep.engagementEndDate) : null;
-          return e?.isValid() && e.isAfter(today) && e.isBefore(today.add(16, 'day'));
+          return group.some(r => { const e = r.engagementEndDate ? dayjs(r.engagementEndDate) : null; return e?.isValid() && e.isAfter(today) && e.isBefore(today.add(16, 'day')); });
         }
         if (activeTile === 'Releasing (30 days)') {
-          const e = rep.engagementEndDate ? dayjs(rep.engagementEndDate) : null;
-          return e?.isValid() && e.isAfter(today) && e.isBefore(today.add(31, 'day'));
+          return group.some(r => { const e = r.engagementEndDate ? dayjs(r.engagementEndDate) : null; return e?.isValid() && e.isAfter(today) && e.isBefore(today.add(31, 'day')); });
         }
         return true;
       });
@@ -213,7 +248,7 @@ export function ResourceForecasting({ resources = [] }: Props) {
       );
     }
     return base;
-  }, [groupedResources, timelineSearch, activeTile, today]);
+  }, [activeTile, getTotalAllocation, groupedResources, timelineSearch, today]);
 
   const handleTimelineScroll = useCallback(() => {
     const el = timelineScrollRef.current;
@@ -226,21 +261,37 @@ export function ResourceForecasting({ resources = [] }: Props) {
   const availableOnDate = useMemo(() => {
     return filtered.filter(r => {
       if (r.allocationStatus === 'Available') return true;
-      if (!r.engagementEndDate) return false;
-      const end = dayjs(r.engagementEndDate);
-      return end.isValid() && end.isBefore(checkDate);
+      const entries = ensureAllocationEntries(r);
+      if (entries.length === 0) {
+        if (!r.engagementEndDate) return false;
+        return dayjs(r.engagementEndDate).isBefore(checkDate);
+      }
+      // Available on date only if ALL allocations have ended before checkDate
+      return entries.every(e => {
+        const end = e.engagementEndDate ? dayjs(e.engagementEndDate) : null;
+        return end?.isValid() && end.isBefore(checkDate);
+      });
     });
   }, [filtered, checkDate]);
 
-  // ── Upcoming releases (driven by releaseWindow filter)
-  const upcomingReleases = useMemo(() => {
-    return filtered
-      .filter(r => {
-        if (!r.engagementEndDate) return false;
-        const end = dayjs(r.engagementEndDate);
-        return end.isValid() && end.isAfter(today.subtract(1, 'day')) && end.isBefore(today.add(releaseWindow + 1, 'day'));
-      })
-      .sort((a, b) => dayjs(a.engagementEndDate).valueOf() - dayjs(b.engagementEndDate).valueOf());
+  // ── Upcoming releases — one entry per allocation entry that is releasing
+  type UpcomingRelease = { resource: ResourceRow; entryName: string; allocationPct: number | null; releaseDate: string };
+  const upcomingReleases = useMemo((): UpcomingRelease[] => {
+    const results: UpcomingRelease[] = [];
+    filtered.forEach(r => {
+      const entries = ensureAllocationEntries(r);
+      const toCheck = entries.length > 0
+        ? entries.map(e => ({ name: e.engagementName || '', pct: e.allocationPercentage, end: e.engagementEndDate || '' }))
+        : [{ name: r.engagement || '', pct: r.allocationPercentage, end: r.engagementEndDate || '' }];
+      toCheck.forEach(ce => {
+        if (!ce.end) return;
+        const end = dayjs(ce.end);
+        if (end.isValid() && end.isAfter(today.subtract(1, 'day')) && end.isBefore(today.add(releaseWindow + 1, 'day'))) {
+          results.push({ resource: r, entryName: ce.name, allocationPct: ce.pct, releaseDate: ce.end });
+        }
+      });
+    });
+    return results.sort((a, b) => dayjs(a.releaseDate).valueOf() - dayjs(b.releaseDate).valueOf());
   }, [filtered, today, releaseWindow]);
 
   // ── XLS export for timeline
@@ -254,7 +305,7 @@ export function ResourceForecasting({ resources = [] }: Props) {
       'Allocation Status': r.allocationStatus || '',
       'Eng. Start Date': r.engagementStartDate || '',
       'Eng. End Date': r.engagementEndDate || '',
-      'Allocation %': r.allocationPercentage ?? '',
+      'Allocation %': getTotalAllocation(r),
     }));
     writeJsonSheetFile(XLSX, data, 'Timeline', `resource-allocation-timeline-${today.format('YYYY-MM-DD')}.xlsx`);
   };
@@ -273,13 +324,13 @@ export function ResourceForecasting({ resources = [] }: Props) {
   };
 
   const handleExportReleases = () => {
-    const data = upcomingReleases.map(r => ({
-      'Employee Name': r.empName,
-      'RA ID': r.raId,
-      'Role / Domain': r.roleOrDomain || r.piwRole || '',
-      'Engagement': r.engagement || '',
-      'Allocation %': r.allocationPercentage ?? '',
-      'Release Date': r.engagementEndDate || '',
+    const data = upcomingReleases.map(rel => ({
+      'Employee Name': rel.resource.empName,
+      'RA ID': rel.resource.raId,
+      'Role / Domain': rel.resource.roleOrDomain || rel.resource.piwRole || '',
+      'Engagement': rel.entryName || '',
+      'Allocation %': rel.allocationPct ?? '',
+      'Release Date': rel.releaseDate || '',
     }));
     writeJsonSheetFile(XLSX, data, 'Upcoming Releases', `upcoming-releases-${today.format('YYYY-MM-DD')}.xlsx`);
   };
@@ -288,8 +339,9 @@ export function ResourceForecasting({ resources = [] }: Props) {
   const statCards = [
     { icon: <TeamOutlined />, color: '#595959', bg: '#f5f5f5', label: 'Total Resources', value: filtered.length, pct: 100, filterable: false },
     { icon: <CheckCircleOutlined />, color: '#13c2c2', bg: '#e6fffb', label: 'Available Now', value: stats.available, pct: Math.round(stats.available / stats.total * 100), filterable: true },
+    { icon: <AlertOutlined />, color: '#f5222d', bg: '#fff1f0', label: 'Overutilized', value: stats.overUtilized, pct: Math.round(stats.overUtilized / stats.total * 100), filterable: true },
     { icon: <ApartmentOutlined />, color: '#1890ff', bg: '#e6f4ff', label: 'Fully Allocated', value: stats.fullyAllocated, pct: Math.round(stats.fullyAllocated / stats.total * 100), filterable: true },
-    { icon: <ClockCircleOutlined />, color: '#722ed1', bg: '#f9f0ff', label: 'Partially Allocated', value: stats.partiallyAllocated, pct: Math.round(stats.partiallyAllocated / stats.total * 100), filterable: true },
+    { icon: <ClockCircleOutlined />, color: '#722ed1', bg: '#f9f0ff', label: 'Underutilized', value: stats.underUtilized, pct: Math.round(stats.underUtilized / stats.total * 100), filterable: true },
     { icon: <AlertOutlined />, color: '#fa8c16', bg: '#fff7e6', label: 'Releasing (7 days)', value: stats.releasing7, pct: Math.round(stats.releasing7 / stats.total * 100), filterable: true },
     { icon: <AlertOutlined />, color: '#fa541c', bg: '#fff2e8', label: 'Releasing (15 days)', value: stats.releasing15, pct: Math.round(stats.releasing15 / stats.total * 100), filterable: true },
     { icon: <AlertOutlined />, color: '#ff4d4f', bg: '#fff1f0', label: 'Releasing (30 days)', value: stats.releasing30, pct: Math.round(stats.releasing30 / stats.total * 100), filterable: true },
@@ -464,70 +516,72 @@ export function ResourceForecasting({ resources = [] }: Props) {
                         </td>
                       </tr>
                     ) : (
-                      searchedResources.slice(0, visibleCount).map((group, gi) => {
+                      searchedResources.slice(0, visibleCount).flatMap((group, gi) => {
                         const rep = group[0];
-                        const segments = getPersonWeekBars(group, weeks);
                         const rowBg = gi % 2 === 0 ? '#fff' : '#fafcff';
-                        return (
-                          <tr key={rep.raId || rep.empName} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                            {/* Resource info cell */}
-                            <td style={{ padding: '4px 8px', verticalAlign: 'middle', background: rowBg, borderRight: '1px solid #e8e8e8' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <Avatar size={22} style={{ background: avatarColor(rep.empName), fontSize: 9, flexShrink: 0 }}>
-                                  {initials(rep.empName)}
-                                </Avatar>
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{rep.empName}</div>
-                                  <Text type="secondary" style={{ fontSize: 9, display: 'block' }}>{rep.raId}</Text>
-                                  <Text type="secondary" style={{ fontSize: 9, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{rep.roleOrDomain || rep.piwRole || ''}</Text>
-                                </div>
-                              </div>
-                            </td>
-                            {/* Colspan-merged bar segments */}
-                            {segments.map((seg, si) => {
-                              if (seg.type === 'engaged') {
-                                const c = PROJECT_COLORS[seg.colorIdx ?? 0];
-                                const barLabel = `${seg.label || ''}${seg.pct != null ? `  ${seg.pct}%` : ''}`;
-                                return (
-                                  <td key={si} colSpan={seg.span} style={{ padding: '3px 2px', verticalAlign: 'middle', background: rowBg, borderLeft: '1px solid #f0f0f0' }}>
-                                    <Tooltip title={barLabel.trim()} overlayInnerStyle={{ fontSize: 11 }}>
-                                      <div style={{
-                                        background: c.bg, border: `1px solid ${c.border}`,
-                                        borderRadius: 3, padding: '2px 4px',
-                                        fontSize: 9, color: c.text, fontWeight: 600,
-                                        overflow: 'hidden', textOverflow: 'ellipsis',
-                                        whiteSpace: 'nowrap', cursor: 'default', minHeight: 18,
-                                        display: 'flex', alignItems: 'center', gap: 2,
-                                      }}>
-                                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                          {seg.span > 1 ? (seg.label || '') : ''}
-                                        </span>
-                                        {seg.pct != null && (
-                                          <span style={{ flexShrink: 0, fontWeight: 700 }}>{seg.pct}%</span>
-                                        )}
-                                      </div>
-                                    </Tooltip>
-                                  </td>
-                                );
-                              }
-                              if (seg.type === 'available') {
-                                return (
-                                  <td key={si} colSpan={seg.span} style={{ padding: '3px 2px', verticalAlign: 'middle', background: rowBg, borderLeft: '1px solid #f0f0f0' }}>
-                                    <div style={{
-                                      background: '#f6ffed', border: '1px dashed #b7eb8f',
-                                      borderRadius: 3, padding: '2px 4px', fontSize: 9,
-                                      color: '#52c41a', fontWeight: 500, minHeight: 18,
-                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    }}>
-                                      {seg.span > 2 ? 'Available' : ''}
+                        return group.map((entry, ei) => {
+                          const segments = getEntryWeekCells(entry, weeks);
+                          const color = PROJECT_COLORS[projectColorIdx(entry.engagement || '')];
+                          return (
+                            <tr key={`${rep.raId || rep.empName}-${ei}`} style={{ borderBottom: ei === group.length - 1 ? '1px solid #f0f0f0' : '1px solid #f8f8f8' }}>
+                              {ei === 0 && (
+                                <td rowSpan={group.length} style={{ padding: '4px 8px', verticalAlign: 'middle', background: rowBg, borderRight: '1px solid #e8e8e8' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <Avatar size={22} style={{ background: avatarColor(rep.empName), fontSize: 9, flexShrink: 0 }}>
+                                      {initials(rep.empName)}
+                                    </Avatar>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{rep.empName}</div>
+                                      <Text type="secondary" style={{ fontSize: 9, display: 'block' }}>{rep.raId}</Text>
+                                      <Text type="secondary" style={{ fontSize: 9, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 100 }}>{rep.roleOrDomain || rep.piwRole || ''}</Text>
                                     </div>
-                                  </td>
-                                );
-                              }
-                              return <td key={si} colSpan={seg.span} style={{ background: rowBg, borderLeft: '1px solid #f0f0f0' }} />;
-                            })}
-                          </tr>
-                        );
+                                  </div>
+                                </td>
+                              )}
+                              {segments.map((seg, si) => {
+                                if (seg.type === 'engaged') {
+                                  const barLabel = `${seg.label || ''}${seg.pct != null ? `  ${seg.pct}%` : ''}`;
+                                  return (
+                                    <td key={si} colSpan={seg.span} style={{ padding: '3px 2px', verticalAlign: 'middle', background: rowBg, borderLeft: '1px solid #f0f0f0' }}>
+                                      <Tooltip title={barLabel.trim()} overlayInnerStyle={{ fontSize: 11 }}>
+                                        <div style={{
+                                          background: color.bg, border: `1px solid ${color.border}`,
+                                          borderRadius: 3, padding: '2px 4px',
+                                          fontSize: 9, color: color.text, fontWeight: 600,
+                                          overflow: 'hidden', textOverflow: 'ellipsis',
+                                          whiteSpace: 'nowrap', cursor: 'default', minHeight: 18,
+                                          display: 'flex', alignItems: 'center', gap: 2,
+                                        }}>
+                                          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {seg.span > 1 ? (seg.label || '') : ''}
+                                          </span>
+                                          {seg.pct != null && (
+                                            <span style={{ flexShrink: 0, fontWeight: 700 }}>{seg.pct}%</span>
+                                          )}
+                                        </div>
+                                      </Tooltip>
+                                    </td>
+                                  );
+                                }
+                                if (seg.type === 'available') {
+                                  return (
+                                    <td key={si} colSpan={seg.span} style={{ padding: '3px 2px', verticalAlign: 'middle', background: rowBg, borderLeft: '1px solid #f0f0f0' }}>
+                                      <div style={{
+                                        background: '#f6ffed', border: '1px dashed #b7eb8f',
+                                        borderRadius: 3, padding: '2px 4px', fontSize: 9,
+                                        color: '#52c41a', fontWeight: 500, minHeight: 18,
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      }}>
+                                        {seg.span > 2 ? 'Available' : ''}
+                                      </div>
+                                    </td>
+                                  );
+                                }
+                                return <td key={si} colSpan={seg.span} style={{ background: rowBg, borderLeft: '1px solid #f0f0f0' }} />;
+                              })}
+                            </tr>
+                          );
+                        });
                       })
                     )}
                     {visibleCount < searchedResources.length && (
@@ -655,20 +709,20 @@ export function ResourceForecasting({ resources = [] }: Props) {
                 <Empty description={<Text type="secondary" style={{ fontSize: 11 }}>No releases in this window</Text>} image={Empty.PRESENTED_IMAGE_SIMPLE} imageStyle={{ height: 28 }} />
               ) : (
                 <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {upcomingReleases.map(r => (
-                    <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Avatar size={24} style={{ background: avatarColor(r.empName), fontSize: 9, flexShrink: 0 }}>
-                        {initials(r.empName)}
+                  {upcomingReleases.map((rel, idx) => (
+                    <div key={`${rel.resource.key ?? rel.resource.raId ?? rel.resource.empName}-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Avatar size={24} style={{ background: avatarColor(rel.resource.empName), fontSize: 9, flexShrink: 0 }}>
+                        {initials(rel.resource.empName)}
                       </Avatar>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.empName}</div>
+                        <div style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rel.resource.empName}</div>
                         <Text type="secondary" style={{ fontSize: 10, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {r.engagement || r.beelineId || r.roleOrDomain || '—'}
-                          {r.allocationPercentage != null ? ` · ${r.allocationPercentage}%` : ''}
+                          {rel.entryName || rel.resource.beelineId || rel.resource.roleOrDomain || '—'}
+                          {rel.allocationPct != null ? ` · ${rel.allocationPct}%` : ''}
                         </Text>
                       </div>
                       <Tag color="orange" style={{ fontSize: 10, margin: 0, flexShrink: 0 }}>
-                        {r.engagementEndDate ? dayjs(r.engagementEndDate).format('D MMM') : '—'}
+                        {dayjs(rel.releaseDate).format('D MMM')}
                       </Tag>
                     </div>
                   ))}

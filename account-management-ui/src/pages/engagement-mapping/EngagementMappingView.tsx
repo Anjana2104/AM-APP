@@ -1,4 +1,4 @@
-import { Button, Card, Col, Drawer, Empty, Input, Select, Space, Tag, Tooltip, Typography, Row, Tabs, AutoComplete, DatePicker, message } from 'antd';
+﻿import { Button, Card, Col, Drawer, Empty, Input, Select, Space, Tag, Tooltip, Typography, Row, Tabs, AutoComplete, DatePicker, message } from 'antd';
 import { AppstoreOutlined, BarChartOutlined, DownloadOutlined, ExpandAltOutlined, FileExcelOutlined, FilterOutlined, FundProjectionScreenOutlined, PieChartOutlined, ProjectOutlined, ShrinkOutlined, TeamOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import { DndContext, DragOverlay } from '@dnd-kit/core';
 import { ResponsiveContainer, PieChart, Pie, Cell, Legend, Tooltip as RechartTooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
@@ -148,7 +148,7 @@ export function EngagementMappingView(props: EngagementMappingState) {
                     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 10, marginTop: 4, flexShrink: 0 }}>
                         <Input.Search
-                          placeholder="Search name, RA ID, skills, engagement, comments…"
+                          placeholder="Search name, RA ID, skills, engagement, commentsâ€¦"
                           allowClear
                           size="small"
                           value={deploymentGlobalSearch}
@@ -164,8 +164,8 @@ export function EngagementMappingView(props: EngagementMappingState) {
                           <Tooltip title="Filter" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FilterOutlined />} type={showFilterPanel || isFilterApplied ? 'primary' : 'default'} size="small" onClick={() => setShowFilterPanel(!showFilterPanel)} style={{ borderRadius: '6px' }} />
                           </Tooltip>
-                          <Tooltip title="Export Bench (Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
-                            <Button icon={<FileExcelOutlined />} size="small" disabled={!filteredBenchResources.length} onClick={() => handleExportListTable(filteredBenchResources, `Bench_Export_${getCurrentDateStamp()}.xlsx`)} style={{ borderRadius: '6px', color: filteredBenchResources.length ? '#52c41a' : undefined }} />
+                          <Tooltip title="Export Available Resources (Excel)" overlayInnerStyle={{ fontSize: '11px' }}>
+                            <Button icon={<FileExcelOutlined />} size="small" disabled={!filteredBenchResources.length} onClick={() => handleExportListTable(filteredBenchResources, `Available_Resources_Export_${getCurrentDateStamp()}.xlsx`)} style={{ borderRadius: '6px', color: filteredBenchResources.length ? '#52c41a' : undefined }} />
                           </Tooltip>
                           <Tooltip title="Export all non-Joined resources (Pipeline)" overlayInnerStyle={{ fontSize: '11px' }}>
                             <Button icon={<FileExcelOutlined />} size="small" onClick={handleExportPipeline} style={{ borderRadius: '6px', color: '#722ed1' }} />
@@ -282,10 +282,10 @@ export function EngagementMappingView(props: EngagementMappingState) {
                   children: (
                     <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                     <>
-                      {/* Search bar — centred, elongated, separated from toolbar */}
+                      {/* Search bar â€” centred, elongated, separated from toolbar */}
                       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10, marginTop: 4 }}>
                         <Input.Search
-                          placeholder="Search by project, resource name, role, skills…"
+                          placeholder="Search by project, resource name, role, skillsâ€¦"
                           allowClear
                           value={projectSearch}
                           onChange={e => setProjectSearch(e.target.value)}
@@ -300,13 +300,13 @@ export function EngagementMappingView(props: EngagementMappingState) {
                         <Space wrap size={8}>
                           {selectedSNOs.size === 1 && canEdit && (
                             <>
-                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>✕ Clear</Button>
+                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>âœ• Clear</Button>
                            <Button size="small" type="primary" icon={<TeamOutlined />} style={{ fontSize: '11px' }} onClick={() => handleBulkAllocate(filteredProjectResources, 'Joined')}>Allocate</Button>
                             </>
                           )}
                           {selectedSNOs.size > 1 && canEdit && (
                             <>
-                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>✕ Clear ({selectedSNOs.size})</Button>
+                              <Button size="small" type="link" style={{ fontSize: '11px', padding: '0 4px', color: '#8c8c8c' }} onClick={clearSelection}>âœ• Clear ({selectedSNOs.size})</Button>
                               <Button size="small" type="primary" icon={<TeamOutlined />} style={{ fontSize: '11px' }} onClick={() => handleBulkAllocate(filteredProjectResources, 'Joined')}>Bulk Allocate ({selectedSNOs.size})</Button>
                             </>
                           )}
@@ -404,9 +404,14 @@ export function EngagementMappingView(props: EngagementMappingState) {
                     const kpis = [
                       { label: 'Total', value: total, color: '#1890ff', bg: '#e6f7ff' },
                       { label: 'Active', value: activeCount, color: '#52c41a', bg: '#f6ffed' },
-                      { label: 'Bench', value: filteredBenchResources.length, color: '#faad14', bg: '#fffbe6' },
+                      { label: 'Available', value: filteredBenchResources.length, color: '#faad14', bg: '#fffbe6' },
                       { label: 'Pipeline', value: shortlistedResources.length + offeredResources.length + selectedResources.length, color: '#13c2c2', bg: '#e6fffb' },
-                      { label: 'Utilization', value: `${utilizationPct}%`, color: utilizationPct >= 80 ? '#52c41a' : utilizationPct >= 60 ? '#faad14' : '#f5222d', bg: '#f9f0ff' },
+                      {
+                        label: 'Utilization',
+                        value: `${utilizationPct}%`,
+                        color: utilizationPct > 100 ? '#f5222d' : utilizationPct === 100 ? '#52c41a' : '#faad14',
+                        bg: '#f9f0ff',
+                      },
                     ];
 
                     const renderPie = (data: { name: string; value: number }[], colors: Record<string, string>, fallbackColors: string[]) => (
@@ -469,7 +474,7 @@ export function EngagementMappingView(props: EngagementMappingState) {
 
                             {/* Two charts side by side */}
                             <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
-                              {/* Allocation Status — full width */}
+                              {/* Allocation Status â€” full width */}
                               <Col xs={24}>
                                 <Card size="small" bodyStyle={{ padding: '10px 14px' }} style={{ borderRadius: 8, border: '1px solid #f0f0f0' }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -493,17 +498,17 @@ export function EngagementMappingView(props: EngagementMappingState) {
                               </Col>
                             </Row>
 
-                            {/* Bench by Role/Domain */}
+                            {/* Available resources by Roles/Domains */}
                             <Card size="small" bodyStyle={{ padding: '10px 14px' }} style={{ borderRadius: 8, border: '1px solid #f0f0f0', marginBottom: 12 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                                 <Space size={6}>
-                                  <Text strong style={{ fontSize: 12 }}>Bench Resources by Role / Domain</Text>
-                                  <Tag color="warning" style={{ fontSize: 10 }}>{roleBreakdown.reduce((s, [,c]) => s + c, 0)} on bench</Tag>
+                                  <Text strong style={{ fontSize: 12 }}>Available Resources by Roles/Domains</Text>
+                                  <Tag color="warning" style={{ fontSize: 10 }}>{roleBreakdown.reduce((s, [,c]) => s + c, 0)} available</Tag>
                                 </Space>
                                 <Text type="secondary" style={{ fontSize: 10 }}>Click a role to filter</Text>
                               </div>
                               {roleBreakdown.length === 0
-                                ? <Text style={{ fontSize: 11, color: '#aaa' }}>No bench resources</Text>
+                                ? <Text style={{ fontSize: 11, color: '#aaa' }}>No available resources</Text>
                                 : (
                                   <Row gutter={[8, 6]}>
                                     {roleBreakdown.map(([role, count], i) => {
@@ -534,7 +539,7 @@ export function EngagementMappingView(props: EngagementMappingState) {
                               }
                             </Card>
 
-                            {/* Skills available on Bench */}
+                            {/* Skills available in deployment pool */}
                             {(() => {
                               const searchTerm = skillSearch.trim().toLowerCase();
 
@@ -575,7 +580,7 @@ export function EngagementMappingView(props: EngagementMappingState) {
                                 <Card size="small" bodyStyle={{ padding: '10px 14px' }} style={{ borderRadius: 8, border: '1px solid #f0f0f0', marginTop: 12 }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                                     <Space size={6}>
-                                      <Text strong style={{ fontSize: 12 }}>Skills Available on Bench</Text>
+                                      <Text strong style={{ fontSize: 12 }}>Skills Available in Deployment Pool</Text>
                                       <Tag color="warning" style={{ fontSize: 10 }}>
                                         {searchMatchedResourceCount} resource{searchMatchedResourceCount !== 1 ? 's' : ''}
                                         {searchTerm ? ' matched' : ''}
@@ -626,12 +631,12 @@ export function EngagementMappingView(props: EngagementMappingState) {
                                   {/* Search bar */}
                                   <Input
                                     size="small"
-                                    placeholder="Search skills…"
+                                    placeholder="Search skillsâ€¦"
                                     allowClear
                                     value={skillSearch}
                                     onChange={e => setSkillSearch(e.target.value)}
                                     style={{ marginBottom: 8, fontSize: 11, borderRadius: 6 }}
-                                    prefix={<span style={{ color: '#bbb', fontSize: 11 }}>🔍</span>}
+                                    prefix={<span style={{ color: '#bbb', fontSize: 11 }}>ðŸ”</span>}
                                   />
                                   {filteredSkillEntries.length === 0
                                     ? <Text style={{ fontSize: 11, color: '#aaa' }}>{skillEntries.length === 0 ? 'No skills data for bench resources' : 'No matching skills'}</Text>
@@ -667,7 +672,7 @@ export function EngagementMappingView(props: EngagementMappingState) {
                                             );
                                           })}
                                         </div>
-                                        {/* Apply / Clear action bar — shown only when skills are selected */}
+                                        {/* Apply / Clear action bar â€” shown only when skills are selected */}
                                         {selectedBenchSkills.size > 0 && (
                                           <div style={{ marginBottom: 0 }} />
                                         )}
@@ -695,7 +700,18 @@ export function EngagementMappingView(props: EngagementMappingState) {
             : <span>Bulk Allocate  -  {pendingAllocResources.length} Resources</span>
         }
         placement="right"
-        onClose={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '', engagementStartDate: '', engagementEndDate: '' }); setPendingAllocResources([]); }}
+        onClose={() => {
+          setAllocationDrawer(false);
+          setAllocationForm({
+            engagementName: '',
+            allocationPercentage: '100',
+            beelineId: '',
+            notes: '',
+            engagementStartDate: '',
+            engagementEndDate: '',
+          });
+          setPendingAllocResources([]);
+        }}
         open={allocationDrawer}
         width={420}
       >
@@ -727,6 +743,19 @@ export function EngagementMappingView(props: EngagementMappingState) {
               options={projectEngagementOptions}
               filterOption={(input, option) => String(option?.label || option?.value || '').toLowerCase().includes(input.toLowerCase())}
               allowClear
+            />
+          </div>
+
+          <div>
+            <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Allocation % for this project *</label>
+            <Input
+              type="number"
+              min={0}
+              max={200}
+              placeholder="0 to 200"
+              value={allocationForm.allocationPercentage}
+              onChange={(e) => setAllocationForm({ ...allocationForm, allocationPercentage: e.target.value })}
+              suffix="%"
             />
           </div>
 
@@ -788,7 +817,7 @@ export function EngagementMappingView(props: EngagementMappingState) {
           <div>
             <label style={{ fontSize: '12px', fontWeight: 600, display: 'block', marginBottom: 4 }}>Notes <span style={{ fontWeight: 400, color: '#8c8c8c' }}>(saved to resource comments)</span></label>
             <Input.TextArea
-              placeholder="Add notes — will be auto-saved as a comment on the resource"
+              placeholder="Add notes â€” will be auto-saved as a comment on the resource"
               value={allocationForm.notes}
               onChange={(e) => setAllocationForm({ ...allocationForm, notes: e.target.value })}
               rows={3}
@@ -810,7 +839,22 @@ export function EngagementMappingView(props: EngagementMappingState) {
                   ? 'Update Engagement'
                   : 'Shortlist'}
             </Button>
-            <Button onClick={() => { setAllocationDrawer(false); setAllocationForm({ engagementName: '', beelineId: '', notes: '', engagementStartDate: '', engagementEndDate: '' }); }} style={{ flex: 1 }}>Cancel</Button>
+            <Button
+              onClick={() => {
+                setAllocationDrawer(false);
+                setAllocationForm({
+                  engagementName: '',
+                  allocationPercentage: '100',
+                  beelineId: '',
+                  notes: '',
+                  engagementStartDate: '',
+                  engagementEndDate: '',
+                });
+              }}
+              style={{ flex: 1 }}
+            >
+              Cancel
+            </Button>
           </Space>
         </Space>
       </Drawer>
@@ -884,3 +928,4 @@ export function EngagementMappingView(props: EngagementMappingState) {
   );
 
 }
+

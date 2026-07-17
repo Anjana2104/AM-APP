@@ -6,6 +6,7 @@ import { ColumnVisibilityDrawer } from './ColumnVisibilityDrawer';
 import { ResourceDetailDrawer } from './ResourceDetailDrawer';
 import { ResourceEditModal } from './ResourceEditModal';
 import ResourceResumesTab from './ResourceResumesTab';
+import ResourceVerificationTab from './ResourceVerificationTab';
 import { ResourceToolbar } from './ResourceToolbar';
 import { openBulkUploadFilePicker } from './BulkUploadModal';
 import type { UseResourceHubStateResult } from './useResourceHubState';
@@ -121,6 +122,11 @@ export function ResourceHubView({
                   key: 'resumes',
                   label: <span style={{ fontSize: '12px' }}>Resumes</span>,
                   children: <ResourceResumesTab />,
+                },
+                {
+                  key: 'verification',
+                  label: <span style={{ fontSize: '12px' }}>Verification</span>,
+                  children: <ResourceVerificationTab resources={resources} />,
                 },
               ]}
             />

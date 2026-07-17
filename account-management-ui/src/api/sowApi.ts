@@ -28,14 +28,14 @@ export interface SOWFormData {
 }
 
 export const generateSOW = async (data: SOWFormData): Promise<Blob> => {
-  const response = await fetch('http://localhost:3001/api/sowGeneration/generate', {
+  const response = await fetch('/api/sowGeneration/generate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error((err as any).error || 'Failed to generate SOW');
+    const err = await response.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error || 'Failed to generate SOW');
   }
   return response.blob();
 };

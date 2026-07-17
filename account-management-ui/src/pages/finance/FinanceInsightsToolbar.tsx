@@ -18,7 +18,7 @@ interface FinanceInsightsToolbarProps {
   revenueType: 'all' | 'booked' | 'anticipated';
   bookingTypeFilter: 'all' | 'fixed' | 'anticipated';
   bookedAtFilter: string | null;
-  insightsTab: 'project' | 'booking';
+  insightsTab: 'project' | 'booking' | 'resource';
   companyOptions: OptionItem[];
   availableFYs: string[];
   bookingMonthOptions: OptionItem[];

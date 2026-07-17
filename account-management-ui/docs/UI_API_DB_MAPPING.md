@@ -35,6 +35,7 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 | Delete booking | `DELETE /api/finance/projects/:id/bookings/:bookingId` | `project_bookings` |
 | Add bookings batch | `POST /api/finance/projects/:id/bookings/batch` | `project_bookings` |
 | Delete all project bookings | `DELETE /api/finance/projects/:id/bookings` | `project_bookings` |
+| SOW Resource Insights dataset | `GET /api/process/resource-insights` | `finance_projects` + `ra_process` + `resources` (includes `project_status`, `process_active`, linked resource dates) |
 | Insights export (PNG/Excel) | Client-side (`html2canvas`, `xlsx`) | — |
 
 ---
@@ -63,6 +64,7 @@ Each row maps a UI feature to its API endpoints and the database tables it reads
 | Resource comments | `GET/POST /api/resources/:id/comments` | `resource_comments` |
 | Edit/Delete comment | `PUT/DELETE /api/resources/:id/comments/:cid` | `resource_comments` |
 | Audit log | `GET /api/audit/resources/:id` | `audit_log` |
+| Verification tab dataset | `GET /api/resources` | `resources` (client computes workex + fixed experience buckets) |
 
 ---
 
@@ -196,6 +198,10 @@ Sub-tabs: **App Notifications** | **Templates** | **Configs** | **App Values** |
 | Delete All — Client Stakeholders | `PUT /api/team-hierarchy/client/bulk` (empty array) | `team_hierarchy_entries` |
 | Backup — RA Stakeholders | `GET /api/team-hierarchy?teamType=ra` → Excel | `team_hierarchy_entries` |
 | Delete All — RA Stakeholders | `PUT /api/team-hierarchy/ra/bulk` (empty array) | `team_hierarchy_entries` |
+| Backup — Notifications History | `GET /api/notifications?userId=` (paged) → Excel | `notifications` |
+| Delete All — Notifications History (visible scope) | `DELETE /api/notifications/:id` (iterative) | `notifications` |
+| Backup — Notification Triggers | `GET /api/notification-triggers` → Excel export | `notification_triggers` |
+| Delete All — Notification Triggers | `DELETE /api/notification-triggers/:id` (iterative) | `notification_triggers` |
 | Backup — Config Dropdown Types | `GET /api/config/` → Excel export | `app_config_types`, `app_config_items` |
 | Delete All — Config Types | `DELETE /api/config/types` (via ConfigContext) | `app_config_types`, `app_config_items` |
 | Backup — App Values | `GET /api/config/values` → Excel export | `app_values` |

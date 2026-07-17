@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { captureElementCanvas } from '../../utils/exportChartAsPng';
 import { jsPDF } from 'jspdf';
-import { Alert, Button, Card, Col, Empty, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Card, Col, Empty, Row, Select, Space, Spin, Table, Tag, Tooltip, Typography } from 'antd';
 import { CheckCircleFilled, CommentOutlined, FilePdfOutlined, FileProtectOutlined, FileWordOutlined, HistoryOutlined, InfoCircleOutlined, RightOutlined, TeamOutlined } from '@ant-design/icons';
 import * as auditApi from '../../api/auditApi';
 import * as processApi from '../../api/processApi';
 import * as resourceApi from '../../api/resourceApi';
 import type { ResourceRow } from '../../types/resource';
+import ResourceHistoryTimeline from '../../components/ResourceHistoryTimeline';
 
 const { Text } = Typography;
 
@@ -68,7 +69,7 @@ interface ProcessDetailViewPanelProps {
 export default function ProcessDetailViewPanel({ rows, initialSow }: ProcessDetailViewPanelProps) {
   const [selectedSow, setSelectedSow] = useState<string | null>(initialSow || null);
   const [linkedResources, setLinkedResources] = useState<ResourceRow[]>([]);
-  const [timelineEntries, setTimelineEntries] = useState<Array<{ type: 'added' | 'removed'; name: string; raId: string; date: string; by: string }>>([]);
+  const [timelineEntries, setTimelineEntries] = useState<Array<{ type: 'added' | 'removed'; name: string; raId: string; date: string; by: string; startDate: string; endDate: string }>>([]);
   const [processComments, setProcessComments] = useState<Array<{ id: number; author: string; body: string; created_at: string }>>([]);
   const [auditEntries, setAuditEntries] = useState<Array<{ id: number; field: string; old_value: string; new_value: string; changed_by: string; changed_at: string }>>([]);
   const [loadingRes, setLoadingRes] = useState(false);
@@ -117,6 +118,15 @@ export default function ProcessDetailViewPanel({ rows, initialSow }: ProcessDeta
       setLinkedResources(linked as ResourceRow[]);
 
       const pidStr = String(pid);
+      const resourceDateByRaId = new Map<string, { startDate: string; endDate: string }>();
+      (all as any[]).forEach((r: any) => {
+        const raid = String(r.ra_id || r.raId || '').trim();
+        if (!raid) return;
+        resourceDateByRaId.set(raid, {
+          startDate: String(r.engagement_start_date || r.engagementStartDate || ''),
+          endDate: String(r.engagement_end_date || r.engagementEndDate || ''),
+        });
+      });
       const events = (auditRaw || []).map((e: any) => {
         const parts = String(e.record_name || '').split(' - ');
         const raId = parts[0]?.trim() || '';
@@ -124,7 +134,8 @@ export default function ProcessDetailViewPanel({ rows, initialSow }: ProcessDeta
         const type: 'added' | 'removed' = String(e.new_value) === pidStr ? 'added' : 'removed';
         const dt = e.changed_at || '';
         const date = dt.slice(0, 10);
-        return { type, name, raId, date, by: e.changed_by || '' };
+        const dates = resourceDateByRaId.get(raId);
+        return { type, name, raId, date, by: e.changed_by || '', startDate: dates?.startDate || '', endDate: dates?.endDate || '' };
       });
       events.sort((a, b) => a.date.localeCompare(b.date));
       setTimelineEntries(events);
@@ -391,84 +402,17 @@ export default function ProcessDetailViewPanel({ rows, initialSow }: ProcessDeta
             title={<Space size={6}><TeamOutlined style={{ color: '#1677ff' }} /><Text style={{ fontSize: '12px', fontWeight: 600 }}>Resource History</Text><Tag style={{ fontSize: '10px' }}>{linkedResources.length} currently linked</Tag></Space>}
             style={{ borderRadius: 10 }}
           >
-            {loadingRes ? (
-              <div style={{ textAlign: 'center', padding: 24 }}><Spin size="small" /></div>
-            ) : timelineGroups.length === 0 ? (
-              <div>
-                {linkedResources.length > 0 ? (
-                  <>
-                    <Alert type="info" showIcon style={{ marginBottom: 12, fontSize: '11px' }} message={<Text style={{ fontSize: '11px' }}>No audit history found — these resources were linked before audit tracking began.</Text>} />
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      {linkedResources.map(r => (
-                        <Tag key={r.key} style={{ fontSize: '11px', padding: '2px 8px' }}>
-                          {r.empName} <Text type="secondary" style={{ fontSize: '10px' }}>({r.raId})</Text>
-                        </Tag>
-                      ))}
-                    </div>
-                  </>
-                ) : (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<Text type="secondary" style={{ fontSize: '11px' }}>No resources have been linked to this SOW yet.</Text>} />
-                )}
-              </div>
-            ) : (
-              <div style={{ position: 'relative', paddingLeft: 20 }}>
-                <div style={{ position: 'absolute', left: 7, top: 12, bottom: 12, width: 2, background: '#f0f0f0', borderRadius: 1 }} />
-                {timelineGroups.map((group, gi) => (
-                  <div key={group.date} style={{ position: 'relative', marginBottom: gi < timelineGroups.length - 1 ? 20 : 0 }}>
-                    <div style={{ position: 'absolute', left: -13, top: 3, width: 10, height: 10, borderRadius: '50%', background: group.added.length > 0 && group.removed.length > 0 ? '#faad14' : group.added.length > 0 ? '#52c41a' : '#ff4d4f', border: '2px solid #fff', boxShadow: '0 0 0 1px #d9d9d9' }} />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                      <Text style={{ fontSize: '11px', fontWeight: 600, color: '#595959' }}>{fmtDate(group.date)}</Text>
-                      <Tag style={{ fontSize: '10px', background: '#f5f5f5', border: '1px solid #e8e8e8', color: '#595959' }}>{runningState[gi]} resource{runningState[gi] !== 1 ? 's' : ''} active</Tag>
-                    </div>
-                    {group.added.length > 0 && (
-                      <div style={{ marginBottom: group.removed.length > 0 ? 6 : 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                          <Tag color="success" style={{ fontSize: '10px', margin: 0 }}>+ {group.added.length} added</Tag>
-                          {group.added.map((e, i) => (
-                            <span key={i} style={{ fontSize: '11px', color: '#262626' }}>
-                              {e.name}
-                              {e.raId && <Text type="secondary" style={{ fontSize: '10px' }}> ({e.raId})</Text>}
-                              {i < group.added.length - 1 && <span style={{ color: '#d9d9d9', marginRight: 4 }}>,</span>}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {group.removed.length > 0 && (
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-                          <Tag color="error" style={{ fontSize: '10px', margin: 0 }}>− {group.removed.length} removed</Tag>
-                          {group.removed.map((e, i) => (
-                            <span key={i} style={{ fontSize: '11px', color: '#8c8c8c', textDecoration: 'line-through' }}>
-                              {e.name}
-                              {e.raId && <Text type="secondary" style={{ fontSize: '10px' }}> ({e.raId})</Text>}
-                              {i < group.removed.length - 1 && <span style={{ color: '#d9d9d9', marginRight: 4 }}>,</span>}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {group.added[0]?.by && <Text type="secondary" style={{ fontSize: '10px', display: 'block', marginTop: 3 }}>by {group.added[0]?.by || group.removed[0]?.by}</Text>}
-                  </div>
-                ))}
-                <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid #f5f5f5' }}>
-                  <Text type="secondary" style={{ fontSize: '11px', display: 'block', marginBottom: 6 }}>Currently linked ({linkedResources.length})</Text>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {linkedResources.length > 0 ? linkedResources.map(r => (
-                      <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 6, padding: '4px 10px' }}>
-                        <Text style={{ fontSize: '11px', color: '#389e0d', fontWeight: 500 }}>{r.empName}</Text>
-                        <Text type="secondary" style={{ fontSize: '10px' }}>({r.raId})</Text>
-                        {(r.engagementStartDate || r.engagementEndDate) && (
-                          <Text style={{ fontSize: '10px', color: '#1677ff', marginLeft: 4 }}>
-                            📅 {r.engagementStartDate ? fmtDate(r.engagementStartDate) : '—'} → {r.engagementEndDate ? fmtDate(r.engagementEndDate) : '—'}
-                          </Text>
-                        )}
-                      </div>
-                    )) : <Text type="secondary" style={{ fontSize: '11px' }}>None</Text>}
-                  </div>
-                </div>
-              </div>
-            )}
+            <ResourceHistoryTimeline
+              loading={loadingRes}
+              timelineEntries={timelineEntries}
+              linkedResources={linkedResources.map((resource) => ({
+                key: resource.key,
+                empName: resource.empName,
+                raId: resource.raId,
+                engagementStartDate: resource.engagementStartDate,
+                engagementEndDate: resource.engagementEndDate,
+              }))}
+            />
           </Card>
 
           <Card

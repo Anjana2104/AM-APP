@@ -189,11 +189,12 @@ export default function SharedResourceFilterPanel({
               onChange={(v) => onAllocationPctChange?.(v || '')}
               style={selectStyle}
               options={[
+                { label: '> 100% — Overutilized', value: '>100' },
                 { label: '100% — Fully Allocated', value: '100' },
                 { label: '≥ 75%', value: '75' },
                 { label: '50–74%', value: '50-74' },
                 { label: '< 50% — Partial', value: '<50' },
-                { label: '< 100% — Any Partial', value: '<100' },
+                { label: '< 100% — Underutilized', value: '<100' },
               ]}
             />
           </div>

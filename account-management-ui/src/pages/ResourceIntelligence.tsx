@@ -1,7 +1,7 @@
 /**
  * ResourceIntelligence.tsx
  * 
- * Resource Intelligence — Analytics and insights for resource utilization,
+ * Resource Intelligence - Analytics and insights for resource utilization,
  * skills distribution, and capacity planning
  * UI Location: Account Operations > Resources > Resource Intelligence
  * Page ID: resources_insights
@@ -39,6 +39,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import ResourceOverviewCharts from '../components/ResourceOverviewCharts';
 import { AllocPctTag } from '../utils/allocUtils';
+import { ensureAllocationEntries, totalAllocationPercentage } from '../utils/resourceAllocationUtils';
 import { jsPDF } from 'jspdf';
 import { SECTION_META, SectionKey, LABEL_TO_SECTION, resolveCommentSection, STATUS_COLOR, PRIORITY_COLOR, COMMENT_TAG_COLORS, fmtDate, fmtRelative, cleanVal, fmtWorkex } from './resource-intelligence/resourceIntelligenceTypes';
 import { EntryCard } from './resource-intelligence/EntryCard';
@@ -49,7 +50,7 @@ dayjs.extend(relativeTime);
 
 const { Text } = Typography;
 
-// ── Main Page ──────────────────────────────────────────────────────────────
+// â”€â”€ Main Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface ResourceIntelligenceProps {
   resources?: ResourceRow[];
@@ -111,47 +112,47 @@ export default function ResourceIntelligence({ resources: propResources = [], on
         pdf.text(label + ':', margin + 2, y);
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(30, 30, 30);
-        const lines = pdf.splitTextToSize(value || '—', colW - 52);
+        const lines = pdf.splitTextToSize(value || '-', colW - 52);
         pdf.text(lines, margin + 50, y);
         y += Math.max(6, lines.length * 5);
       };
 
-      // ── Header ──────────────────────────────────────────────
+      // â”€â”€ Header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       pdf.setFillColor(245, 247, 255);
       pdf.rect(0, 0, pageW, 22, 'F');
       pdf.setFontSize(14);
       pdf.setFont('helvetica', 'bold');
       pdf.setTextColor(30, 64, 175);
-      pdf.text(selectedResource.empName || '—', margin, 12);
+      pdf.text(selectedResource.empName || '-', margin, 12);
       pdf.setFontSize(9);
       pdf.setFont('helvetica', 'normal');
       pdf.setTextColor(100, 100, 100);
-      pdf.text(`RA ID: ${selectedResource.raId || '—'}   |   Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`, margin, 19);
+      pdf.text(`RA ID: ${selectedResource.raId || '-'}   |   Generated: ${new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}`, margin, 19);
       pdf.setDrawColor(200, 200, 230);
       pdf.line(margin, 22, pageW - margin, 22);
       y = 28;
 
-      // ── Basic Info ──────────────────────────────────────────
+      // â”€â”€ Basic Info â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       drawSection('Basic Information');
-      drawRow('Name', selectedResource.empName || '—');
-      drawRow('RA ID', selectedResource.raId || '—');
-      drawRow('Email', selectedResource.emailId || '—');
-      drawRow('Role', selectedResource.piwRole || selectedResource.roleOrDomain || '—');
+      drawRow('Name', selectedResource.empName || '-');
+      drawRow('RA ID', selectedResource.raId || '-');
+      drawRow('Email', selectedResource.emailId || '-');
+      drawRow('Role', selectedResource.piwRole || selectedResource.roleOrDomain || '-');
       drawRow('Experience', fmtWorkex(selectedResource.totalWorkex));
-      drawRow('Date of Joining', selectedResource.doj ? fmtDate(selectedResource.doj) : '—');
+      drawRow('Date of Joining', selectedResource.doj ? fmtDate(selectedResource.doj) : '-');
       y += 2;
 
-      // ── Engagement ──────────────────────────────────────────
+      // â”€â”€ Engagement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       drawSection('Current Engagement');
-      drawRow('Engagement', (selectedResource.engagement && selectedResource.engagement !== 'undefined') ? selectedResource.engagement : '—');
-      drawRow('Start Date', selectedResource.engagementStartDate ? fmtDate(selectedResource.engagementStartDate) : '—');
-      drawRow('End Date', selectedResource.engagementEndDate ? fmtDate(selectedResource.engagementEndDate) : '—');
-      drawRow('Allocation Status', selectedResource.allocationStatus || '—');
-      drawRow('Beeline ID', selectedResource.beelineId || '—');
-      drawRow('Linked SOW', selectedResource.sowName || '—');
+      drawRow('Engagement', (selectedResource.engagement && selectedResource.engagement !== 'undefined') ? selectedResource.engagement : '-');
+      drawRow('Start Date', selectedResource.engagementStartDate ? fmtDate(selectedResource.engagementStartDate) : '-');
+      drawRow('End Date', selectedResource.engagementEndDate ? fmtDate(selectedResource.engagementEndDate) : '-');
+      drawRow('Allocation Status', selectedResource.allocationStatus || '-');
+      drawRow('Beeline ID', selectedResource.beelineId || '-');
+      drawRow('Linked SOW', selectedResource.sowName || '-');
       y += 2;
 
-      // ── Skills ──────────────────────────────────────────────
+      // â”€â”€ Skills â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (selectedResource.skills) {
         drawSection('Skills');
         const skills = selectedResource.skills.split(',').map(s => s.trim()).filter(Boolean);
@@ -159,12 +160,12 @@ export default function ResourceIntelligence({ resources: propResources = [], on
         pdf.setFontSize(8);
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(30, 30, 30);
-        const lines = pdf.splitTextToSize(skills.join('  •  '), colW - 4);
+        const lines = pdf.splitTextToSize(skills.join('  â€¢  '), colW - 4);
         pdf.text(lines, margin + 2, y);
         y += lines.length * 5 + 4;
       }
 
-      // ── Audit Log ────────────────────────────────────────────
+      // â”€â”€ Audit Log â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       if (auditEntries.length > 0) {
         drawSection('Audit Log');
         auditEntries.forEach(e => {
@@ -172,20 +173,20 @@ export default function ResourceIntelligence({ resources: propResources = [], on
           pdf.setFontSize(8);
           pdf.setFont('helvetica', 'bold');
           pdf.setTextColor(50, 50, 50);
-          const fieldText = String(e.field || '—');
+          const fieldText = String(e.field || '-');
           pdf.text(fieldText, margin + 2, y);
           y += 5;
           pdf.setFont('helvetica', 'normal');
           pdf.setFontSize(7.5);
           // Old value
           pdf.setTextColor(150, 0, 0);
-          const oldVal = String(e.old_value || '—');
+          const oldVal = String(e.old_value || '-');
           const oldLines = pdf.splitTextToSize(`Before: ${oldVal}`, colW - 4);
           pdf.text(oldLines.slice(0, 2), margin + 2, y);
           y += oldLines.slice(0, 2).length * 4;
           // New value
           pdf.setTextColor(0, 120, 0);
-          const newVal = String(e.new_value || '—');
+          const newVal = String(e.new_value || '-');
           const newLines = pdf.splitTextToSize(`After: ${newVal}`, colW - 4);
           pdf.text(newLines.slice(0, 2), margin + 2, y);
           y += newLines.slice(0, 2).length * 4;
@@ -194,14 +195,14 @@ export default function ResourceIntelligence({ resources: propResources = [], on
           pdf.setFont('helvetica', 'italic');
           pdf.setTextColor(140, 140, 140);
           const when = (() => { try { return new Date(e.changed_at).toLocaleString('en-GB'); } catch { return e.changed_at; } })();
-          pdf.text(`By ${e.changed_by || '—'}  ·  ${when}`, margin + 2, y);
+          pdf.text(`By ${e.changed_by || '-'} | ${when}`, margin + 2, y);
           y += 5;
           pdf.setDrawColor(230, 230, 230);
           pdf.line(margin, y - 1, pageW - margin, y - 1);
         });
       }
 
-      // ── Recent Log Entries ───────────────────────────────────
+      // â”€â”€ Recent Log Entries â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
       const recent = [...entries].sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()).slice(0, 10);
       if (recent.length > 0) {
         drawSection('Recent Log Entries (last 10)');
@@ -225,7 +226,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
           pdf.setFontSize(7);
           pdf.setFont('helvetica', 'italic');
           pdf.setTextColor(140, 140, 140);
-          pdf.text(`${e.author || '—'}  ·  ${fmtDate(e.created_at)}`, margin + 2, y);
+          pdf.text(`${e.author || '-'} | ${fmtDate(e.created_at)}`, margin + 2, y);
           y += 6;
           pdf.setDrawColor(230, 230, 230);
           pdf.line(margin, y - 1, pageW - margin, y - 1);
@@ -348,7 +349,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
   useEffect(() => {
     resourceApi.getResources().then(({ resources: rows }) => {
       if (rows.length === 0 && propResources.length > 0) {
-        // Server offline — use prop data as fallback
+        // Server offline - use prop data as fallback
         publishResources(propResources);
         return;
       }
@@ -362,7 +363,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
         try { sessionStorage.removeItem('resource_insights_selected_id'); } catch { /* ignore */ }
       }
     }).catch(() => {
-      // Server error — fall back to prop data
+      // Server error - fall back to prop data
       if (propResources.length > 0) publishResources(propResources);
     });
   // Re-run when propResources changes (e.g. after a save in ResourceInformation)
@@ -401,7 +402,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       if (selectedResourceId) {
         const still = mapped.find(r => r.id === selectedResourceId);
         if (!still) {
-          // Resource was deleted — clear selection
+          // Resource was deleted - clear selection
           setSelectedResourceId(null);
           setEntries([]);
           setResourceComments([]);
@@ -415,7 +416,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [selectedResourceId, loadData, publishResources]);
 
-  // Derived counts — combined from insight entries + mapped comments
+  // Derived counts - combined from insight entries + mapped comments
 
   const sectionEntries = useMemo(() => {
     const m: Record<string, InsightEntry[]> = {
@@ -491,7 +492,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
     return selectedResource.skills.split(/[,;|]/).map(s => s.trim()).filter(Boolean);
   }, [selectedResource]);
 
-  // ── Log Summary state (lifted from SectionTab) ───────────────────────────
+  // â”€â”€ Log Summary state (lifted from SectionTab) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const [summaryModal, setSummaryModal] = useState(false);
   const [summaryRange, setSummaryRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([null, null]);
   const [summarySectionFilter, setSummarySectionFilter] = useState<string>('all');
@@ -529,7 +530,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
     );
   }, [entries, resourceComments, summaryRange]);
 
-  // ── Rule-based local summary (no API key required) ───────────────────────
+  // â”€â”€ Rule-based local summary (no API key required) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   const generateLocalSummary = useCallback((entries: InsightEntry[]): string => {
     if (!entries.length) return 'No entries in the selected period.';
 
@@ -551,7 +552,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       if (!items.length) return;
       lines.push(`## ${label}`);
       items.forEach(e => {
-        const text = [e.title, e.body].filter(Boolean).join(' — ');
+        const text = [e.title, e.body].filter(Boolean).join(' - ');
         if (text.trim()) lines.push(`- ${text}`);
       });
       lines.push('');
@@ -735,7 +736,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
   return (
     <div style={{ padding: '16px 20px', background: '#f5f7fa', minHeight: '100vh' }}>
 
-      {/* ── Outer Sub-tabs: Individual Resource / All Resources ── */}
+      {/* â”€â”€ Outer Sub-tabs: Individual Resource / All Resources â”€â”€ */}
       <Tabs
         activeKey={activeOverviewTab}
         defaultActiveKey="individual"
@@ -753,7 +754,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                   Track interactions, escalations, career preferences and plans per resource
                 </div>
 
-      {/* ── Cross-Resource Search (above resource picker) ── */}
+      {/* â”€â”€ Cross-Resource Search (above resource picker) â”€â”€ */}
       <Card
         size="small"
         style={{ marginBottom: 10, borderRadius: 10, border: '1px solid #e8eaf0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}
@@ -767,7 +768,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
           <Input
             size="small"
             allowClear
-            placeholder="Type anything — searches insights & comments across all resources…"
+            placeholder="Type anything - searches insights & comments across all resources..."
             value={crossSearch}
             onChange={e => { setCrossSearch(e.target.value); if (!e.target.value) setCrossSearchResults(null); }}
             style={{ flex: 1, fontSize: 11 }}
@@ -805,7 +806,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                   >
                     <UserOutlined style={{ color: '#1677ff', fontSize: 11 }} />
                     <Text strong style={{ fontSize: 11 }}>{grp.empName}</Text>
-                    <Text type="secondary" style={{ fontSize: 10 }}>· {grp.raId}</Text>
+                    <Text type="secondary" style={{ fontSize: 10 }}>| {grp.raId}</Text>
                     {grp.allocationStatus && grp.allocationStatus !== 'No Value' && (
                       <Tag color={allocationColors[grp.allocationStatus] || 'default'} style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>
                         {grp.allocationStatus}
@@ -828,7 +829,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                         </Tag>
                         <div>
                           <Text strong style={{ fontSize: 11 }}>{e.title}</Text>
-                          {e.body && <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{e.body.slice(0, 100)}{e.body.length > 100 ? '…' : ''}</Text>}
+                          {e.body && <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>{e.body.slice(0, 100)}{e.body.length > 100 ? '...' : ''}</Text>}
                         </div>
                       </div>
                     ))}
@@ -837,7 +838,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                         <CommentOutlined style={{ color: '#1890ff', fontSize: 10, marginTop: 3, flexShrink: 0 }} />
                         <Tag color="blue" style={{ fontSize: 10, margin: '2px 0 0', padding: '0 4px', lineHeight: '16px', flexShrink: 0 }}>{c.tag}</Tag>
                         <div>
-                          <Text style={{ fontSize: 11 }}>{c.body.slice(0, 100)}{c.body.length > 100 ? '…' : ''}</Text>
+                          <Text style={{ fontSize: 11 }}>{c.body.slice(0, 100)}{c.body.length > 100 ? '...' : ''}</Text>
                           <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
                             {(c.source_module === 'stakeholder_escalation' || (c.tag === 'Escalations' && Boolean(c.reported_by)))
                               ? `By: ${c.author || 'Admin'}${c.reported_by ? ` | Reported by: ${c.reported_by}` : ''}`
@@ -857,7 +858,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
         )}
       </Card>
 
-      {/* ── Resource Picker ── */}
+      {/* â”€â”€ Resource Picker â”€â”€ */}
       <Card size="small" style={{ marginBottom: 16, borderRadius: 10, border: '1px solid #e8eaf0', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }} bodyStyle={{ padding: '10px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Avatar size={22} style={{ background: '#1677ff', fontSize: 10, flexShrink: 0 }} icon={<UserOutlined />} />
@@ -865,7 +866,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
           <Select
             showSearch
             size="small"
-            placeholder={<span style={{ fontSize: 11 }}>Search by RA ID or name…</span>}
+            placeholder={<span style={{ fontSize: 11 }}>Search by RA ID or name...</span>}
             style={{ flex: 1, maxWidth: 400, fontSize: 11 }}
             value={selectedResourceId}
             onChange={(val) => { handleSelectResource(val); }}
@@ -874,7 +875,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
             onClear={() => { handleSelectResource(null); setEntries([]); }}
             options={resources.map(r => ({
               value: r.id!,
-              label: `${r.raId} — ${r.empName}`,
+              label: `${r.raId} - ${r.empName}`,
             }))}
           />
           {selectedResourceId && (
@@ -891,14 +892,14 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       </Card>
 
       {!selectedResourceId ? (
-        /* ── Empty state: show skeleton layout so user sees the page structure ── */
+        /* â”€â”€ Empty state: show skeleton layout so user sees the page structure â”€â”€ */
         <Row gutter={16}>
           {/* Left: Tabs skeleton */}
           <Col xs={24} lg={17}>
             {/* Tabs skeleton */}
             <Card style={{ borderRadius: 8 }} bodyStyle={{ padding: '0 16px 16px' }}>
               <div style={{ paddingTop: 12, paddingBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Input size="small" prefix={<SearchOutlined style={{ color: '#d9d9d9' }} />} placeholder="Search within this resource…" disabled style={{ width: 220, fontSize: 11 }} />
+                <Input size="small" prefix={<SearchOutlined style={{ color: '#d9d9d9' }} />} placeholder="Search within this resource..." disabled style={{ width: 220, fontSize: 11 }} />
                 <Button size="small" icon={<FileTextOutlined />} disabled style={{ fontSize: 11 }}>Log Summary</Button>
               </div>
               {/* Tab bar */}
@@ -939,7 +940,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
       ) : (
         <Row gutter={16}>
 
-          {/* ── Left: Tabs ── */}
+          {/* â”€â”€ Left: Tabs â”€â”€ */}
           <Col xs={24} lg={17}>
 
             {/* Tabs + global search */}
@@ -949,7 +950,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                 <Input
                   size="small"
                   prefix={<SearchOutlined style={{ color: '#bfbfbf', fontSize: 11 }} />}
-                  placeholder="Search within this resource…"
+                  placeholder="Search within this resource..."
                   allowClear
                   value={globalSearch}
                   onChange={e => setGlobalSearch(e.target.value)}
@@ -970,7 +971,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
               </div>
 
               {searchResults ? (
-                /* ── Unified search results view ── */
+                /* â”€â”€ Unified search results view â”€â”€ */
                 <div style={{ paddingTop: 4, paddingBottom: 8 }}>
                   {searchResults.total === 0 ? (
                     <Empty description="No matching entries or comments" style={{ margin: '32px 0' }} imageStyle={{ height: 40 }} />
@@ -1013,7 +1014,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                   )}
                 </div>
               ) : (
-                /* ── Normal tabbed view ── */
+                /* â”€â”€ Normal tabbed view â”€â”€ */
                 <Tabs
                   activeKey={activeTab}
                   onChange={(key) => { setActiveTab(key); setSummaryRange([null, null]); setAiSummary(''); setAiError(''); try { sessionStorage.setItem('resource_insights_tab', key); } catch { /* ignore */ } }}
@@ -1024,7 +1025,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
             </Card>
           </Col>
 
-          {/* ── Right Panel: Resource Summary ── */}
+          {/* â”€â”€ Right Panel: Resource Summary â”€â”€ */}
           <Col xs={24} lg={7}>
             <Card
               title={
@@ -1036,7 +1037,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                     {(selectedResource?.empName || 'R').slice(0, 2).toUpperCase()}
                   </Avatar>
                   <div>
-                    <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>{selectedResource?.empName || '—'}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.2 }}>{selectedResource?.empName || '-'}</div>
                     <Text type="secondary" style={{ fontSize: 11 }}>{selectedResource?.raId}</Text>
                   </div>
                 </Space>
@@ -1051,39 +1052,52 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                   </Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Role</Text>}>
-                  <Text style={{ fontSize: 11 }}>{selectedResource?.piwRole || selectedResource?.roleOrDomain || '—'}</Text>
+                  <Text style={{ fontSize: 11 }}>{selectedResource?.piwRole || selectedResource?.roleOrDomain || '-'}</Text>
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Email</Text>}>
-                  <Text style={{ fontSize: 11, wordBreak: 'break-all' }}>{selectedResource?.emailId || '—'}</Text>
+                  <Text style={{ fontSize: 11, wordBreak: 'break-all' }}>{selectedResource?.emailId || '-'}</Text>
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Experience</Text>}>
                   <Text style={{ fontSize: 11 }}>{fmtWorkex(selectedResource?.totalWorkex)}</Text>
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>DOJ</Text>}>
-                  <Text style={{ fontSize: 11 }}>{selectedResource?.doj ? fmtDate(selectedResource.doj) : '—'}</Text>
+                  <Text style={{ fontSize: 11 }}>{selectedResource?.doj ? fmtDate(selectedResource.doj) : '-'}</Text>
                 </Descriptions.Item>
               </Descriptions>
             </Card>
 
             {/* Engagement Card */}
             <Card
-              title={<Space size={6}><ProjectOutlined style={{ color: '#1677ff' }} /><span style={{ fontSize: 12 }}>Current Engagement</span></Space>}
+              title={<Space size={6}><ProjectOutlined style={{ color: '#1677ff' }} /><span style={{ fontSize: 12 }}>Project Allocations</span></Space>}
               size="small"
               style={{ borderRadius: 10, marginBottom: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}
             >
+              {(() => {
+                const allocationEntries = ensureAllocationEntries(selectedResource || {});
+                const totalAllocation = selectedResource
+                  ? totalAllocationPercentage(allocationEntries)
+                  : null;
+                return (
               <Descriptions size="small" column={1}>
-                <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Engagement</Text>}>
-                  <Text style={{ fontSize: 11 }}>
-                    {selectedResource?.engagement && selectedResource.engagement !== 'undefined'
-                      ? selectedResource.engagement
-                      : '—'}
-                  </Text>
-                </Descriptions.Item>
-                <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Start Date</Text>}>
-                  <Text style={{ fontSize: 11 }}>{selectedResource?.engagementStartDate ? fmtDate(selectedResource.engagementStartDate) : '—'}</Text>
-                </Descriptions.Item>
-                <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>End Date</Text>}>
-                  <Text style={{ fontSize: 11 }}>{selectedResource?.engagementEndDate ? fmtDate(selectedResource.engagementEndDate) : '—'}</Text>
+                <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Allocations</Text>}>
+                  {allocationEntries.length > 0 ? (
+                    <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                      {allocationEntries.map((entry, index) => (
+                        <div key={`${selectedResource?.key || 'resource'}-${index}`} style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          <Tag color="purple" style={{ fontSize: 10, margin: 0 }}>{entry.engagementName || 'Unassigned'}</Tag>
+                          <AllocPctTag pct={entry.allocationPercentage} />
+                          {entry.engagementStartDate && <Tag style={{ fontSize: 10, margin: 0 }}>{fmtDate(entry.engagementStartDate)}</Tag>}
+                          {entry.engagementEndDate && <Tag style={{ fontSize: 10, margin: 0 }}>{fmtDate(entry.engagementEndDate)}</Tag>}
+                        </div>
+                      ))}
+                    </Space>
+                  ) : (
+                    <Text style={{ fontSize: 11 }}>
+                      {selectedResource?.engagement && selectedResource.engagement !== 'undefined'
+                        ? selectedResource.engagement
+                        : '-'}
+                    </Text>
+                  )}
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Allocation</Text>}>
                   {selectedResource?.allocationStatus ? (
@@ -1099,10 +1113,10 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                     >
                       {selectedResource.allocationStatus}
                     </Tag>
-                  ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>}
+                  ) : <Text type="secondary" style={{ fontSize: 11 }}>-</Text>}
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Allocation %</Text>}>
-                  <AllocPctTag pct={selectedResource?.allocationPercentage} />
+                  <AllocPctTag pct={totalAllocation} />
                 </Descriptions.Item>
                 <Descriptions.Item label={<Text type="secondary" style={{ fontSize: 11 }}>Beeline ID</Text>}>
                   {selectedResource?.beelineId ? (
@@ -1126,6 +1140,8 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                   </Descriptions.Item>
                 )}
               </Descriptions>
+                );
+              })()}
             </Card>
 
             {/* Skills Card */}
@@ -1157,14 +1173,14 @@ export default function ResourceIntelligence({ resources: propResources = [], on
               </Button>
             </Card>
 
-            {/* Audit Log Modal — same style as ResourceDetailPanel */}
+            {/* Audit Log Modal - same style as ResourceDetailPanel */}
             <Modal
               open={auditModalOpen}
               title={
                 <Space size={6}>
                   <HistoryOutlined style={{ color: '#722ed1' }} />
                   <Text style={{ fontSize: 13 }}>Audit Log</Text>
-                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>— {selectedResource?.empName || ''}</Text>
+                  <Text type="secondary" style={{ fontSize: 11, fontWeight: 400 }}>- {selectedResource?.empName || ''}</Text>
                 </Space>
               }
               onCancel={() => { setAuditModalOpen(false); setAuditSearch(''); setAuditFieldFilter(null); setAuditByFilter(null); }}
@@ -1173,7 +1189,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
               destroyOnClose
             >
               <Space wrap size={4} style={{ marginBottom: 10 }}>
-                <Input size="small" allowClear placeholder="Search…" value={auditSearch}
+                <Input size="small" allowClear placeholder="Search..." value={auditSearch}
                   onChange={e => setAuditSearch(e.target.value)} style={{ width: 130, fontSize: 11 }} />
                 <Select size="small" allowClear placeholder="Field" value={auditFieldFilter}
                   onChange={v => setAuditFieldFilter(v ?? null)} options={auditFieldOptions}
@@ -1215,7 +1231,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                         return (
                           <Tooltip title={clean} overlayStyle={{ maxWidth: 340 }}>
                             <Text style={{ fontSize: 11, color: '#cf1322', cursor: 'default' }}>
-                              {clean.slice(0, 30)}{clean.length > 30 ? '…' : ''}
+                              {clean.slice(0, 30)}{clean.length > 30 ? '...' : ''}
                             </Text>
                           </Tooltip>
                         );
@@ -1228,7 +1244,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                         return (
                           <Tooltip title={clean} overlayStyle={{ maxWidth: 340 }}>
                             <Text style={{ fontSize: 11, color: '#389e0d', cursor: 'default' }}>
-                              {clean.slice(0, 30)}{clean.length > 30 ? '…' : ''}
+                              {clean.slice(0, 30)}{clean.length > 30 ? '...' : ''}
                             </Text>
                           </Tooltip>
                         );
@@ -1236,7 +1252,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                     },
                     {
                       title: 'By', dataIndex: 'changed_by', minWidth: 90, ellipsis: true,
-                      render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '—'}</Text>,
+                      render: (v: string) => <Text style={{ fontSize: 11 }}>{v || '-'}</Text>,
                     },
                     {
                       title: 'When', dataIndex: 'changed_at', minWidth: 130, ellipsis: true,
@@ -1338,7 +1354,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
                             <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '12px 14px' }}>
                               {summary.split('\n').map((line, i) => {
                                 if (line.startsWith('## ')) return <Text key={i} strong style={{ display: 'block', marginTop: 8, marginBottom: 2, color: '#389e0d', fontSize: 12 }}>{line.replace('## ', '')}</Text>;
-                                if (line.startsWith('- ')) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959', paddingLeft: 8 }}>• {line.replace('- ', '')}</Text>;
+                                if (line.startsWith('- ')) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959', paddingLeft: 8 }}>â€¢ {line.replace('- ', '')}</Text>;
                                 if (line.trim()) return <Text key={i} style={{ display: 'block', fontSize: 12, color: '#595959' }}>{line}</Text>;
                                 return <br key={i} />;
                               })}
@@ -1375,7 +1391,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
         ]}
       />
 
-      {/* ── Beeline Link Modal ─────────────────────────────────── */}
+      {/* â”€â”€ Beeline Link Modal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
       <Modal
         title={<Space><LinkOutlined style={{ color: '#1890ff' }} /><span>Link to Beeline Request</span></Space>}
         open={beelineLinkModal.open}
@@ -1396,7 +1412,7 @@ export default function ResourceIntelligence({ resources: propResources = [], on
               showSearch
               allowClear
               style={{ width: '100%' }}
-              placeholder="Search Beeline ID…"
+              placeholder="Search Beeline ID..."
               value={selectedBeelineId || undefined}
               onChange={v => setSelectedBeelineId(v || '')}
               options={beelineRequestOptions}

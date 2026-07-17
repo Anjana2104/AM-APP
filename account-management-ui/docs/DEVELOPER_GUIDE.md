@@ -255,6 +255,7 @@ src/pages/
 │   ├── ProjectBookingDrawer.tsx
 │   ├── BulkBookingDrawer.tsx
 │   ├── FinanceInsightsPanel.tsx
+│   ├── FinanceSowResourceInsightsTab.tsx
 │   └── ...
 ├── internal-process/      ← Internal Process sub-modules
 │   ├── ProcessInsightsPanel.tsx
@@ -267,7 +268,9 @@ src/pages/
 │   └── ...
 ├── resource/              ← Resource sub-modules
 │   ├── ResourceResumesTab.tsx
-│   └── resourceUploadUtils.ts
+│   ├── ResourceVerificationTab.tsx
+│   ├── resourceUploadUtils.ts
+│   └── resourceVerificationUtils.ts
 ├── resource-intelligence/ ← Resource Intelligence sub-modules (extracted from ResourceIntelligence.tsx)
 │   ├── resourceIntelligenceTypes.ts   ← shared constants, types, helpers
 │   ├── EntryCard.tsx
@@ -403,9 +406,33 @@ const res = await fetch('/api/resources');
 
 No `http://localhost:3001/...` URLs in any frontend source file. All API paths must be relative (`/api/...`) so they work through the Vite proxy in dev and Nginx proxy in production.
 
-### 9.3 Mutation confirmation
+**Enforced since July 2026 production-readiness pass:** `piwApi.ts`, `sowApi.ts`, and `templateApi.ts` were migrated from hardcoded `http://localhost:3001` to relative `/api/` paths. Any new API file must follow the same pattern.
+
+### 9.3 Error type safety in API layer
+
+Use `unknown` for caught errors; never use `any`:
+
+```typescript
+// ✅ CORRECT
+} catch (e: unknown) {
+  return { ok: false, error: e instanceof Error ? e.message : 'Request failed' };
+}
+
+// ❌ WRONG — suppresses TypeScript's error narrowing
+} catch (e: any) {
+  return { ok: false, error: e.message };
+}
+```
+
+Response objects from `configApi` use the typed `ApiOk`, `ConfigType`, and `AppValue` interfaces — never return `any` from API functions.
+
+### 9.4 Mutation confirmation
 
 Destructive operations (delete, bulk delete, unlink all) must display an Ant Design `Modal.confirm(...)` before calling the server API.
+
+For **Manage Data** cards, every new domain card must wire both operations:
+- a backup/export action using existing API wrappers
+- a delete-all action with explicit confirmation and surfaced failure handling
 
 ---
 

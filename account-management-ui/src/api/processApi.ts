@@ -21,6 +21,11 @@ export interface ProcessPayload {
   comments: string;
   accountAnchor?: string;
   changedBy?: string;
+  /** ID of the linked finance_projects record (SOW Details); null = unlinked */
+  financeProjectId?: number | null;
+  /** Joined field returned by GET /api/process */
+  financeProjectName?: string;
+  financeProjectCode?: string;
 }
 
 let _serverAvailable: boolean | null = null;
@@ -134,6 +139,35 @@ export interface ProcessComment {
   created_at: string;
 }
 
+export interface ResourceInsightRow {
+  projectId: number;
+  projectName: string;
+  projectCode: string;
+  projectStatus: string;
+  sowId: number;
+  sow: string;
+  processId: string;
+  processActive: string;
+  resourceId: number;
+  raId: string;
+  empName: string;
+  piwRole: string;
+  engagementStartDate: string;
+  engagementEndDate: string;
+}
+
+function normalizeProcessActive(value: unknown): string {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  return (normalized === 'yes' || normalized === 'active' || normalized === 'true' || normalized === '1') ? 'Yes' : 'No';
+}
+
+function normalizeProjectStatus(value: unknown): string {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'active' || normalized === 'yes' || normalized === 'true' || normalized === '1') return 'Active';
+  if (normalized === 'inactive' || normalized === 'no' || normalized === 'false' || normalized === '0') return 'Inactive';
+  return 'Active';
+}
+
 export async function getComments(id: number): Promise<ProcessComment[]> {
   try {
     const res = await fetch(`${BASE}/${id}/comments`);
@@ -161,4 +195,83 @@ export async function deleteComment(processId: number, commentId: number): Promi
     const res = await fetch(`${BASE}/${processId}/comments/${commentId}`, { method: 'DELETE' });
     return res.ok;
   } catch { return false; }
+}
+
+/** Link or unlink an internal process to a SOW details record (finance_projects).
+ *  Pass financeProjectId=null to unlink. */
+export async function linkToSow(
+  processId: number,
+  financeProjectId: number | null,
+  changedBy?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/${processId}/sow-link`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ financeProjectId, changedBy }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || 'Failed to update link' };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e.message };
+  }
+}
+
+/** Get all internal processes linked to a specific SOW details record. */
+export async function getLinkedProcesses(financeProjectId: number): Promise<any[]> {
+  try {
+    const res = await fetch(`${BASE}/by-sow/${financeProjectId}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.rows || [];
+  } catch { return []; }
+}
+
+/** Flat row dataset for Finance → SOW Resource Insights tab. */
+export async function getResourceInsights(): Promise<ResourceInsightRow[]> {
+  try {
+    const res = await fetch(`${BASE}/resource-insights`);
+    if (!res.ok) {
+      const error = new Error(`Resource insights request failed with status ${res.status}`);
+      console.error('[processApi.getResourceInsights] Request failed', error);
+      throw error;
+    }
+    const data = await res.json();
+    const pickText = (row: any, keys: string[]): string => {
+      for (const key of keys) {
+        const val = row?.[key];
+        if (val == null) continue;
+        const text = String(val).trim();
+        if (text) return text;
+      }
+      return '';
+    };
+    const pickNumber = (row: any, keys: string[]): number => {
+      for (const key of keys) {
+        const val = Number(row?.[key]);
+        if (!Number.isNaN(val) && val > 0) return val;
+      }
+      return 0;
+    };
+    return (data.rows || []).map((row: any) => ({
+      projectId: pickNumber(row, ['project_id', 'projectId']),
+      projectName: pickText(row, ['project_name', 'projectName', 'project', 'finance_project_name']),
+      projectCode: pickText(row, ['project_code', 'projectCode', 'code', 'finance_project_code']),
+      projectStatus: normalizeProjectStatus(row.project_status ?? row.projectStatus ?? row.status),
+      sowId: pickNumber(row, ['sow_id', 'sowId', 'finance_project_id']),
+      sow: pickText(row, ['sow', 'sow_name', 'sowName']),
+      processId: pickText(row, ['process_id', 'processId', 'id']),
+      processActive: normalizeProcessActive(row.process_active ?? row.processActive ?? row.active),
+      resourceId: pickNumber(row, ['resource_id', 'resourceId', 'id']),
+      raId: pickText(row, ['ra_id', 'raId']),
+      empName: pickText(row, ['emp_name', 'empName', 'resource_name', 'resourceName', 'name']),
+      piwRole: pickText(row, ['piw_role', 'piwRole', 'role']),
+      engagementStartDate: pickText(row, ['engagement_start_date', 'engagementStartDate', 'start_date', 'startDate']),
+      engagementEndDate: pickText(row, ['engagement_end_date', 'engagementEndDate', 'end_date', 'endDate']),
+    }));
+  } catch (error) {
+    console.error('[processApi.getResourceInsights] Failed to fetch resource insights', error);
+    throw error;
+  }
 }

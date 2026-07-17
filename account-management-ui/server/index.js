@@ -109,10 +109,12 @@ async function runMigrations() {
     doj TEXT DEFAULT "", total_workex TEXT DEFAULT "",
     engagement TEXT DEFAULT "", skills TEXT DEFAULT "", is_active INTEGER DEFAULT 1,
     allocation_percentage REAL DEFAULT NULL,
+    allocation_entries TEXT DEFAULT '[]',
     created_at TEXT, updated_at TEXT
   )`);
   try { db.run(`ALTER TABLE resources ADD COLUMN is_active INTEGER DEFAULT 1`); } catch (_) {}
   try { db.run(`ALTER TABLE resources ADD COLUMN allocation_percentage REAL DEFAULT NULL`); } catch (_) {}
+  try { db.run(`ALTER TABLE resources ADD COLUMN allocation_entries TEXT DEFAULT '[]'`); } catch (_) {}
   db.run(`CREATE TABLE IF NOT EXISTS ra_process (
     id INTEGER PRIMARY KEY AUTOINCREMENT, sno INTEGER,
     sow TEXT NOT NULL UNIQUE, start_date TEXT DEFAULT "",
@@ -122,6 +124,12 @@ async function runMigrations() {
     open_air_code TEXT DEFAULT "", comments TEXT DEFAULT "",
     account_anchor TEXT DEFAULT "", created_at TEXT, updated_at TEXT
   )`);
+  // Idempotent column additions for ra_process
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN process_id TEXT DEFAULT NULL`); } catch (_) {}
+  try { db.run(`UPDATE ra_process SET process_id = 'P' || id WHERE process_id IS NULL`); } catch (_) {}
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN eprev TEXT DEFAULT ''`); } catch (_) {}
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN step_completed_at TEXT DEFAULT '{}'`); } catch (_) {}
+  try { db.run(`ALTER TABLE ra_process ADD COLUMN finance_project_id INTEGER DEFAULT NULL`); } catch (_) {}
   db.run(`CREATE TABLE IF NOT EXISTS app_config_types (
     id INTEGER PRIMARY KEY AUTOINCREMENT, type_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL, description TEXT DEFAULT "",
@@ -627,10 +635,62 @@ process.on('unhandledRejection', (reason) => {
 });
 
 
+// ── Ingress/API path compatibility (MUST be before CORS and routes) ──
+// The nginx ingress rewrites:
+//   /api/auth/login  →  /auth/login  (strips /api, sends to backend)
+// So backend must add /api back for known routes.
+// Also handles /eam/api/* for direct local access without Vite proxy.
+const API_ROUTE_PREFIXES = [
+  '/health', '/finance', '/invoice', '/resources', '/requests',
+  '/process', '/config', '/auth', '/users', '/roles', '/audit',
+  '/user-groups', '/notifications', '/notification-triggers',
+  '/notification-rules', '/user-preferences', '/resource-insights',
+  '/ai', '/templates', '/piwGeneration', '/sowGeneration', '/team-hierarchy',
+];
+
+app.use((req, _res, next) => {
+  // Strip /eam/api prefix (direct access or non-proxied local calls)
+  if (req.url === '/eam/api' || req.url.startsWith('/eam/api/')) {
+    req.url = req.url.replace(/^\/eam\/api/, '/api');
+    return next();
+  }
+  // Restore /api prefix when nginx ingress has already stripped it
+  if (!req.url.startsWith('/api')) {
+    const pathOnly = req.url.split('?')[0];
+    const stripped = API_ROUTE_PREFIXES.some(
+      (p) => pathOnly === p || pathOnly.startsWith(`${p}/`),
+    );
+    if (stripped) req.url = `/api${req.url}`;
+  }
+  next();
+});
+
+// ── CORS ──────────────────────────────────────────────────────────────
+// When ALLOWED_ORIGIN env var is set, use it as a strict allowlist
+// (comma-separated, e.g. "https://gcc-initiatives.kalypso.com,http://localhost:5173").
+// When NOT set, reflect the request origin back — this allows any origin to work
+// without additional configuration (useful when env var is not yet configured in AKS).
+const EXPLICIT_ORIGINS = process.env.ALLOWED_ORIGIN
+  ? process.env.ALLOWED_ORIGIN.split(',').map((o) => o.trim()).filter(Boolean)
+  : null;
+
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGIN || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow server-to-server / health-check requests (no Origin header)
+    if (!origin) return callback(null, true);
+    // If an explicit allowlist is configured, enforce it
+    if (EXPLICIT_ORIGINS) {
+      if (EXPLICIT_ORIGINS.includes('*') || EXPLICIT_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error(`CORS: origin '${origin}' not allowed`));
+    }
+    // No env var set: reflect the origin (allows any origin, works with credentials)
+    return callback(null, origin);
+  },
   credentials: true,
 }));
+
 app.use(express.json({ limit: '10mb' }));
 
 // ── Routes ────────────────────────────────────────────────────────────

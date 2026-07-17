@@ -1,14 +1,16 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Empty, message } from 'antd';
 import { exportChartAsPng } from '../../utils/exportChartAsPng';
 import { FinanceProjectInsightsTab } from './FinanceProjectInsightsTab';
 import { FinanceBookingInsightsTab } from './FinanceBookingInsightsTab';
+import { FinanceSowResourceInsightsTab } from './FinanceSowResourceInsightsTab';
 import { FinanceInsightsToolbar } from './FinanceInsightsToolbar';
 import { FinanceInsightsTabsHeader } from './FinanceInsightsTabsHeader';
 import { useFinanceProjectInsights } from './useFinanceProjectInsights';
 import { useFinanceBookingInsights } from './useFinanceBookingInsights';
 import { useFinanceInsightsActions } from './useFinanceInsightsActions';
 import type { FinanceInsightsDataRow } from './financeInsightsTypes';
+import * as processApi from '../../api/processApi';
 
 const inr = (n: number) =>
   n ? `₹ ${n.toLocaleString('en-IN', { maximumFractionDigits: 0, minimumFractionDigits: 0 })}` : '—';
@@ -29,9 +31,29 @@ export function FinanceInsightsPanel({ data, monthHeaders }: FinanceInsightsProp
   const [revenueType, setRevenueType] = useState<'all' | 'booked' | 'anticipated'>('all');
   const [bookingTypeFilter, setBookingTypeFilter] = useState<'all' | 'fixed' | 'anticipated'>('all');
   const [bookedAtFilter, setBookedAtFilter] = useState<string | null>(null);
-  const [insightsTab, setInsightsTab] = useState<'project' | 'booking'>('project');
+  const [insightsTab, setInsightsTab] = useState<'project' | 'booking' | 'resource'>('project');
   const [fiscalYear, setFiscalYear] = useState<string>('');
+  const [resourceInsightsRows, setResourceInsightsRows] = useState<processApi.ResourceInsightRow[]>([]);
+  const [resourceInsightsLoading, setResourceInsightsLoading] = useState(false);
   const insightsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (insightsTab !== 'resource') return;
+    let cancelled = false;
+    const load = async () => {
+      setResourceInsightsLoading(true);
+      try {
+        const rows = await processApi.getResourceInsights();
+        if (!cancelled) setResourceInsightsRows(rows);
+      } catch {
+        if (!cancelled) message.error('Failed to load resource insights');
+      } finally {
+        if (!cancelled) setResourceInsightsLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [insightsTab]);
 
   const {
     companyOptions,
@@ -110,28 +132,30 @@ export function FinanceInsightsPanel({ data, monthHeaders }: FinanceInsightsProp
   return (
     <div style={{ width: '100%', position: 'relative' }}>
       <div ref={insightsRef} style={{ padding: '4px 0 8px' }}>
-        <FinanceInsightsToolbar
-          currency={currency}
-          exchangeRate={exchangeRate}
-          exporting={exporting}
-          filterCompany={filterCompany}
-          fiscalYear={fiscalYear}
-          revenueType={revenueType}
-          bookingTypeFilter={bookingTypeFilter}
-          bookedAtFilter={bookedAtFilter}
-          insightsTab={insightsTab}
-          companyOptions={companyOptions}
-          availableFYs={availableFYs}
-          bookingMonthOptions={bookingMonthOptions}
-          onToggleCurrency={() => setCurrency((c) => (c === 'INR' ? 'USD' : 'INR'))}
-          onExchangeRateChange={setExchangeRate}
-          onFilterCompanyChange={setFilterCompany}
-          onFiscalYearChange={setFiscalYear}
-          onRevenueTypeChange={setRevenueType}
-          onBookingTypeFilterChange={setBookingTypeFilter}
-          onBookedAtFilterChange={setBookedAtFilter}
-          onExportPng={handleExportPNG}
-        />
+        {insightsTab !== 'resource' && (
+          <FinanceInsightsToolbar
+            currency={currency}
+            exchangeRate={exchangeRate}
+            exporting={exporting}
+            filterCompany={filterCompany}
+            fiscalYear={fiscalYear}
+            revenueType={revenueType}
+            bookingTypeFilter={bookingTypeFilter}
+            bookedAtFilter={bookedAtFilter}
+            insightsTab={insightsTab}
+            companyOptions={companyOptions}
+            availableFYs={availableFYs}
+            bookingMonthOptions={bookingMonthOptions}
+            onToggleCurrency={() => setCurrency((c) => (c === 'INR' ? 'USD' : 'INR'))}
+            onExchangeRateChange={setExchangeRate}
+            onFilterCompanyChange={setFilterCompany}
+            onFiscalYearChange={setFiscalYear}
+            onRevenueTypeChange={setRevenueType}
+            onBookingTypeFilterChange={setBookingTypeFilter}
+            onBookedAtFilterChange={setBookedAtFilter}
+            onExportPng={handleExportPNG}
+          />
+        )}
 
         <FinanceInsightsTabsHeader activeTab={insightsTab} onTabChange={setInsightsTab} />
 
@@ -171,6 +195,13 @@ export function FinanceInsightsPanel({ data, monthHeaders }: FinanceInsightsProp
             exportBookingDrilldownExcel={exportBookingDrilldownExcel}
             exportUnbookedDrilldownExcel={exportUnbookedDrilldownExcel}
             fmt={fmt}
+          />
+        )}
+
+        {insightsTab === 'resource' && (
+          <FinanceSowResourceInsightsTab
+            rows={resourceInsightsRows}
+            loading={resourceInsightsLoading}
           />
         )}
       </div>

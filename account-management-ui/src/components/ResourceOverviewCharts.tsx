@@ -46,7 +46,7 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
 
   const roleData = useMemo(() => {
     const map: Record<string, number> = {};
-    resources.forEach(r => { const role = r.piwRole || 'Unknown'; map[role] = (map[role] || 0) + 1; });
+    resources.forEach(r => { const role = r.piwRole || 'Unassigned'; map[role] = (map[role] || 0) + 1; });
     return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
   }, [resources]);
 
@@ -69,9 +69,24 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
   }, [resources]);
 
   const domainData = useMemo(() => {
-    const map: Record<string, number> = {};
-    resources.forEach(r => { const d = r.roleOrDomain || 'Unknown'; map[d] = (map[d] || 0) + 1; });
-    return Object.entries(map).sort((a, b) => b[1] - a[1]).map(([name, value]) => ({ name, value }));
+    const countByKey: Record<string, number> = {};
+    const displayByKey: Record<string, string> = {};
+    resources.forEach((r) => {
+      const domains = (r.roleOrDomain || '').split(',').map((d) => d.trim()).filter(Boolean);
+      if (!domains.length) {
+        countByKey.unassigned = (countByKey.unassigned || 0) + 1;
+        if (!displayByKey.unassigned) displayByKey.unassigned = 'Unassigned';
+        return;
+      }
+      domains.forEach((domain) => {
+        const key = domain.toLowerCase();
+        countByKey[key] = (countByKey[key] || 0) + 1;
+        if (!displayByKey[key]) displayByKey[key] = domain;
+      });
+    });
+    return Object.entries(countByKey)
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, value]) => ({ name: displayByKey[key] || key, value }));
   }, [resources]);
 
   const allocationStatusData = useMemo(() => {
@@ -291,7 +306,7 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
               <Col xs={24} md={12}>{renderMiniPie(expData, 'Resources by Experience Range', 'expBucket')}</Col>
             </Row>
             <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-              <Col xs={24} md={12}>{renderMiniPie(domainData.slice(0, 8), 'Resources by Role/Domain', 'roleOrDomain')}</Col>
+              <Col xs={24} md={12}>{renderMiniPie(domainData.slice(0, 8), 'Resources by Roles/Domains', 'roleOrDomain')}</Col>
               <Col xs={24} md={12}>{renderMiniPie(allocationStatusData, 'Breakdown by Allocation Status', 'allocationStatus')}</Col>
             </Row>
             <div style={{ background: '#fafafa', borderRadius: 8, padding: '12px', border: '1px solid #f0f0f0', color: CHART_TEXT_COLOR }}>
@@ -304,7 +319,7 @@ export default function ResourceOverviewCharts({ resources, onFilterClick }: Pro
           <Row gutter={[12, 12]}>
             <Col xs={24} md={12}>{renderHBar(roleData, 'By PIW Role', 'piwRole')}</Col>
             <Col xs={24} md={12}>{renderHBar(expData, 'By Experience Range', 'expBucket')}</Col>
-            <Col xs={24} md={12}>{renderHBar(domainData, 'By Role/Domain', 'roleOrDomain')}</Col>
+            <Col xs={24} md={12}>{renderHBar(domainData, 'By Roles/Domains', 'roleOrDomain')}</Col>
             <Col xs={24} md={12}>{renderHBar(allocationStatusData, 'By Allocation Status', 'allocationStatus')}</Col>
             <Col xs={24}>{renderHBar(skillData, 'Top Skills', 'skills')}</Col>
           </Row>

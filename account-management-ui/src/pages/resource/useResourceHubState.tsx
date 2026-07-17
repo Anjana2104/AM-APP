@@ -10,6 +10,10 @@ import { useUserPreferences } from '../../context/UserPreferencesContext';
 import { clearModuleArtifact } from '../../utils/moduleCleanupApi';
 import { buildStyledWorksheetFromAoa, getCurrentDateStamp } from '../../utils/styledExcelExport';
 import { writeJsonSheetFile } from '../../utils/xlsxExport';
+import {
+  ensureAllocationEntries,  deriveAllocationStatus,
+  totalAllocationPercentage,
+} from '../../utils/resourceAllocationUtils';
 import { useAppDispatch, useAppSelector } from '../../store/hooks';
 import { setResources as setResourcesAction, setResourcesFromServer } from '../../store/resourcesSlice';
 import { setActiveRequestOptions as setActiveRequestOptionsAction } from '../../store/requestsSlice';
@@ -47,11 +51,17 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 const REQUIRED_UPLOAD_HEADERS = ['RA ID'];
+type AllocationEntryFormValue = {
+  engagementName?: string;
+  allocationPercentage?: number | null;
+  engagementStartDate?: string;
+  engagementEndDate?: string;
+};
 const EXP_BUCKETS = [
-  { label: '0–3 Yrs', min: 0, max: 3 },
-  { label: '3–5 Yrs', min: 3, max: 5 },
-  { label: '5–8 Yrs', min: 5, max: 8 },
-  { label: '8–10 Yrs', min: 8, max: 10 },
+  { label: '0ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ3 Yrs', min: 0, max: 3 },
+  { label: '3ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ5 Yrs', min: 3, max: 5 },
+  { label: '5ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ8 Yrs', min: 5, max: 8 },
+  { label: '8ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ10 Yrs', min: 8, max: 10 },
   { label: '10+ Yrs', min: 10, max: Infinity },
 ] as const;
 
@@ -148,7 +158,7 @@ export function useResourceHubState({
   const setVisibleColumns = useCallback((nextVisibleColumns: Set<string>) => {
     setVisibleColumnsState(nextVisibleColumns);
     const visibility: Record<string, boolean> = {};
-    ['raId', 'empName', 'emailId', 'piwRole', 'roleOrDomain', 'previousWorkex', 'doj', 'totalWorkex', 'engagement', 'allocationStatus', 'resourceStatus', 'skills']
+    ['raId', 'empName', 'emailId', 'piwRole', 'roleOrDomain', 'previousWorkex', 'doj', 'totalWorkex', 'projectAllocations', 'allocationStatus', 'allocationPercentage', 'resourceStatus', 'skills']
       .forEach((key) => {
         visibility[key] = nextVisibleColumns.has(key);
       });
@@ -346,7 +356,7 @@ export function useResourceHubState({
           hideLoading();
           serverOk = !!result.ok;
           if (!result.ok) {
-            message.warning('Loaded locally — server offline, changes not persisted');
+            message.warning('Loaded locally ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â server offline, changes not persisted');
           }
         } catch (error) {
           hideLoading();
@@ -380,7 +390,7 @@ export function useResourceHubState({
             'Employee Name': 'John Doe',
             'Email': 'john.doe@example.com',
             'PIW Role': 'Developer',
-            'Role/Domain': 'Full Stack',
+            'Roles/Domains': 'Full Stack, DevOps',
             'Previous Workex (Yr)': '2.5',
             'DOJ': '2024-01-15',
             'Total Workex (Yr)': '5.5',
@@ -388,17 +398,35 @@ export function useResourceHubState({
             'Engagement Start Date': '2024-01-15',
             'Engagement End Date': '2024-12-31',
             'Allocation Status': 'Joined',
-            'Allocation %': '100',
+            'Allocation %': '60',
             'Skills': 'JavaScript, React, Node.js',
             'Beeline ID': 'BL-001',
           },
           {
             'S.NO': '2',
+            'RA ID': 'RA001',
+            'Employee Name': 'John Doe',
+            'Email': 'john.doe@example.com',
+            'PIW Role': 'Developer',
+            'Roles/Domains': 'Full Stack, DevOps',
+            'Previous Workex (Yr)': '2.5',
+            'DOJ': '2024-01-15',
+            'Total Workex (Yr)': '5.5',
+            'Current Engagement': 'Project Beta',
+            'Engagement Start Date': '2024-02-01',
+            'Engagement End Date': '2024-11-30',
+            'Allocation Status': 'Joined',
+            'Allocation %': '50',
+            'Skills': 'JavaScript, React, Node.js',
+            'Beeline ID': 'BL-001',
+          },
+          {
+            'S.NO': '3',
             'RA ID': 'RA002',
             'Employee Name': '',
             'Email': '',
             'PIW Role': '',
-            'Role/Domain': '',
+            'Roles/Domains': '',
             'Previous Workex (Yr)': '',
             'DOJ': '',
             'Total Workex (Yr)': '',
@@ -423,6 +451,10 @@ export function useResourceHubState({
 
   const handleAddNew = useCallback(() => {
     form.resetFields();
+    form.setFieldsValue({
+      allocationStatus: 'Available',
+      allocationEntries: [{ engagementName: '', allocationPercentage: null, engagementStartDate: '', engagementEndDate: '' }],
+    });
     setEditingResource(null);
     setEditDrawer(true);
   }, [form]);
@@ -435,6 +467,7 @@ export function useResourceHubState({
     }
 
     setEditingResource(resource);
+    const existingEntries = ensureAllocationEntries(resource);
     form.setFieldsValue({
       raId: resource.raId || '',
       empName: resource.empName || '',
@@ -445,10 +478,10 @@ export function useResourceHubState({
       doj: resource.doj || '',
       totalWorkex: resource.totalWorkex || '',
       skills: resource.skills || '',
-      engagement: resource.engagement || '',
-      engagementStartDate: resource.engagementStartDate || '',
-      engagementEndDate: resource.engagementEndDate || '',
-      allocationPercentage: resource.allocationPercentage != null ? resource.allocationPercentage : null,
+      allocationStatus: resource.allocationStatus || deriveAllocationStatus(existingEntries),
+      allocationEntries: existingEntries.length > 0
+        ? existingEntries
+        : [{ engagementName: '', allocationPercentage: null, engagementStartDate: '', engagementEndDate: '' }],
     });
     setEditDrawer(true);
   }, [canEdit, form]);
@@ -466,18 +499,31 @@ export function useResourceHubState({
         return;
       }
 
-      const newEngagement = String(values.engagement || '').trim();
+      const allocationEntriesInput = Array.isArray(values.allocationEntries) ? values.allocationEntries as AllocationEntryFormValue[] : [];
+      const normalizedEntriesBase = ensureAllocationEntries({
+        allocationEntries: allocationEntriesInput.map((entry) => ({
+          engagementName: String(entry?.engagementName || '').trim(),
+          allocationPercentage: entry?.allocationPercentage != null ? Number(entry.allocationPercentage) : 0,
+          engagementStartDate: String(entry?.engagementStartDate || ''),
+          engagementEndDate: String(entry?.engagementEndDate || ''),
+        })),
+      });
+      const newEngagement = '';
+      const explicitAllocStatus = String(values.allocationStatus || '').trim();
+      const existingAllocStatus = String(editingResource?.allocationStatus || '').trim();
+      const resolvedAllocStatus = normalizedEntriesBase.length === 0
+        ? 'Available'
+        : (explicitAllocStatus || deriveAllocationStatus(normalizedEntriesBase, existingAllocStatus));
+      const normalizedEntries = normalizedEntriesBase.map((entry) => ({
+        ...entry,
+        allocationStatus: entry.allocationStatus || resolvedAllocStatus,
+      }));
+      const totalAllocationPct = normalizedEntries.length > 0 ? totalAllocationPercentage(normalizedEntries) : 0;
+      const engagementStartDate = '';
+      const engagementEndDate = '';
       const isEdit = !!editingResource?.key;
 
       if (isEdit && editingResource) {
-        const existingAllocStatus = String(editingResource.allocationStatus || '').trim();
-        let newAllocStatus = existingAllocStatus || 'Joined';
-        if (!newEngagement || newEngagement.toLowerCase() === 'bench') {
-          newAllocStatus = 'Available';
-        } else if (!existingAllocStatus || existingAllocStatus.toLowerCase() === 'available') {
-          newAllocStatus = 'Joined';
-        }
-
         const updatedRow: ResourceRow = {
           ...editingResource,
           raId: String(values.raId || ''),
@@ -485,15 +531,16 @@ export function useResourceHubState({
           emailId: String(values.emailId || ''),
           piwRole: String(values.piwRole || ''),
           roleOrDomain: String(values.roleOrDomain || ''),
-          previousWorkex: String(values.previousWorkex || ''),
+          previousWorkex: String(values.previousWorkex ?? '').trim() || '0',
           doj: String(values.doj || ''),
           totalWorkex: String(values.totalWorkex || ''),
-          skills: String(values.skills || ''),
+          skills: String(values.skills ?? '').trim(),
           engagement: newEngagement,
-          allocationStatus: newAllocStatus,
-          allocationPercentage: values.allocationPercentage != null ? Number(values.allocationPercentage) : null,
-          engagementStartDate: String(values.engagementStartDate || ''),
-          engagementEndDate: String(values.engagementEndDate || ''),
+          allocationStatus: resolvedAllocStatus,
+          allocationPercentage: totalAllocationPct,
+          allocationEntries: normalizedEntries,
+          engagementStartDate,
+          engagementEndDate,
         };
 
         setResources((prev) => prev.map((row) => (row.key === editingResource.key ? updatedRow : row)));
@@ -511,13 +558,13 @@ export function useResourceHubState({
             engagement: updatedRow.engagement,
             skills: updatedRow.skills,
             allocationPercentage: updatedRow.allocationPercentage,
+            allocationEntries: updatedRow.allocationEntries,
             engagementStartDate: updatedRow.engagementStartDate,
             engagementEndDate: updatedRow.engagementEndDate,
             changedBy: currentUsername,
           });
         }
       } else {
-        const newAllocStatus = newEngagement.toLowerCase() === 'bench' ? 'Available' : 'Joined';
         const newRow: ResourceRow = {
           key: String(Date.now()),
           sno: '',
@@ -527,15 +574,16 @@ export function useResourceHubState({
           emailId: String(values.emailId || ''),
           piwRole: String(values.piwRole || ''),
           roleOrDomain: String(values.roleOrDomain || ''),
-          previousWorkex: String(values.previousWorkex || ''),
+          previousWorkex: String(values.previousWorkex ?? '').trim() || '0',
           doj: String(values.doj || ''),
           totalWorkex: String(values.totalWorkex || ''),
-          skills: String(values.skills || ''),
+          skills: String(values.skills ?? '').trim(),
           engagement: newEngagement,
-          allocationStatus: newAllocStatus,
-          allocationPercentage: values.allocationPercentage != null ? Number(values.allocationPercentage) : null,
-          engagementStartDate: String(values.engagementStartDate || ''),
-          engagementEndDate: String(values.engagementEndDate || ''),
+          allocationStatus: resolvedAllocStatus,
+          allocationPercentage: totalAllocationPct,
+          allocationEntries: normalizedEntries,
+          engagementStartDate,
+          engagementEndDate,
         };
 
         setResources((prev) => [...prev, { ...newRow, sno: String(prev.length + 1) }]);
@@ -551,8 +599,9 @@ export function useResourceHubState({
           totalWorkex: newRow.totalWorkex,
           engagement: newRow.engagement,
           skills: newRow.skills,
-          allocationStatus: newAllocStatus,
+          allocationStatus: resolvedAllocStatus,
           allocationPercentage: newRow.allocationPercentage,
+          allocationEntries: newRow.allocationEntries,
           engagementStartDate: newRow.engagementStartDate,
           engagementEndDate: newRow.engagementEndDate,
         }], currentUsername);
@@ -561,7 +610,9 @@ export function useResourceHubState({
       message.success(isEdit ? 'Resource updated successfully' : 'Resource added successfully');
       closeEditDrawer();
     } catch (error) {
-      message.error(`Error: ${error instanceof Error ? error.message : 'Save error'}`);
+      console.error('[ResourceHub] Failed to save resource:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Save error';
+      message.error(`Error: ${errorMsg}`);
     }
   }, [closeEditDrawer, currentUsername, editingResource, setResources]);
 
@@ -638,8 +689,16 @@ export function useResourceHubState({
     }
 
     if (filters.roleOrDomain.length > 0) {
-      const roleOrDomain = String(resource.roleOrDomain || '').toLowerCase();
-      if (!filters.roleOrDomain.some((value) => roleOrDomain.includes(value.toLowerCase()))) return false;
+      const roleOrDomainRaw = String(resource.roleOrDomain || '').trim();
+      const roleOrDomainValues = roleOrDomainRaw
+        ? roleOrDomainRaw.split(',').map((value) => value.trim().toLowerCase()).filter(Boolean)
+        : [];
+      if (!filters.roleOrDomain.some((value) => {
+        const selected = String(value || '').trim().toLowerCase();
+        if (!selected) return false;
+        if (selected === 'unknown' || selected === 'unassigned') return roleOrDomainValues.length === 0;
+        return roleOrDomainValues.some((role) => role.includes(selected));
+      })) return false;
     }
 
     if (filters.allocationStatus) {
@@ -649,7 +708,8 @@ export function useResourceHubState({
 
     if (filters.allocationPct) {
       const pct = resource.allocationPercentage ?? 0;
-      if (filters.allocationPct === '100' && pct < 100) return false;
+      if (filters.allocationPct === '>100' && pct <= 100) return false;
+      if (filters.allocationPct === '100' && pct !== 100) return false;
       if (filters.allocationPct === '75' && pct < 75) return false;
       if (filters.allocationPct === '50-74' && (pct < 50 || pct >= 75)) return false;
       if (filters.allocationPct === '<50' && pct >= 50) return false;
@@ -715,8 +775,8 @@ export function useResourceHubState({
     }
 
     const aoa: any[][] = [[
-      'S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Previous Workex (Yr)', 'DOJ',
-      'Total Workex (Yr)', 'Current Engagement', 'Eng. Start Date', 'Eng. End Date', 'Allocation Status',
+      'S.NO', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Roles/Domains', 'Previous Workex (Yr)', 'DOJ',
+      'Total Workex (Yr)', 'Project Allocations', 'Allocation Status',
       'Alloc %', 'Skills', 'Beeline ID', 'Linked SOW',
     ]];
 
@@ -731,9 +791,9 @@ export function useResourceHubState({
         resource.previousWorkex,
         resource.doj,
         resource.totalWorkex,
-        resource.engagement || '',
-        resource.engagementStartDate || '',
-        resource.engagementEndDate || '',
+        ensureAllocationEntries(resource)
+          .map((entry) => `${entry.engagementName || 'Unassigned'} (${entry.allocationPercentage}%) [${entry.engagementStartDate || 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â'} to ${entry.engagementEndDate || 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â'}]`)
+          .join(' | '),
         resource.allocationStatus || '',
         resource.allocationPercentage != null ? `${resource.allocationPercentage}%` : '',
         resource.skills,
@@ -742,7 +802,7 @@ export function useResourceHubState({
       ]);
     });
 
-    const worksheet = buildStyledWorksheetFromAoa(XLSXStyle, aoa, [6, 10, 28, 30, 18, 18, 14, 14, 14, 18, 14, 14, 18, 36, 18, 30]);
+    const worksheet = buildStyledWorksheetFromAoa(XLSXStyle, aoa, [6, 10, 28, 30, 18, 18, 14, 14, 14, 36, 18, 14, 36, 18, 30]);
     const workbook = XLSXStyle.utils.book_new();
     XLSXStyle.utils.book_append_sheet(workbook, worksheet, 'Resources');
     XLSXStyle.writeFile(workbook, `Resources_Export_${getCurrentDateStamp()}.xlsx`);
@@ -757,7 +817,7 @@ export function useResourceHubState({
     }
 
     const aoa: any[][] = [[
-      'Beeline ID', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Role/Domain', 'Engagement', 'Allocation Status', 'Skills',
+      'Beeline ID', 'RA ID', 'Employee Name', 'Email', 'PIW Role', 'Roles/Domains', 'Project Allocations', 'Allocation Status', 'Skills',
     ]];
 
     [...linkedResources].sort((a, b) => (a.beelineId || '').localeCompare(b.beelineId || '')).forEach((resource) => {
@@ -768,7 +828,9 @@ export function useResourceHubState({
         resource.emailId,
         resource.piwRole,
         resource.roleOrDomain,
-        resource.engagement || '',
+        ensureAllocationEntries(resource)
+          .map((entry) => `${entry.engagementName || 'Unassigned'} (${entry.allocationPercentage}%) [${entry.engagementStartDate || 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â'} to ${entry.engagementEndDate || 'ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â'}]`)
+          .join(' | '),
         resource.allocationStatus || '',
         resource.skills,
       ]);
@@ -794,7 +856,21 @@ export function useResourceHubState({
 
   const raIdOptions = useMemo<SelectOption[]>(() => getUniqueValues('raId').map((value) => ({ value, label: value })), [getUniqueValues]);
   const piwRoleOptions = useMemo<SelectOption[]>(() => getUniqueValues('piwRole').map((value) => ({ value, label: value })), [getUniqueValues]);
-  const roleOrDomainOptions = useMemo<SelectOption[]>(() => getUniqueValues('roleOrDomain').map((value) => ({ value, label: value })), [getUniqueValues]);
+  
+  // Split comma-separated domains like skills ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â each domain is a separate filter option
+  const roleOrDomainOptions = useMemo<SelectOption[]>(() => {
+    const values = new Set<string>();
+    resources.forEach((resource) => {
+      if (resource.roleOrDomain) {
+        resource.roleOrDomain.split(',').forEach((domain) => {
+          const trimmed = domain.trim();
+          if (trimmed) values.add(trimmed);
+        });
+      }
+    });
+    return Array.from(values).sort().map((value) => ({ value, label: value }));
+  }, [resources]);
+  
   const skillOptions = useMemo<SelectOption[]>(() => {
     const values = new Set<string>();
     resources.forEach((resource) => {
@@ -833,7 +909,7 @@ export function useResourceHubState({
       piwRoleValue={filters.piwRole}
       onPiwRoleChange={(value) => updateFilters({ piwRole: value })}
       piwRoleOptions={piwRoleOptions}
-      roleOrDomainLabel="Role/Domain"
+      roleOrDomainLabel="Roles/Domains"
       roleOrDomainValue={filters.roleOrDomain}
       onRoleOrDomainChange={(value) => updateFilters({ roleOrDomain: value })}
       roleOrDomainOptions={roleOrDomainOptions}
@@ -978,3 +1054,7 @@ export function useResourceHubState({
 }
 
 export type UseResourceHubStateResult = ReturnType<typeof useResourceHubState>;
+
+
+
+
